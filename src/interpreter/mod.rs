@@ -23,6 +23,7 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             patterns: &patterns::PATTERNS,

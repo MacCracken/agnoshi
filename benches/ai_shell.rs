@@ -1,4 +1,4 @@
-use ai_shell::interpreter::{Intent, Interpreter};
+use agnoshi::interpreter::{Intent, Interpreter};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_interpreter_parsing(c: &mut Criterion) {

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Shell operating modes
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Mode {
     /// AI acts autonomously within constraints
@@ -34,21 +35,29 @@ impl fmt::Display for Mode {
 
 impl Mode {
     /// Check if AI is allowed to execute commands autonomously
+    #[must_use]
+    #[inline]
     pub fn ai_autonomous(&self) -> bool {
         matches!(self, Mode::AiAutonomous)
     }
 
     /// Check if AI assistance is available
+    #[must_use]
+    #[inline]
     pub fn ai_available(&self) -> bool {
         !matches!(self, Mode::Human)
     }
 
     /// Check if strict approval is required
+    #[must_use]
+    #[inline]
     pub fn strict_approval(&self) -> bool {
         matches!(self, Mode::Strict)
     }
 
     /// Get description of mode
+    #[must_use]
+    #[inline]
     pub fn description(&self) -> &'static str {
         match self {
             Mode::AiAutonomous => "AI acts autonomously within safety constraints",
@@ -59,6 +68,8 @@ impl Mode {
     }
 
     /// Get prompt prefix for this mode
+    #[must_use]
+    #[inline]
     pub fn prompt_prefix(&self) -> &'static str {
         match self {
             Mode::AiAutonomous => "🤖",

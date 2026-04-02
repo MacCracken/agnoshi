@@ -504,14 +504,14 @@ impl Session {
                             }
                         }
 
-                        if !status.success() {
-                            if let Some(stderr) = child.stderr.take() {
-                                let reader = tokio::io::BufReader::new(stderr);
-                                use tokio::io::AsyncBufReadExt;
-                                let mut lines = reader.lines();
-                                while let Some(line) = lines.next_line().await? {
-                                    self.ui.show_error(&line);
-                                }
+                        if !status.success()
+                            && let Some(stderr) = child.stderr.take()
+                        {
+                            let reader = tokio::io::BufReader::new(stderr);
+                            use tokio::io::AsyncBufReadExt;
+                            let mut lines = reader.lines();
+                            while let Some(line) = lines.next_line().await? {
+                                self.ui.show_error(&line);
                             }
                         }
                     }

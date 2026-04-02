@@ -27,6 +27,7 @@ pub(crate) fn mcp_call(
 }
 
 /// Convenience: insert an optional string into an args map.
+#[inline]
 pub(crate) fn insert_opt(
     args: &mut serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -38,6 +39,7 @@ pub(crate) fn insert_opt(
 }
 
 /// Convenience: insert a required string into an args map.
+#[inline]
 pub(crate) fn insert_str(
     args: &mut serde_json::Map<String, serde_json::Value>,
     key: &str,

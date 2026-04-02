@@ -11,13 +11,13 @@
 
 use std::path::PathBuf;
 
-use ai_shell::config::ShellConfig;
-use ai_shell::history::CommandHistory;
-use ai_shell::interpreter::Interpreter;
-use ai_shell::mode::Mode;
-use ai_shell::prompt::{PromptConfig, PromptContext, PromptRenderer};
-use ai_shell::security::SecurityContext;
-use ai_shell::session::Session;
+use agnoshi::config::ShellConfig;
+use agnoshi::history::CommandHistory;
+use agnoshi::interpreter::Interpreter;
+use agnoshi::mode::Mode;
+use agnoshi::prompt::{PromptConfig, PromptContext, PromptRenderer};
+use agnoshi::security::SecurityContext;
+use agnoshi::session::Session;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 

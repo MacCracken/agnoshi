@@ -620,11 +620,7 @@ pub(super) fn parse_platforms(
         }
     }
 
-    if interp
-        .try_captures("phylax_findings", input_lower)
-        .is_some()
-    {
-        let caps = interp.try_captures("phylax_findings", input_lower).unwrap();
+    if let Some(caps) = interp.try_captures("phylax_findings", input_lower) {
         let severity = caps
             .get(1)
             .map(|m| m.as_str().trim().to_string())

@@ -3,7 +3,7 @@
 //! Ensures AI never has root access and all privileged operations
 //! require human approval through secure privilege escalation.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use nix::unistd::{geteuid, getgid, getuid};
 use std::process::Command;
 use tracing::{info, warn};
@@ -105,7 +105,10 @@ impl SecurityContext {
 
         info!("Executing with elevated privileges: {:?}", command);
 
-        let output = cmd.output()?;
+        let output = cmd.output().context(format!(
+            "failed to execute privileged command: {:?}",
+            command
+        ))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -130,19 +133,20 @@ impl SecurityContext {
 }
 
 /// Permission levels for commands
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionLevel {
-    /// Safe commands that don't modify system
+    /// Commands that don't modify state (cd, echo, help, clear).
     Safe,
-    /// Read-only system information
+    /// Read-only system queries (ls, cat, ps, df, grep without redirect).
     ReadOnly,
-    /// Can modify user files
+    /// Modifications to user files (cp, mv, touch in home directory).
     UserWrite,
-    /// Can modify system files (requires approval)
+    /// Modifications to system files or process state (requires approval).
     SystemWrite,
-    /// Administrative commands (requires approval)
+    /// Privileged operations requiring sudo (requires approval).
     Admin,
-    /// Dangerous commands (always blocked for AI)
+    /// Commands that are never allowed for AI execution.
     Blocked,
 }
 

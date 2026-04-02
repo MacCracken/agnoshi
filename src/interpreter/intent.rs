@@ -1,6 +1,7 @@
 use crate::security::PermissionLevel;
 
 /// Parsed intent from natural language
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Intent {
     /// Show files or directories
@@ -719,6 +720,7 @@ pub struct Translation {
 
 impl Translation {
     /// Create a shell command translation.
+    #[must_use]
     pub fn cmd(
         command: impl Into<String>,
         args: Vec<String>,

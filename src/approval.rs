@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use crate::security::PermissionLevel;
 
 /// Types of approval requests
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum ApprovalRequest {
@@ -54,6 +55,7 @@ pub enum ApprovalRequest {
 }
 
 /// Risk levels for operations
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RiskLevel {
     Low,
@@ -94,6 +96,7 @@ impl RiskLevel {
 }
 
 /// Response to an approval request
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum ApprovalResponse {

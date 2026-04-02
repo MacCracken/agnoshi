@@ -6,7 +6,11 @@ use std::collections::HashMap;
 pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
     let mut p = HashMap::new();
     let mut r = |name: &str, pat: &str| {
-        p.insert(name.to_string(), Regex::new(pat).unwrap());
+        p.insert(
+            name.to_string(),
+            Regex::new(pat)
+                .unwrap_or_else(|e| panic!("invalid regex pattern for '{}': {}", name, e)),
+        );
     };
     r(
         "list",

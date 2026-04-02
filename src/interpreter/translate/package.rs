@@ -1,7 +1,16 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
+use serde_json::json;
 
 use crate::interpreter::intent::{Intent, Translation};
 use crate::security::PermissionLevel;
+
+/// Reject values containing path traversal sequences or URL-unsafe characters.
+fn sanitize_url_segment(value: &str) -> Result<&str> {
+    if value.contains("..") || value.contains('/') || value.contains('\\') || value.contains('\0') {
+        bail!("Invalid identifier: contains path traversal characters");
+    }
+    Ok(value)
+}
 
 pub(crate) fn translate_package(intent: &Intent) -> Result<Translation> {
     match intent {
@@ -68,7 +77,13 @@ pub(crate) fn translate_package(intent: &Intent) -> Result<Translation> {
             command: "curl".to_string(),
             args: vec![
                 "-s".to_string(),
-                format!("http://127.0.0.1:8090/v1/ark/search?q={}", query),
+                "-X".to_string(),
+                "POST".to_string(),
+                "http://127.0.0.1:8090/v1/ark/search".to_string(),
+                "-H".to_string(),
+                "Content-Type: application/json".to_string(),
+                "-d".to_string(),
+                json!({"q": query}).to_string(),
             ],
             description: format!("Search packages via ark: {}", query),
             permission: PermissionLevel::Safe,
@@ -76,17 +91,20 @@ pub(crate) fn translate_package(intent: &Intent) -> Result<Translation> {
             mcp: None,
         }),
 
-        Intent::ArkInfo { package } => Ok(Translation {
-            command: "curl".to_string(),
-            args: vec![
-                "-s".to_string(),
-                format!("http://127.0.0.1:8090/v1/ark/info/{}", package),
-            ],
-            description: format!("Show ark package info: {}", package),
-            permission: PermissionLevel::Safe,
-            explanation: "Retrieves detailed information about a package".to_string(),
-            mcp: None,
-        }),
+        Intent::ArkInfo { package } => {
+            let safe_pkg = sanitize_url_segment(package)?;
+            Ok(Translation {
+                command: "curl".to_string(),
+                args: vec![
+                    "-s".to_string(),
+                    format!("http://127.0.0.1:8090/v1/ark/info/{}", safe_pkg),
+                ],
+                description: format!("Show ark package info: {}", package),
+                permission: PermissionLevel::Safe,
+                explanation: "Retrieves detailed information about a package".to_string(),
+                mcp: None,
+            })
+        }
 
         Intent::ArkUpdate => Ok(Translation {
             command: "curl".to_string(),
@@ -141,5 +159,61 @@ pub(crate) fn translate_package(intent: &Intent) -> Result<Translation> {
         }),
 
         _ => unreachable!("translate_package called with non-package intent"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_path_traversal() {
+        assert!(sanitize_url_segment("../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_forward_slash() {
+        assert!(sanitize_url_segment("foo/bar").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_backslash() {
+        assert!(sanitize_url_segment("foo\\bar").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_null_byte() {
+        assert!(sanitize_url_segment("package\0name").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_accepts_normal_name() {
+        assert_eq!(sanitize_url_segment("my-package").unwrap(), "my-package");
+    }
+
+    #[test]
+    fn test_ark_info_rejects_path_traversal() {
+        let intent = Intent::ArkInfo {
+            package: "../../../etc/passwd".to_string(),
+        };
+        assert!(translate_package(&intent).is_err());
+    }
+
+    #[test]
+    fn test_ark_info_rejects_null_byte() {
+        let intent = Intent::ArkInfo {
+            package: "package\0name".to_string(),
+        };
+        assert!(translate_package(&intent).is_err());
+    }
+
+    #[test]
+    fn test_ark_info_accepts_normal_package() {
+        let intent = Intent::ArkInfo {
+            package: "nginx".to_string(),
+        };
+        let result = translate_package(&intent).unwrap();
+        assert_eq!(result.command, "curl");
+        assert!(result.args.iter().any(|a| a.contains("nginx")));
     }
 }

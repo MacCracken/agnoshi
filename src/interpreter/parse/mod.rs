@@ -8,6 +8,7 @@ use super::intent::Intent;
 
 impl Interpreter {
     /// Parse natural language input into intent
+    #[must_use]
     pub fn parse(&self, input: &str) -> Intent {
         let trimmed = input.trim();
         let lowered = trimmed.to_lowercase();

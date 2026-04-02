@@ -106,30 +106,31 @@ impl AuditViewer {
             .filter_map(|line| serde_json::from_str(line).ok())
             .filter(|entry: &AuditEntry| {
                 // Agent filter
-                if let Some(ref agent) = filter.agent {
-                    if !entry.user.contains(agent) && !entry.input.contains(agent) {
-                        return false;
-                    }
+                if let Some(ref agent) = filter.agent
+                    && !entry.user.contains(agent)
+                    && !entry.input.contains(agent)
+                {
+                    return false;
                 }
                 // Action filter
-                if let Some(ref action) = filter.action {
-                    if entry.action != *action {
-                        return false;
-                    }
+                if let Some(ref action) = filter.action
+                    && entry.action != *action
+                {
+                    return false;
                 }
                 // Approval filter
-                if let Some(approved) = filter.approved {
-                    if entry.approved != approved {
-                        return false;
-                    }
+                if let Some(approved) = filter.approved
+                    && entry.approved != approved
+                {
+                    return false;
                 }
                 // Time filter
-                if let Some(since_secs) = filter.since_seconds {
-                    if let Ok(ts) = entry.timestamp.parse::<DateTime<Utc>>() {
-                        let age = (now - ts).num_seconds();
-                        if age < 0 || age as u64 > since_secs {
-                            return false;
-                        }
+                if let Some(since_secs) = filter.since_seconds
+                    && let Ok(ts) = entry.timestamp.parse::<DateTime<Utc>>()
+                {
+                    let age = (now - ts).num_seconds();
+                    if age < 0 || age as u64 > since_secs {
+                        return false;
                     }
                 }
                 true

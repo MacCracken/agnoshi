@@ -5,7 +5,7 @@
 //! inputs into structured intents, covering common filesystem, process,
 //! package, consumer-app, and edge/DAW domains.
 
-use ai_shell::interpreter::Interpreter;
+use agnoshi::interpreter::Interpreter;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 // ---------------------------------------------------------------------------

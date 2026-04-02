@@ -21,7 +21,9 @@ pub(crate) fn translate_misc(intent: &Intent) -> Result<Translation> {
             // Validate each pipeline stage for shell injection characters.
             // Pipeline stages should be simple commands — reject metacharacters
             // that could break out of the pipe chain (;, &&, ||, $(), ``, etc.)
-            let shell_injection_chars = [';', '&', '`', '$', '(', ')', '{', '}'];
+            let shell_injection_chars = [
+                ';', '&', '`', '$', '(', ')', '{', '}', '|', '<', '>', '\n', '\r', '!',
+            ];
             for cmd in commands {
                 if cmd.chars().any(|c| shell_injection_chars.contains(&c)) {
                     anyhow::bail!(
@@ -88,5 +90,61 @@ mod tests {
             result.args,
             vec!["-c", "cat /var/log/syslog | grep error | wc -l"]
         );
+    }
+
+    #[test]
+    fn test_pipeline_rejects_pipe_character() {
+        let intent = Intent::Pipeline {
+            commands: vec!["ls | rm -rf /".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_rejects_redirect_less_than() {
+        let intent = Intent::Pipeline {
+            commands: vec!["cat < /etc/shadow".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_rejects_redirect_greater_than() {
+        let intent = Intent::Pipeline {
+            commands: vec!["echo pwned > /etc/passwd".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_rejects_newline() {
+        let intent = Intent::Pipeline {
+            commands: vec!["echo foo\nrm -rf /".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_rejects_carriage_return() {
+        let intent = Intent::Pipeline {
+            commands: vec!["echo foo\rrm -rf /".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_rejects_exclamation_mark() {
+        let intent = Intent::Pipeline {
+            commands: vec!["!rm -rf /".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_rejects_ampersand() {
+        let intent = Intent::Pipeline {
+            commands: vec!["sleep 999 &".to_string()],
+        };
+        assert!(translate_misc(&intent).is_err());
     }
 }

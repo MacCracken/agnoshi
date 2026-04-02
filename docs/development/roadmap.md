@@ -4,15 +4,15 @@
 
 - [x] Extract from agnosticos/userland/ai-shell
 - [x] Standalone Cargo.toml with path deps
-- [ ] Verify `cargo check` passes standalone
-- [ ] Verify `cargo test --all-features` passes
-- [ ] First benchmark baseline
+- [x] Verify `cargo check` passes standalone
+- [x] Verify `cargo test --all-features` passes
+- [x] First benchmark baseline
 
 ## v0.2.0 — Standalone Hardening
 
-- [ ] P(-1) scaffold hardening pass
+- [x] P(-1) scaffold hardening pass
 - [ ] CI workflows (ci.yml, release.yml)
-- [ ] Full clippy + fmt + audit + deny clean
+- [x] Full clippy + fmt + audit + deny clean
 
 ## v1.0.0 Criteria
 

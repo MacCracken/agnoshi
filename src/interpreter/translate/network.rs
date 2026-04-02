@@ -7,7 +7,7 @@ use crate::security::PermissionLevel;
 /// Rejects targets containing shell metacharacters.
 fn validate_target(target: &str) -> Result<()> {
     let dangerous = [
-        ';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '!', '\n', '\r',
+        ';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '!', '\n', '\r', '\0',
     ];
     if target.chars().any(|c| dangerous.contains(&c)) {
         return Err(anyhow!("Target contains disallowed characters: {}", target));
@@ -276,5 +276,24 @@ mod tests {
         };
         let result = translate_network(&intent).unwrap();
         assert_eq!(result.command, "nmap");
+    }
+
+    #[test]
+    fn test_validate_target_rejects_null_byte() {
+        assert!(validate_target("192.168.1.1\0; rm -rf /").is_err());
+    }
+
+    #[test]
+    fn test_validate_target_rejects_null_byte_only() {
+        assert!(validate_target("\0").is_err());
+    }
+
+    #[test]
+    fn test_network_scan_rejects_null_byte_in_target() {
+        let intent = Intent::NetworkScan {
+            action: "dns_lookup".to_string(),
+            target: Some("example.com\0.evil.com".to_string()),
+        };
+        assert!(translate_network(&intent).is_err());
     }
 }

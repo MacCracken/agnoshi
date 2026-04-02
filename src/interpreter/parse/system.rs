@@ -282,47 +282,47 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
         });
     }
 
-    if let Some(caps) = interp.try_captures("show_file", input_lower) {
-        if let Some(path) = caps.get(6) {
-            return Some(Intent::ShowFile {
-                path: path.as_str().trim().to_string(),
-                lines: None,
-            });
-        }
+    if let Some(caps) = interp.try_captures("show_file", input_lower)
+        && let Some(path) = caps.get(6)
+    {
+        return Some(Intent::ShowFile {
+            path: path.as_str().trim().to_string(),
+            lines: None,
+        });
     }
 
-    if let Some(caps) = interp.try_captures("cd", input_lower) {
-        if let Some(path) = caps.get(4) {
-            return Some(Intent::ChangeDirectory {
-                path: path.as_str().trim().to_string(),
-            });
-        }
+    if let Some(caps) = interp.try_captures("cd", input_lower)
+        && let Some(path) = caps.get(4)
+    {
+        return Some(Intent::ChangeDirectory {
+            path: path.as_str().trim().to_string(),
+        });
     }
 
-    if let Some(caps) = interp.try_captures("mkdir", input_lower) {
-        if let Some(path) = caps.get(6) {
-            return Some(Intent::CreateDirectory {
-                path: path.as_str().trim().to_string(),
-            });
-        }
+    if let Some(caps) = interp.try_captures("mkdir", input_lower)
+        && let Some(path) = caps.get(6)
+    {
+        return Some(Intent::CreateDirectory {
+            path: path.as_str().trim().to_string(),
+        });
     }
 
-    if let Some(caps) = interp.try_captures("copy", input_lower) {
-        if let (Some(source), Some(dest)) = (caps.get(2), caps.get(4)) {
-            return Some(Intent::Copy {
-                source: source.as_str().trim().to_string(),
-                destination: dest.as_str().trim().to_string(),
-            });
-        }
+    if let Some(caps) = interp.try_captures("copy", input_lower)
+        && let (Some(source), Some(dest)) = (caps.get(2), caps.get(4))
+    {
+        return Some(Intent::Copy {
+            source: source.as_str().trim().to_string(),
+            destination: dest.as_str().trim().to_string(),
+        });
     }
 
-    if let Some(caps) = interp.try_captures("move", input_lower) {
-        if let (Some(source), Some(dest)) = (caps.get(2), caps.get(4)) {
-            return Some(Intent::Move {
-                source: source.as_str().trim().to_string(),
-                destination: dest.as_str().trim().to_string(),
-            });
-        }
+    if let Some(caps) = interp.try_captures("move", input_lower)
+        && let (Some(source), Some(dest)) = (caps.get(2), caps.get(4))
+    {
+        return Some(Intent::Move {
+            source: source.as_str().trim().to_string(),
+            destination: dest.as_str().trim().to_string(),
+        });
     }
 
     if interp.try_captures("ps", input_lower).is_some() {
