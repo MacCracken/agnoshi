@@ -32,3 +32,4 @@ doc:
 
 clean:
 	cargo clean
+	rm -rf coverage/

@@ -1,18 +1,9 @@
 # Development Roadmap
 
-## v0.1.0 — Initial Extraction (current)
+## Completed
 
-- [x] Extract from agnosticos/userland/ai-shell
-- [x] Standalone Cargo.toml with path deps
-- [x] Verify `cargo check` passes standalone
-- [x] Verify `cargo test --all-features` passes
-- [x] First benchmark baseline
-
-## v0.2.0 — Standalone Hardening
-
-- [x] P(-1) scaffold hardening pass
-- [ ] CI workflows (ci.yml, release.yml)
-- [x] Full clippy + fmt + audit + deny clean
+- **v0.1.0** — Initial extraction from agnosticos/userland/ai-shell (2026-04-01)
+- **v0.2.0** — Standalone hardening: P(-1) pass, CI workflows, full cleanliness gates (2026-04-02)
 
 ## v1.0.0 Criteria
 

@@ -7,3 +7,7 @@ coverage:
     patch:
       default:
         target: 80%
+
+ignore:
+  - "benches/"
+  - "examples/"
