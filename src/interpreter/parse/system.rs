@@ -260,7 +260,8 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
         return Some(Intent::ArkStatus);
     }
 
-    // Filesystem patterns — grep before list (grep is more specific)
+    // Filesystem patterns — more specific patterns before the broad "list" fallback
+
     if let Some(caps) = interp.try_captures("grep", input_lower) {
         let pattern = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
         let path = caps.get(5).map(|m| m.as_str().trim().to_string());
@@ -269,26 +270,71 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
         }
     }
 
-    if let Some(caps) = interp.try_captures("list", input_lower) {
+    // Find files: "find files named *.rs", "locate config.toml in /etc"
+    // Match against original input to preserve case in the pattern (e.g., "Makefile")
+    if let Some(caps) = interp.try_captures("find", input) {
+        let pattern = caps.get(4).map_or("", |m| m.as_str()).trim().to_string();
         let path = caps.get(6).map(|m| m.as_str().trim().to_string());
-        let all = input_lower.contains("all");
-
-        return Some(Intent::ListFiles {
-            path,
-            options: ListOptions {
-                all,
-                ..Default::default()
-            },
-        });
+        if !pattern.is_empty() {
+            return Some(Intent::FindFiles { pattern, path });
+        }
     }
 
-    if let Some(caps) = interp.try_captures("show_file", input_lower)
-        && let Some(path) = caps.get(6)
+    // Remove: "remove /tmp/test", "delete the file old.log", "rm junk"
+    if let Some(caps) = interp.try_captures("remove", input_lower) {
+        let path = caps.get(4).map_or("", |m| m.as_str()).trim().to_string();
+        let recursive = input_lower.contains("recursiv") || input_lower.contains("-r");
+        if !path.is_empty() {
+            return Some(Intent::Remove { path, recursive });
+        }
+    }
+
+    // Kill process: "kill process 1234", "terminate 5678"
+    if let Some(caps) = interp.try_captures("kill", input_lower)
+        && let Some(pid_match) = caps.get(4)
+        && let Ok(pid) = pid_match.as_str().parse::<u32>()
     {
-        return Some(Intent::ShowFile {
-            path: path.as_str().trim().to_string(),
-            lines: None,
-        });
+        return Some(Intent::KillProcess { pid });
+    }
+
+    // Process/system/network info — before show_file which would swallow them
+    if interp.try_captures("ps", input_lower).is_some() {
+        return Some(Intent::ShowProcesses);
+    }
+
+    if interp.try_captures("sysinfo", input_lower).is_some() {
+        return Some(Intent::SystemInfo);
+    }
+
+    if interp.try_captures("netinfo", input_lower).is_some() {
+        return Some(Intent::NetworkInfo);
+    }
+
+    // Disk usage: "how much disk space in /home", "disk usage"
+    if let Some(caps) = interp.try_captures("du", input_lower) {
+        let path = caps
+            .get(9)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        return Some(Intent::DiskUsage { path });
+    }
+
+    // Filesystem operations with specific structure
+    if let Some(caps) = interp.try_captures("show_file", input_lower) {
+        // Group 2 = path from "read/cat/open <path>"
+        // Group 7 = path from "show [me] [the] content(s) of <path>"
+        let path = caps
+            .get(2)
+            .or_else(|| caps.get(7))
+            .map(|m| m.as_str().trim().to_string());
+        if let Some(p) = path
+            && !p.is_empty()
+        {
+            return Some(Intent::ShowFile {
+                path: p,
+                lines: None,
+            });
+        }
     }
 
     if let Some(caps) = interp.try_captures("cd", input_lower)
@@ -325,12 +371,17 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
         });
     }
 
-    if interp.try_captures("ps", input_lower).is_some() {
-        return Some(Intent::ShowProcesses);
-    }
-
-    if interp.try_captures("sysinfo", input_lower).is_some() {
-        return Some(Intent::SystemInfo);
+    // Generic install: "install vim", "add package htop"
+    // Placed after ark patterns so "ark install X" takes priority
+    if let Some(caps) = interp.try_captures("install", input_lower) {
+        let packages_str = caps.get(3).map_or("", |m| m.as_str()).trim();
+        if !packages_str.is_empty() {
+            let packages: Vec<String> = packages_str
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect();
+            return Some(Intent::InstallPackage { packages });
+        }
     }
 
     // Marketplace patterns
@@ -385,6 +436,22 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
         if !query.is_empty() {
             return Some(Intent::RagQuery { query });
         }
+    }
+
+    // List files — intentionally the last specific pattern because the regex
+    // is very broad (all groups optional). Every more-specific pattern above
+    // must be checked first.
+    if let Some(caps) = interp.try_captures("list", input_lower) {
+        let path = caps.get(6).map(|m| m.as_str().trim().to_string());
+        let all = input_lower.contains("all");
+
+        return Some(Intent::ListFiles {
+            path,
+            options: ListOptions {
+                all,
+                ..Default::default()
+            },
+        });
     }
 
     // Question detection

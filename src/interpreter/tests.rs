@@ -304,13 +304,11 @@ mod tests {
     // order in the parser (list is checked first).
 
     #[test]
-    fn test_parse_find_files_via_list_pattern() {
+    fn test_parse_find_files_via_find_pattern() {
         let interpreter = Interpreter::new();
-        // "find" doesn't start with show/list/display/what/see, so it goes to later patterns
-        // but due to the broad list pattern, many inputs match ListFiles first
+        // "find files named X" now correctly matches the find pattern
         let intent = interpreter.parse("find files named config.yaml");
-        // The list pattern matches because "files" is in it
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::FindFiles { .. }));
     }
 
     #[test]
@@ -322,29 +320,27 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_remove_file_via_list() {
+    fn test_parse_remove_file() {
         let interpreter = Interpreter::new();
-        // "remove" doesn't match the list pattern start words
+        // "remove file X" now correctly matches the remove pattern
         let intent = interpreter.parse("remove file old_backup.tar");
-        // The list pattern still matches because "file" keyword triggers it
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Remove { .. }));
     }
 
     #[test]
-    fn test_parse_show_processes_matches_list_first() {
+    fn test_parse_show_processes() {
         let interpreter = Interpreter::new();
-        // "show all running processes" — "show" triggers the list pattern
-        // The list regex is checked before ps regex, so it matches ListFiles
+        // "show all running processes" now correctly matches ShowProcesses
         let intent = interpreter.parse("show all running processes");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::ShowProcesses));
     }
 
     #[test]
-    fn test_parse_system_info_matches_list_first() {
+    fn test_parse_system_info() {
         let interpreter = Interpreter::new();
-        // "show system info" — "show" triggers the list pattern first
+        // "show system info" now correctly matches SystemInfo
         let intent = interpreter.parse("show system info");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::SystemInfo));
     }
 
     #[test]
@@ -417,27 +413,27 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_create_directory_via_list() {
+    fn test_parse_create_directory() {
         let interpreter = Interpreter::new();
-        // "create a new directory called myproject"
-        // The list regex may match since "directory" is in group 4
+        // "create a new directory called myproject" now correctly matches CreateDirectory
         let intent = interpreter.parse("create a new directory called myproject");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::CreateDirectory { .. }));
     }
 
     #[test]
-    fn test_parse_copy_file_via_list() {
+    fn test_parse_copy_file() {
         let interpreter = Interpreter::new();
-        // The list regex is checked first
+        // Now correctly matches Copy
         let intent = interpreter.parse("copy readme.md to backup.md");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Copy { .. }));
     }
 
     #[test]
-    fn test_parse_move_file_via_list() {
+    fn test_parse_move_file() {
         let interpreter = Interpreter::new();
+        // Now correctly matches Move
         let intent = interpreter.parse("move old.txt to new.txt");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Move { .. }));
     }
 
     #[test]
@@ -3192,5 +3188,132 @@ mod tests {
         assert_eq!(mcp.tool_name, "shruti_export");
         let args_str = mcp.arguments.to_string();
         assert!(args_str.contains("/tmp/out.wav"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Tests for previously orphaned patterns (P(-1) external research fixes)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_find_files() {
+        let interpreter = Interpreter::new();
+
+        let intent = interpreter.parse("find files named config.yaml");
+        assert!(matches!(intent, Intent::FindFiles { pattern, .. } if pattern == "config.yaml"));
+
+        let intent = interpreter.parse("locate readme.md");
+        assert!(matches!(intent, Intent::FindFiles { pattern, .. } if pattern == "readme.md"));
+
+        let intent = interpreter.parse("search for *.log");
+        // "search for X" without "in Y" matches find, not grep
+        assert!(matches!(intent, Intent::FindFiles { .. }));
+
+        let intent = interpreter.parse("look for Makefile");
+        assert!(matches!(intent, Intent::FindFiles { pattern, .. } if pattern == "Makefile"));
+    }
+
+    #[test]
+    fn test_parse_remove() {
+        let interpreter = Interpreter::new();
+
+        let intent = interpreter.parse("remove /tmp/test");
+        assert!(
+            matches!(intent, Intent::Remove { path, recursive } if path == "/tmp/test" && !recursive)
+        );
+
+        let intent = interpreter.parse("delete the directory old_data");
+        assert!(matches!(intent, Intent::Remove { path, .. } if path == "old_data"));
+
+        let intent = interpreter.parse("rm junk.txt");
+        assert!(matches!(intent, Intent::Remove { path, .. } if path == "junk.txt"));
+
+        // Recursive detection
+        let intent = interpreter.parse("remove recursively /var/tmp/cache");
+        assert!(matches!(intent, Intent::Remove { recursive, .. } if recursive));
+    }
+
+    #[test]
+    fn test_parse_kill_process() {
+        let interpreter = Interpreter::new();
+
+        let intent = interpreter.parse("kill process 1234");
+        assert!(matches!(intent, Intent::KillProcess { pid } if pid == 1234));
+
+        let intent = interpreter.parse("terminate 5678");
+        assert!(matches!(intent, Intent::KillProcess { pid } if pid == 5678));
+
+        let intent = interpreter.parse("stop pid 42");
+        assert!(matches!(intent, Intent::KillProcess { pid } if pid == 42));
+
+        let intent = interpreter.parse("kill 9999");
+        assert!(matches!(intent, Intent::KillProcess { pid } if pid == 9999));
+    }
+
+    #[test]
+    fn test_parse_network_info() {
+        let interpreter = Interpreter::new();
+
+        let intent = interpreter.parse("show network info");
+        assert!(matches!(intent, Intent::NetworkInfo));
+
+        let intent = interpreter.parse("display my ip address");
+        assert!(matches!(intent, Intent::NetworkInfo));
+
+        let intent = interpreter.parse("view network configuration");
+        assert!(matches!(intent, Intent::NetworkInfo));
+
+        let intent = interpreter.parse("what network interfaces");
+        assert!(matches!(intent, Intent::NetworkInfo));
+    }
+
+    #[test]
+    fn test_parse_disk_usage() {
+        let interpreter = Interpreter::new();
+
+        let intent = interpreter.parse("disk usage /home");
+        assert!(matches!(intent, Intent::DiskUsage { path } if path.as_deref() == Some("/home")));
+
+        let intent = interpreter.parse("how much disk space");
+        assert!(matches!(intent, Intent::DiskUsage { .. }));
+
+        let intent = interpreter.parse("disk space in /var");
+        assert!(matches!(intent, Intent::DiskUsage { path } if path.as_deref() == Some("/var")));
+    }
+
+    #[test]
+    fn test_parse_install_package() {
+        let interpreter = Interpreter::new();
+
+        let intent = interpreter.parse("install vim");
+        assert!(matches!(intent, Intent::InstallPackage { ref packages } if packages == &["vim"]));
+
+        let intent = interpreter.parse("install package htop");
+        assert!(matches!(intent, Intent::InstallPackage { ref packages } if packages == &["htop"]));
+
+        let intent = interpreter.parse("add curl wget");
+        assert!(matches!(intent, Intent::InstallPackage { ref packages } if packages.len() == 2));
+
+        let intent = interpreter.parse("get software firefox");
+        assert!(
+            matches!(intent, Intent::InstallPackage { ref packages } if packages == &["firefox"])
+        );
+    }
+
+    #[test]
+    fn test_parse_ark_install_takes_priority_over_generic_install() {
+        let interpreter = Interpreter::new();
+
+        // "ark install X" should match ArkInstall, not InstallPackage
+        let intent = interpreter.parse("ark install nginx");
+        assert!(matches!(intent, Intent::ArkInstall { .. }));
+    }
+
+    #[test]
+    fn test_parse_grep_takes_priority_over_find() {
+        let interpreter = Interpreter::new();
+
+        // "search for X in Y" should match grep/SearchContent, not FindFiles
+        let intent = interpreter.parse("search for TODO in src");
+        assert!(matches!(intent, Intent::SearchContent { .. }));
     }
 }

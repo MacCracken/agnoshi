@@ -18,7 +18,7 @@ pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
     );
     r(
         "show_file",
-        r"(?i)^(show|display|view|read|cat|open|print)\s+(me\s+)?(the\s+)?(content|file|contents)?\s*(of\s+)?(.+)$",
+        r"(?i)^(?:(read|cat|open)\s+(.+)|(show|display|view|print)\s+(me\s+)?(the\s+)?(contents?\s+of|file\s+content)\s+(.+))$",
     );
     r(
         "find",
@@ -52,11 +52,19 @@ pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
     );
     r(
         "du",
-        r"(?i)^(how\s+much\s+)?(disk\s+)?(space|usage|size)\s+(is\s+)?(used\s+)?(by\s+)?(in\s+)?(.+)?$",
+        r"(?i)^(how\s+much\s+)?(disk\s+)?(space|usage|size)(\s+(is\s+)?(used\s+)?(by\s+)?(in\s+)?(.+))?$",
     );
     r(
         "install",
         r"(?i)^(install|add|get)\s+(package|program|software|app)?\s*(.+)$",
+    );
+    r(
+        "kill",
+        r"(?i)^(kill|terminate|stop|end)\s+(process\s+)?(pid\s+)?(\d+)$",
+    );
+    r(
+        "netinfo",
+        r"(?i)^(show|display|view|what)\s+(me\s+)?(my\s+)?(network|ip|net)\s*(info|information|address|config|configuration|status|interfaces?)?$",
     );
     r(
         "audit",

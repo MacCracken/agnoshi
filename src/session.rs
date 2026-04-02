@@ -693,7 +693,6 @@ mod tests {
     fn test_interpreter_parse_unknown() {
         let interpreter = Interpreter::new();
         let intent = interpreter.parse("show me the files");
-
         assert!(matches!(intent, Intent::ListFiles { .. }));
     }
 
