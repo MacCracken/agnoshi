@@ -254,3 +254,263 @@ pub(crate) fn translate_yeoman(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_yeoman called with non-yeoman intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mcp_tool_name(t: &Translation) -> &str {
+        t.mcp.as_ref().unwrap().tool_name.as_str()
+    }
+
+    fn mcp_args(t: &Translation) -> &serde_json::Value {
+        &t.mcp.as_ref().unwrap().arguments
+    }
+
+    #[test]
+    fn test_yeoman_agents_list() {
+        let intent = Intent::YeomanAgents {
+            action: "list".to_string(),
+            agent_id: None,
+            name: None,
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_agents");
+        assert_eq!(mcp_args(&t)["action"], "list");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_agents_deploy_with_name() {
+        let intent = Intent::YeomanAgents {
+            action: "deploy".to_string(),
+            agent_id: Some("a1".to_string()),
+            name: Some("my-agent".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_agents");
+        assert_eq!(mcp_args(&t)["action"], "deploy");
+        assert_eq!(mcp_args(&t)["agent_id"], "a1");
+        assert_eq!(mcp_args(&t)["name"], "my-agent");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_tasks_list() {
+        let intent = Intent::YeomanTasks {
+            action: "list".to_string(),
+            description: None,
+            task_id: None,
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_tasks");
+        assert_eq!(mcp_args(&t)["action"], "list");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_tasks_assign_with_id() {
+        let intent = Intent::YeomanTasks {
+            action: "assign".to_string(),
+            description: Some("do stuff".to_string()),
+            task_id: Some("t42".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_tasks");
+        assert_eq!(mcp_args(&t)["task_id"], "t42");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_tools() {
+        let intent = Intent::YeomanTools {
+            action: "list".to_string(),
+            query: Some("search".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_tools");
+        assert_eq!(mcp_args(&t)["action"], "list");
+        assert_eq!(mcp_args(&t)["query"], "search");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_integrations_list() {
+        let intent = Intent::YeomanIntegrations {
+            action: "list".to_string(),
+            name: None,
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_integrations");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_integrations_enable() {
+        let intent = Intent::YeomanIntegrations {
+            action: "enable".to_string(),
+            name: Some("slack".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_integrations");
+        assert_eq!(mcp_args(&t)["name"], "slack");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_status() {
+        let intent = Intent::YeomanStatus;
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_status");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_logs() {
+        let intent = Intent::YeomanLogs {
+            action: "tail".to_string(),
+            agent_id: Some("agent-7".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_logs");
+        assert_eq!(mcp_args(&t)["agent_id"], "agent-7");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_workflows_list() {
+        let intent = Intent::YeomanWorkflows {
+            action: "list".to_string(),
+            name: None,
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_workflows");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_workflows_create() {
+        let intent = Intent::YeomanWorkflows {
+            action: "create".to_string(),
+            name: Some("my-flow".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_workflows");
+        assert_eq!(mcp_args(&t)["name"], "my-flow");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_register_tools() {
+        let intent = Intent::YeomanRegisterTools {
+            action: "register".to_string(),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_register_tools");
+        assert_eq!(mcp_args(&t)["action"], "register");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_tool_execute() {
+        let intent = Intent::YeomanToolExecute {
+            tool_name: "scanner".to_string(),
+            args: Some("--fast".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_tool_execute");
+        assert_eq!(mcp_args(&t)["tool_name"], "scanner");
+        assert_eq!(mcp_args(&t)["args"], "--fast");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_brain_query() {
+        let intent = Intent::YeomanBrainQuery {
+            query: "networking setup".to_string(),
+            limit: Some("5".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_brain_query");
+        assert_eq!(mcp_args(&t)["query"], "networking setup");
+        assert_eq!(mcp_args(&t)["limit"], "5");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_brain_sync() {
+        let intent = Intent::YeomanBrainSync {
+            action: "push".to_string(),
+            topic: Some("security".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_brain_sync");
+        assert_eq!(mcp_args(&t)["action"], "push");
+        assert_eq!(mcp_args(&t)["topic"], "security");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_token_budget_list() {
+        let intent = Intent::YeomanTokenBudget {
+            action: "list".to_string(),
+            pool: None,
+            amount: None,
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_token_budget");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_token_budget_set() {
+        let intent = Intent::YeomanTokenBudget {
+            action: "set".to_string(),
+            pool: Some("default".to_string()),
+            amount: Some("1000".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_token_budget");
+        assert_eq!(mcp_args(&t)["pool"], "default");
+        assert_eq!(mcp_args(&t)["amount"], "1000");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_yeoman_events() {
+        let intent = Intent::YeomanEvents {
+            action: "list".to_string(),
+            limit: Some("20".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_events");
+        assert_eq!(mcp_args(&t)["limit"], "20");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_swarm_query() {
+        let intent = Intent::YeomanSwarm {
+            action: "status".to_string(),
+            swarm_id: Some("swarm-1".to_string()),
+            capability: None,
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_swarm");
+        assert_eq!(mcp_args(&t)["swarm_id"], "swarm-1");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_yeoman_swarm_handoff() {
+        let intent = Intent::YeomanSwarm {
+            action: "handoff".to_string(),
+            swarm_id: None,
+            capability: Some("nlp".to_string()),
+        };
+        let t = translate_yeoman(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "yeoman_swarm");
+        assert_eq!(mcp_args(&t)["capability"], "nlp");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+}

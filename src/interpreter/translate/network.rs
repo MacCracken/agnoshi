@@ -296,4 +296,247 @@ mod tests {
         };
         assert!(translate_network(&intent).is_err());
     }
+
+    #[test]
+    fn test_port_scan_default_target() {
+        let intent = Intent::NetworkScan {
+            action: "port_scan".to_string(),
+            target: None,
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nmap");
+        assert!(t.args.contains(&"-sT".to_string()));
+        assert!(t.args.contains(&"localhost".to_string()));
+        assert_eq!(t.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_ping_sweep() {
+        let intent = Intent::NetworkScan {
+            action: "ping_sweep".to_string(),
+            target: Some("10.0.0.0/24".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nmap");
+        assert!(t.args.contains(&"-sn".to_string()));
+        assert!(t.args.contains(&"10.0.0.0/24".to_string()));
+    }
+
+    #[test]
+    fn test_ping_sweep_default() {
+        let intent = Intent::NetworkScan {
+            action: "ping_sweep".to_string(),
+            target: None,
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nmap");
+        assert!(t.args.contains(&"192.168.1.0/24".to_string()));
+    }
+
+    #[test]
+    fn test_dns_lookup() {
+        let intent = Intent::NetworkScan {
+            action: "dns_lookup".to_string(),
+            target: Some("example.com".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "dig");
+        assert!(t.args.contains(&"example.com".to_string()));
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_trace_route() {
+        let intent = Intent::NetworkScan {
+            action: "trace_route".to_string(),
+            target: Some("8.8.8.8".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "traceroute");
+        assert!(t.args.contains(&"8.8.8.8".to_string()));
+        assert_eq!(t.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_packet_capture() {
+        let intent = Intent::NetworkScan {
+            action: "packet_capture".to_string(),
+            target: Some("wlan0".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "tcpdump");
+        assert!(t.args.contains(&"-i".to_string()));
+        assert!(t.args.contains(&"wlan0".to_string()));
+        assert!(t.args.contains(&"-c".to_string()));
+        assert!(t.args.contains(&"100".to_string()));
+    }
+
+    #[test]
+    fn test_packet_capture_default() {
+        let intent = Intent::NetworkScan {
+            action: "packet_capture".to_string(),
+            target: None,
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "tcpdump");
+        assert!(t.args.contains(&"eth0".to_string()));
+    }
+
+    #[test]
+    fn test_web_scan() {
+        let intent = Intent::NetworkScan {
+            action: "web_scan".to_string(),
+            target: Some("http://example.com".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nikto");
+        assert!(t.args.contains(&"-h".to_string()));
+        assert!(t.args.contains(&"http://example.com".to_string()));
+    }
+
+    #[test]
+    fn test_mass_scan() {
+        let intent = Intent::NetworkScan {
+            action: "mass_scan".to_string(),
+            target: Some("10.0.0.0/8".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "masscan");
+        assert!(t.args.contains(&"--rate=1000".to_string()));
+        assert!(t.args.contains(&"-p1-65535".to_string()));
+        assert!(t.args.contains(&"10.0.0.0/8".to_string()));
+    }
+
+    #[test]
+    fn test_arp_scan_with_target() {
+        let intent = Intent::NetworkScan {
+            action: "arp_scan".to_string(),
+            target: Some("192.168.1.0/24".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "arp-scan");
+        assert!(t.args.contains(&"192.168.1.0/24".to_string()));
+    }
+
+    #[test]
+    fn test_arp_scan_default() {
+        let intent = Intent::NetworkScan {
+            action: "arp_scan".to_string(),
+            target: None,
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "arp-scan");
+        assert!(t.args.contains(&"--localnet".to_string()));
+    }
+
+    #[test]
+    fn test_network_diag() {
+        let intent = Intent::NetworkScan {
+            action: "network_diag".to_string(),
+            target: Some("google.com".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "mtr");
+        assert!(t.args.contains(&"--report".to_string()));
+        assert!(t.args.contains(&"-c".to_string()));
+        assert!(t.args.contains(&"10".to_string()));
+        assert!(t.args.contains(&"google.com".to_string()));
+    }
+
+    #[test]
+    fn test_service_scan() {
+        let intent = Intent::NetworkScan {
+            action: "service_scan".to_string(),
+            target: Some("192.168.1.1".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nmap");
+        assert!(t.args.contains(&"-sV".to_string()));
+        assert!(t.args.contains(&"192.168.1.1".to_string()));
+    }
+
+    #[test]
+    fn test_dir_fuzz() {
+        let intent = Intent::NetworkScan {
+            action: "dir_fuzz".to_string(),
+            target: Some("http://target.local".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "ffuf");
+        assert!(t.args.contains(&"-u".to_string()));
+        assert!(t.args.contains(&"http://target.local/FUZZ".to_string()));
+        assert!(t.args.contains(&"-w".to_string()));
+    }
+
+    #[test]
+    fn test_vuln_scan() {
+        let intent = Intent::NetworkScan {
+            action: "vuln_scan".to_string(),
+            target: Some("http://app.local".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nuclei");
+        assert!(t.args.contains(&"-u".to_string()));
+        assert!(t.args.contains(&"http://app.local".to_string()));
+        assert!(t.args.contains(&"-silent".to_string()));
+    }
+
+    #[test]
+    fn test_socket_stats() {
+        let intent = Intent::NetworkScan {
+            action: "socket_stats".to_string(),
+            target: None,
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "ss");
+        assert!(t.args.contains(&"-tunap".to_string()));
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_dns_enum() {
+        let intent = Intent::NetworkScan {
+            action: "dns_enum".to_string(),
+            target: Some("example.org".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "dnsrecon");
+        assert!(t.args.contains(&"-d".to_string()));
+        assert!(t.args.contains(&"example.org".to_string()));
+    }
+
+    #[test]
+    fn test_deep_inspect() {
+        let intent = Intent::NetworkScan {
+            action: "deep_inspect".to_string(),
+            target: Some("br0".to_string()),
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "tshark");
+        assert!(t.args.contains(&"-i".to_string()));
+        assert!(t.args.contains(&"br0".to_string()));
+        assert!(t.args.contains(&"-c".to_string()));
+        assert!(t.args.contains(&"100".to_string()));
+    }
+
+    #[test]
+    fn test_bandwidth_monitor() {
+        let intent = Intent::NetworkScan {
+            action: "bandwidth_monitor".to_string(),
+            target: None,
+        };
+        let t = translate_network(&intent).unwrap();
+        assert_eq!(t.command, "nethogs");
+        assert!(t.args.is_empty());
+        assert_eq!(t.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_unknown_action_returns_error() {
+        let intent = Intent::NetworkScan {
+            action: "nonexistent".to_string(),
+            target: None,
+        };
+        assert!(translate_network(&intent).is_err());
+    }
 }

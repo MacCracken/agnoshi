@@ -176,3 +176,265 @@ pub(crate) fn translate_synapse(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_synapse called with non-synapse intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_synapse_models_list() {
+        let intent = Intent::SynapseModels {
+            action: "list".to_string(),
+            name: None,
+            source: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_models");
+        assert_eq!(mcp.arguments["action"], "list");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_models_download_with_name_and_source() {
+        let intent = Intent::SynapseModels {
+            action: "download".to_string(),
+            name: Some("llama3".to_string()),
+            source: Some("huggingface".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_models");
+        assert_eq!(mcp.arguments["action"], "download");
+        assert_eq!(mcp.arguments["name"], "llama3");
+        assert_eq!(mcp.arguments["source"], "huggingface");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_models_info() {
+        let intent = Intent::SynapseModels {
+            action: "info".to_string(),
+            name: Some("gpt2".to_string()),
+            source: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.arguments["action"], "info");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_models_delete() {
+        let intent = Intent::SynapseModels {
+            action: "delete".to_string(),
+            name: Some("old-model".to_string()),
+            source: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_serve_start() {
+        let intent = Intent::SynapseServe {
+            action: "start".to_string(),
+            model: Some("llama3".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_serve");
+        assert_eq!(mcp.arguments["action"], "start");
+        assert_eq!(mcp.arguments["model"], "llama3");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_serve_status() {
+        let intent = Intent::SynapseServe {
+            action: "status".to_string(),
+            model: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_serve");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_serve_stop() {
+        let intent = Intent::SynapseServe {
+            action: "stop".to_string(),
+            model: Some("llama3".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_serve_list() {
+        let intent = Intent::SynapseServe {
+            action: "list".to_string(),
+            model: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_finetune_start() {
+        let intent = Intent::SynapseFinetune {
+            action: "start".to_string(),
+            model: Some("llama3".to_string()),
+            method: Some("lora".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_finetune");
+        assert_eq!(mcp.arguments["action"], "start");
+        assert_eq!(mcp.arguments["model"], "llama3");
+        assert_eq!(mcp.arguments["method"], "lora");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_finetune_status() {
+        let intent = Intent::SynapseFinetune {
+            action: "status".to_string(),
+            model: None,
+            method: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_finetune_list() {
+        let intent = Intent::SynapseFinetune {
+            action: "list".to_string(),
+            model: None,
+            method: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_finetune_cancel() {
+        let intent = Intent::SynapseFinetune {
+            action: "cancel".to_string(),
+            model: Some("llama3".to_string()),
+            method: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_chat() {
+        let intent = Intent::SynapseChat {
+            model: "llama3".to_string(),
+            prompt: Some("hello world".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_chat");
+        assert_eq!(mcp.arguments["model"], "llama3");
+        assert_eq!(mcp.arguments["prompt"], "hello world");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_chat_no_prompt() {
+        let intent = Intent::SynapseChat {
+            model: "gpt2".to_string(),
+            prompt: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_chat");
+        assert_eq!(mcp.arguments["model"], "gpt2");
+        assert!(mcp.arguments.get("prompt").is_none());
+    }
+
+    #[test]
+    fn test_synapse_status() {
+        let intent = Intent::SynapseStatus;
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_status");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_benchmark_run() {
+        let intent = Intent::SynapseBenchmark {
+            action: "run".to_string(),
+            models: Some("llama3,gpt2".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_benchmark");
+        assert_eq!(mcp.arguments["action"], "run");
+        assert_eq!(mcp.arguments["models"], "llama3,gpt2");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_benchmark_list() {
+        let intent = Intent::SynapseBenchmark {
+            action: "list".to_string(),
+            models: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_benchmark_status() {
+        let intent = Intent::SynapseBenchmark {
+            action: "status".to_string(),
+            models: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_quantize_start() {
+        let intent = Intent::SynapseQuantize {
+            action: "start".to_string(),
+            model: Some("llama3".to_string()),
+            format: Some("gguf".to_string()),
+        };
+        let t = translate_synapse(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "synapse_quantize");
+        assert_eq!(mcp.arguments["action"], "start");
+        assert_eq!(mcp.arguments["model"], "llama3");
+        assert_eq!(mcp.arguments["format"], "gguf");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_synapse_quantize_status() {
+        let intent = Intent::SynapseQuantize {
+            action: "status".to_string(),
+            model: None,
+            format: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_synapse_quantize_list() {
+        let intent = Intent::SynapseQuantize {
+            action: "list".to_string(),
+            model: None,
+            format: None,
+        };
+        let t = translate_synapse(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+}

@@ -191,3 +191,306 @@ pub(crate) fn translate_tazama(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_tazama called with non-tazama intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tazama_project_create() {
+        let intent = Intent::TazamaProject {
+            action: "create".to_string(),
+            name: Some("my-video".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_project");
+        assert_eq!(mcp.arguments["action"], "create");
+        assert_eq!(mcp.arguments["name"], "my-video");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_project_list() {
+        let intent = Intent::TazamaProject {
+            action: "list".to_string(),
+            name: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_project");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_project_info() {
+        let intent = Intent::TazamaProject {
+            action: "info".to_string(),
+            name: Some("proj1".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_project_open() {
+        let intent = Intent::TazamaProject {
+            action: "open".to_string(),
+            name: Some("proj1".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_project_save() {
+        let intent = Intent::TazamaProject {
+            action: "save".to_string(),
+            name: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_project_close() {
+        let intent = Intent::TazamaProject {
+            action: "close".to_string(),
+            name: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_timeline_add() {
+        let intent = Intent::TazamaTimeline {
+            action: "add".to_string(),
+            clip_id: Some("clip-001".to_string()),
+            position: Some(10.5),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_timeline");
+        assert_eq!(mcp.arguments["action"], "add");
+        assert_eq!(mcp.arguments["clip_id"], "clip-001");
+        assert_eq!(mcp.arguments["position"], "10.5");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_timeline_list() {
+        let intent = Intent::TazamaTimeline {
+            action: "list".to_string(),
+            clip_id: None,
+            position: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_timeline");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_timeline_remove() {
+        let intent = Intent::TazamaTimeline {
+            action: "remove".to_string(),
+            clip_id: Some("clip-002".to_string()),
+            position: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_timeline_split() {
+        let intent = Intent::TazamaTimeline {
+            action: "split".to_string(),
+            clip_id: Some("clip-001".to_string()),
+            position: Some(5.0),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_timeline_trim() {
+        let intent = Intent::TazamaTimeline {
+            action: "trim".to_string(),
+            clip_id: Some("clip-001".to_string()),
+            position: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_effects_apply() {
+        let intent = Intent::TazamaEffects {
+            action: "apply".to_string(),
+            effect_type: Some("blur".to_string()),
+            clip_id: Some("clip-001".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_effects");
+        assert_eq!(mcp.arguments["action"], "apply");
+        assert_eq!(mcp.arguments["effect_type"], "blur");
+        assert_eq!(mcp.arguments["clip_id"], "clip-001");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_effects_list() {
+        let intent = Intent::TazamaEffects {
+            action: "list".to_string(),
+            effect_type: None,
+            clip_id: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_effects_remove() {
+        let intent = Intent::TazamaEffects {
+            action: "remove".to_string(),
+            effect_type: Some("blur".to_string()),
+            clip_id: Some("clip-001".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_effects_preview() {
+        let intent = Intent::TazamaEffects {
+            action: "preview".to_string(),
+            effect_type: Some("color_grade".to_string()),
+            clip_id: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_ai() {
+        let intent = Intent::TazamaAi {
+            action: "auto_cut".to_string(),
+            options: Some("fast".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_ai");
+        assert_eq!(mcp.arguments["action"], "auto_cut");
+        assert_eq!(mcp.arguments["options"], "fast");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_ai_no_options() {
+        let intent = Intent::TazamaAi {
+            action: "stabilize".to_string(),
+            options: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_ai");
+        assert!(mcp.arguments.get("options").is_none());
+    }
+
+    #[test]
+    fn test_tazama_export_with_format_and_path() {
+        let intent = Intent::TazamaExport {
+            path: Some("/tmp/output.mp4".to_string()),
+            format: Some("mp4".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_export");
+        assert_eq!(mcp.arguments["path"], "/tmp/output.mp4");
+        assert_eq!(mcp.arguments["format"], "mp4");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_export_no_options() {
+        let intent = Intent::TazamaExport {
+            path: None,
+            format: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_export");
+        assert!(mcp.arguments.get("path").is_none());
+        assert!(mcp.arguments.get("format").is_none());
+    }
+
+    #[test]
+    fn test_tazama_media_import() {
+        let intent = Intent::TazamaMedia {
+            action: "import".to_string(),
+            path: Some("/tmp/clip.mov".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_media");
+        assert_eq!(mcp.arguments["action"], "import");
+        assert_eq!(mcp.arguments["path"], "/tmp/clip.mov");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_media_list() {
+        let intent = Intent::TazamaMedia {
+            action: "list".to_string(),
+            path: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_media_info() {
+        let intent = Intent::TazamaMedia {
+            action: "info".to_string(),
+            path: Some("/tmp/clip.mov".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_subtitles_generate() {
+        let intent = Intent::TazamaSubtitles {
+            action: "generate".to_string(),
+            language: Some("en".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tazama_subtitles");
+        assert_eq!(mcp.arguments["action"], "generate");
+        assert_eq!(mcp.arguments["language"], "en");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tazama_subtitles_list() {
+        let intent = Intent::TazamaSubtitles {
+            action: "list".to_string(),
+            language: None,
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tazama_subtitles_remove() {
+        let intent = Intent::TazamaSubtitles {
+            action: "remove".to_string(),
+            language: Some("fr".to_string()),
+        };
+        let t = translate_tazama(&intent).unwrap();
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+}

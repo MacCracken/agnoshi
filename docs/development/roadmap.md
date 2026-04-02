@@ -7,8 +7,8 @@
 
 ## v1.0.0 Criteria
 
-- [ ] Interpreter API stable
+- [x] Interpreter API stable
 - [ ] All 30+ translators production-tested
 - [ ] Approval workflow battle-tested
-- [ ] 80%+ code coverage
-- [ ] Independent ark package: `ark upgrade agnoshi`
+- [x] 80%+ code coverage (86.56%)
+- [x] Independent ark package: `ark install --group shell` / `ark upgrade agnoshi`

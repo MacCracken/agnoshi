@@ -191,3 +191,267 @@ pub(crate) fn translate_rasa(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_rasa called with non-rasa intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_canvas_create() {
+        let intent = Intent::RasaCanvas {
+            action: "create".to_string(),
+            name: Some("banner".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_canvas");
+        assert_eq!(mcp.arguments["action"], "create");
+        assert_eq!(mcp.arguments["name"], "banner");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_canvas_list() {
+        let intent = Intent::RasaCanvas {
+            action: "list".to_string(),
+            name: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_canvas");
+        assert!(mcp.arguments.get("name").is_none());
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_canvas_info() {
+        let intent = Intent::RasaCanvas {
+            action: "info".to_string(),
+            name: Some("logo".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_canvas_save() {
+        let intent = Intent::RasaCanvas {
+            action: "save".to_string(),
+            name: Some("draft".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_layers_add() {
+        let intent = Intent::RasaLayers {
+            action: "add".to_string(),
+            name: Some("background".to_string()),
+            kind: Some("raster".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_layers");
+        assert_eq!(mcp.arguments["action"], "add");
+        assert_eq!(mcp.arguments["name"], "background");
+        assert_eq!(mcp.arguments["kind"], "raster");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_layers_list() {
+        let intent = Intent::RasaLayers {
+            action: "list".to_string(),
+            name: None,
+            kind: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_layers");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_layers_remove() {
+        let intent = Intent::RasaLayers {
+            action: "remove".to_string(),
+            name: Some("layer-1".to_string()),
+            kind: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tools_action() {
+        let intent = Intent::RasaTools {
+            action: "brush".to_string(),
+            params: Some("size=10".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_tools");
+        assert_eq!(mcp.arguments["action"], "brush");
+        assert_eq!(mcp.arguments["params"], "size=10");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tools_without_params() {
+        let intent = Intent::RasaTools {
+            action: "eraser".to_string(),
+            params: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert!(mcp.arguments.get("params").is_none());
+    }
+
+    #[test]
+    fn test_ai_with_prompt() {
+        let intent = Intent::RasaAi {
+            action: "enhance".to_string(),
+            prompt: Some("increase sharpness".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_ai");
+        assert_eq!(mcp.arguments["action"], "enhance");
+        assert_eq!(mcp.arguments["prompt"], "increase sharpness");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_ai_without_prompt() {
+        let intent = Intent::RasaAi {
+            action: "upscale".to_string(),
+            prompt: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert!(mcp.arguments.get("prompt").is_none());
+    }
+
+    #[test]
+    fn test_export_with_format() {
+        let intent = Intent::RasaExport {
+            path: Some("/output/image.png".to_string()),
+            format: Some("png".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_export");
+        assert_eq!(mcp.arguments["path"], "/output/image.png");
+        assert_eq!(mcp.arguments["format"], "png");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_export_minimal() {
+        let intent = Intent::RasaExport {
+            path: None,
+            format: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_export");
+        assert!(mcp.arguments.get("path").is_none());
+        assert!(mcp.arguments.get("format").is_none());
+    }
+
+    #[test]
+    fn test_batch_with_path() {
+        let intent = Intent::RasaBatch {
+            action: "resize".to_string(),
+            path: Some("/images".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_batch");
+        assert_eq!(mcp.arguments["action"], "resize");
+        assert_eq!(mcp.arguments["path"], "/images");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_batch_list() {
+        let intent = Intent::RasaBatch {
+            action: "list".to_string(),
+            path: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_templates_list() {
+        let intent = Intent::RasaTemplates {
+            action: "list".to_string(),
+            name: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_templates");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_templates_info() {
+        let intent = Intent::RasaTemplates {
+            action: "info".to_string(),
+            name: Some("poster".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_templates_apply() {
+        let intent = Intent::RasaTemplates {
+            action: "apply".to_string(),
+            name: Some("flyer".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.arguments["name"], "flyer");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_adjustments_list() {
+        let intent = Intent::RasaAdjustments {
+            action: "list".to_string(),
+            adjustment_type: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_adjustments");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_adjustments_apply() {
+        let intent = Intent::RasaAdjustments {
+            action: "apply".to_string(),
+            adjustment_type: Some("brightness".to_string()),
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "rasa_adjustments");
+        assert_eq!(mcp.arguments["action"], "apply");
+        assert_eq!(mcp.arguments["type"], "brightness");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_adjustments_without_type() {
+        let intent = Intent::RasaAdjustments {
+            action: "reset".to_string(),
+            adjustment_type: None,
+        };
+        let result = translate_rasa(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert!(mcp.arguments.get("type").is_none());
+    }
+}

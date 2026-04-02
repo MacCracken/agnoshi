@@ -105,3 +105,130 @@ pub(crate) fn translate_tarang(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_tarang called with non-tarang intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tarang_probe() {
+        let intent = Intent::TarangProbe {
+            path: "/tmp/song.mp3".to_string(),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_probe");
+        assert_eq!(mcp.arguments["path"], "/tmp/song.mp3");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tarang_analyze() {
+        let intent = Intent::TarangAnalyze {
+            path: "/tmp/video.mkv".to_string(),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_analyze");
+        assert_eq!(mcp.arguments["path"], "/tmp/video.mkv");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tarang_codecs() {
+        let intent = Intent::TarangCodecs;
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_codecs");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tarang_transcribe_with_language() {
+        let intent = Intent::TarangTranscribe {
+            path: "/tmp/audio.wav".to_string(),
+            language: Some("en".to_string()),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_transcribe");
+        assert_eq!(mcp.arguments["path"], "/tmp/audio.wav");
+        assert_eq!(mcp.arguments["language"], "en");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tarang_transcribe_no_language() {
+        let intent = Intent::TarangTranscribe {
+            path: "/tmp/audio.wav".to_string(),
+            language: None,
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_transcribe");
+        assert_eq!(mcp.arguments["path"], "/tmp/audio.wav");
+        assert!(mcp.arguments.get("language").is_none());
+    }
+
+    #[test]
+    fn test_tarang_formats() {
+        let intent = Intent::TarangFormats {
+            path: "/tmp/clip.avi".to_string(),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_formats");
+        assert_eq!(mcp.arguments["path"], "/tmp/clip.avi");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tarang_fingerprint_index() {
+        let intent = Intent::TarangFingerprintIndex {
+            path: "/tmp/track.flac".to_string(),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_fingerprint_index");
+        assert_eq!(mcp.arguments["path"], "/tmp/track.flac");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_tarang_search_similar_with_top_k() {
+        let intent = Intent::TarangSearchSimilar {
+            path: "/tmp/song.mp3".to_string(),
+            top_k: Some(5),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_search_similar");
+        assert_eq!(mcp.arguments["path"], "/tmp/song.mp3");
+        assert_eq!(mcp.arguments["top_k"], 5);
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tarang_search_similar_no_top_k() {
+        let intent = Intent::TarangSearchSimilar {
+            path: "/tmp/song.mp3".to_string(),
+            top_k: None,
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_search_similar");
+        assert!(mcp.arguments.get("top_k").is_none());
+    }
+
+    #[test]
+    fn test_tarang_describe() {
+        let intent = Intent::TarangDescribe {
+            path: "/tmp/podcast.mp3".to_string(),
+        };
+        let t = translate_tarang(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tarang_describe");
+        assert_eq!(mcp.arguments["path"], "/tmp/podcast.mp3");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+}

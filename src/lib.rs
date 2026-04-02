@@ -1,3 +1,20 @@
+//! Agnoshi — AI-native natural language shell for AGNOS.
+//!
+//! Translates natural language into system commands with human oversight,
+//! security approval workflows, and full audit logging.
+//!
+//! # Public API
+//!
+//! The stable public surface is intentionally narrow:
+//!
+//! - [`Interpreter`] — natural language → intent → command translation
+//! - [`Session`] — shell session lifecycle (interactive + one-shot)
+//! - [`ShellConfig`] — shell configuration
+//! - [`Mode`] — operating mode (Human, AiAssisted, AiAutonomous, Strict)
+//! - [`SecurityContext`] — user privilege management
+//!
+//! Domain modules (`prompt`, `history`) are also public for advanced consumers.
+
 pub mod aliases;
 pub mod approval;
 pub mod audit;
@@ -21,5 +38,5 @@ pub mod ui;
 pub use config::ShellConfig;
 pub use interpreter::{Intent, Interpreter, ListOptions, Translation};
 pub use mode::Mode;
-pub use security::SecurityContext;
+pub use security::{PermissionLevel, SecurityContext};
 pub use session::Session;

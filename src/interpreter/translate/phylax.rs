@@ -78,3 +78,104 @@ pub(crate) fn translate_phylax(intent: &Intent) -> Result<Translation> {
         _ => Err(anyhow!("translate_phylax called with non-phylax intent")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_phylax_scan_default_mode() {
+        let intent = Intent::PhylaxScan {
+            target: "/tmp/suspect.bin".to_string(),
+            mode: None,
+        };
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(t.args.iter().any(|a| a.contains("on_demand")));
+        assert!(t.args.iter().any(|a| a.contains("/tmp/suspect.bin")));
+        assert_eq!(t.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_phylax_scan_custom_mode() {
+        let intent = Intent::PhylaxScan {
+            target: "/usr/bin/app".to_string(),
+            mode: Some("pre_exec".to_string()),
+        };
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(t.args.iter().any(|a| a.contains("pre_exec")));
+        assert!(t.args.iter().any(|a| a.contains("/usr/bin/app")));
+    }
+
+    #[test]
+    fn test_phylax_findings_no_filter() {
+        let intent = Intent::PhylaxFindings { severity: None };
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(
+            t.args
+                .iter()
+                .any(|a| a == "http://127.0.0.1:8090/v1/scan/history")
+        );
+        assert_eq!(t.permission, PermissionLevel::ReadOnly);
+    }
+
+    #[test]
+    fn test_phylax_findings_with_severity() {
+        let intent = Intent::PhylaxFindings {
+            severity: Some("critical".to_string()),
+        };
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(t.args.iter().any(|a| a.contains("severity=critical")));
+    }
+
+    #[test]
+    fn test_phylax_history() {
+        let intent = Intent::PhylaxHistory { limit: Some(10) };
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(
+            t.args
+                .iter()
+                .any(|a| a == "http://127.0.0.1:8090/v1/scan/history")
+        );
+        assert_eq!(t.permission, PermissionLevel::ReadOnly);
+    }
+
+    #[test]
+    fn test_phylax_status() {
+        let intent = Intent::PhylaxStatus;
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(
+            t.args
+                .iter()
+                .any(|a| a == "http://127.0.0.1:8090/v1/scan/status")
+        );
+        assert_eq!(t.permission, PermissionLevel::ReadOnly);
+    }
+
+    #[test]
+    fn test_phylax_rules() {
+        let intent = Intent::PhylaxRules;
+        let t = translate_phylax(&intent).unwrap();
+        assert_eq!(t.command, "curl");
+        assert!(
+            t.args
+                .iter()
+                .any(|a| a == "http://127.0.0.1:8090/v1/scan/rules")
+        );
+        assert_eq!(t.permission, PermissionLevel::ReadOnly);
+    }
+
+    #[test]
+    fn test_phylax_non_phylax_intent_errors() {
+        let intent = Intent::PhylaxStatus; // valid
+        assert!(translate_phylax(&intent).is_ok());
+
+        let intent = Intent::SystemInfo;
+        assert!(translate_phylax(&intent).is_err());
+    }
+}

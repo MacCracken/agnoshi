@@ -124,3 +124,153 @@ pub(crate) fn translate_edge(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_edge called with non-edge intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mcp_tool_name(t: &Translation) -> &str {
+        t.mcp.as_ref().unwrap().tool_name.as_str()
+    }
+
+    fn mcp_args(t: &Translation) -> &serde_json::Value {
+        &t.mcp.as_ref().unwrap().arguments
+    }
+
+    #[test]
+    fn test_edge_list_nodes_no_filter() {
+        let intent = Intent::EdgeListNodes { status: None };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_list");
+        assert!(mcp_args(&t).get("status").is_none());
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_edge_list_nodes_with_status() {
+        let intent = Intent::EdgeListNodes {
+            status: Some("online".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_list");
+        assert_eq!(mcp_args(&t)["status"], "online");
+    }
+
+    #[test]
+    fn test_edge_deploy() {
+        let intent = Intent::EdgeDeploy {
+            task: "inference-v2".to_string(),
+            node: Some("node-3".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_deploy");
+        assert_eq!(mcp_args(&t)["task"], "inference-v2");
+        assert_eq!(mcp_args(&t)["node_id"], "node-3");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_edge_deploy_no_node() {
+        let intent = Intent::EdgeDeploy {
+            task: "monitor".to_string(),
+            node: None,
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_deploy");
+        assert_eq!(mcp_args(&t)["task"], "monitor");
+        assert!(mcp_args(&t).get("node_id").is_none());
+    }
+
+    #[test]
+    fn test_edge_update_with_version() {
+        let intent = Intent::EdgeUpdate {
+            node: "node-5".to_string(),
+            version: Some("2.1.0".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_update");
+        assert_eq!(mcp_args(&t)["node_id"], "node-5");
+        assert_eq!(mcp_args(&t)["version"], "2.1.0");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_edge_update_default_version() {
+        let intent = Intent::EdgeUpdate {
+            node: "node-1".to_string(),
+            version: None,
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_update");
+        assert_eq!(mcp_args(&t)["version"], "latest");
+    }
+
+    #[test]
+    fn test_edge_health_specific_node() {
+        let intent = Intent::EdgeHealth {
+            node: Some("node-9".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_health");
+        assert_eq!(mcp_args(&t)["node_id"], "node-9");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_edge_health_fleet() {
+        let intent = Intent::EdgeHealth { node: None };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_health");
+        assert!(mcp_args(&t).get("node_id").is_none());
+    }
+
+    #[test]
+    fn test_edge_decommission() {
+        let intent = Intent::EdgeDecommission {
+            node: "node-old".to_string(),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_decommission");
+        assert_eq!(mcp_args(&t)["node_id"], "node-old");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_edge_logs() {
+        let intent = Intent::EdgeLogs {
+            action: "tail".to_string(),
+            node: Some("node-2".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_logs");
+        assert_eq!(mcp_args(&t)["action"], "tail");
+        assert_eq!(mcp_args(&t)["node_id"], "node-2");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_edge_config_get() {
+        let intent = Intent::EdgeConfig {
+            action: "get".to_string(),
+            node: Some("node-4".to_string()),
+            key: Some("max_workers".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_config");
+        assert_eq!(mcp_args(&t)["action"], "get");
+        assert_eq!(mcp_args(&t)["key"], "max_workers");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_edge_config_set() {
+        let intent = Intent::EdgeConfig {
+            action: "set".to_string(),
+            node: Some("node-4".to_string()),
+            key: Some("max_workers".to_string()),
+        };
+        let t = translate_edge(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "edge_config");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+}

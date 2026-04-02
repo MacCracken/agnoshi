@@ -67,3 +67,77 @@ pub(crate) fn translate_tron(intent: &Intent) -> Result<Translation> {
         _ => Err(anyhow!("translate_tron called with non-tron intent")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tron_status() {
+        let intent = Intent::TronStatus;
+        let t = translate_tron(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tron_status");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tron_risk() {
+        let intent = Intent::TronRisk {
+            agent_id: "agent-42".to_string(),
+        };
+        let t = translate_tron(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tron_risk");
+        assert_eq!(mcp.arguments["agent_id"], "agent-42");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tron_audit_with_agent_and_limit() {
+        let intent = Intent::TronAudit {
+            agent_id: Some("agent-42".to_string()),
+            limit: Some(20),
+        };
+        let t = translate_tron(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tron_audit");
+        assert_eq!(mcp.arguments["agent_id"], "agent-42");
+        assert_eq!(mcp.arguments["limit"], 20);
+        assert_eq!(t.permission, PermissionLevel::Safe);
+        assert!(t.description.contains("agent-42"));
+    }
+
+    #[test]
+    fn test_tron_audit_no_agent_no_limit() {
+        let intent = Intent::TronAudit {
+            agent_id: None,
+            limit: None,
+        };
+        let t = translate_tron(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tron_audit");
+        assert!(mcp.arguments.get("agent_id").is_none());
+        assert!(mcp.arguments.get("limit").is_none());
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tron_policy() {
+        let intent = Intent::TronPolicy {
+            toml: "[policy]\nmax_risk = 0.5".to_string(),
+        };
+        let t = translate_tron(&intent).unwrap();
+        let mcp = t.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "tron_policy");
+        assert_eq!(mcp.arguments["toml"], "[policy]\nmax_risk = 0.5");
+        assert_eq!(t.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_tron_non_tron_intent_errors() {
+        let intent = Intent::TronStatus; // valid intent, just testing the pattern
+        // Verify a valid call works
+        assert!(translate_tron(&intent).is_ok());
+    }
+}

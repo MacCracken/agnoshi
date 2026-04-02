@@ -172,3 +172,261 @@ pub(crate) fn translate_mneme(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_mneme called with non-mneme intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_notebook_list() {
+        let intent = Intent::MnemeNotebook {
+            action: "list".to_string(),
+            name: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_notebook");
+        assert_eq!(mcp.arguments["action"], "list");
+        assert!(mcp.arguments.get("name").is_none());
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_notebook_create() {
+        let intent = Intent::MnemeNotebook {
+            action: "create".to_string(),
+            name: Some("research".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.arguments["action"], "create");
+        assert_eq!(mcp.arguments["name"], "research");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_notebook_info() {
+        let intent = Intent::MnemeNotebook {
+            action: "info".to_string(),
+            name: Some("notes".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_notebook_delete() {
+        let intent = Intent::MnemeNotebook {
+            action: "delete".to_string(),
+            name: Some("old".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_notes_list() {
+        let intent = Intent::MnemeNotes {
+            action: "list".to_string(),
+            title: None,
+            notebook_id: Some("nb-1".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_notes");
+        assert_eq!(mcp.arguments["action"], "list");
+        assert_eq!(mcp.arguments["notebook_id"], "nb-1");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_notes_create() {
+        let intent = Intent::MnemeNotes {
+            action: "create".to_string(),
+            title: Some("My Note".to_string()),
+            notebook_id: Some("nb-2".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.arguments["action"], "create");
+        assert_eq!(mcp.arguments["title"], "My Note");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_notes_get() {
+        let intent = Intent::MnemeNotes {
+            action: "get".to_string(),
+            title: Some("existing".to_string()),
+            notebook_id: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_notes_edit() {
+        let intent = Intent::MnemeNotes {
+            action: "edit".to_string(),
+            title: Some("draft".to_string()),
+            notebook_id: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_notes_delete() {
+        let intent = Intent::MnemeNotes {
+            action: "delete".to_string(),
+            title: None,
+            notebook_id: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_search_with_mode() {
+        let intent = Intent::MnemeSearch {
+            query: "rust async".to_string(),
+            mode: Some("semantic".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_search");
+        assert_eq!(mcp.arguments["query"], "rust async");
+        assert_eq!(mcp.arguments["mode"], "semantic");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_search_without_mode() {
+        let intent = Intent::MnemeSearch {
+            query: "tokio".to_string(),
+            mode: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.arguments["query"], "tokio");
+        assert!(mcp.arguments.get("mode").is_none());
+    }
+
+    #[test]
+    fn test_ai_with_note_id() {
+        let intent = Intent::MnemeAi {
+            action: "summarize".to_string(),
+            note_id: Some("note-42".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_ai");
+        assert_eq!(mcp.arguments["action"], "summarize");
+        assert_eq!(mcp.arguments["note_id"], "note-42");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_ai_without_note_id() {
+        let intent = Intent::MnemeAi {
+            action: "generate".to_string(),
+            note_id: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert!(mcp.arguments.get("note_id").is_none());
+    }
+
+    #[test]
+    fn test_graph_view() {
+        let intent = Intent::MnemeGraph {
+            action: "view".to_string(),
+            node_id: Some("node-1".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_graph");
+        assert_eq!(mcp.arguments["action"], "view");
+        assert_eq!(mcp.arguments["node_id"], "node-1");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_graph_stats() {
+        let intent = Intent::MnemeGraph {
+            action: "stats".to_string(),
+            node_id: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_graph_link() {
+        let intent = Intent::MnemeGraph {
+            action: "link".to_string(),
+            node_id: Some("node-5".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_import_with_path() {
+        let intent = Intent::MnemeImport {
+            action: "file".to_string(),
+            path: Some("/docs/paper.pdf".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_import");
+        assert_eq!(mcp.arguments["action"], "file");
+        assert_eq!(mcp.arguments["path"], "/docs/paper.pdf");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_import_status() {
+        let intent = Intent::MnemeImport {
+            action: "status".to_string(),
+            path: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tags_list() {
+        let intent = Intent::MnemeTags {
+            action: "list".to_string(),
+            tag: None,
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.tool_name, "mneme_tags");
+        assert_eq!(mcp.arguments["action"], "list");
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tags_search() {
+        let intent = Intent::MnemeTags {
+            action: "search".to_string(),
+            tag: Some("rust".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        assert_eq!(result.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_tags_add() {
+        let intent = Intent::MnemeTags {
+            action: "add".to_string(),
+            tag: Some("important".to_string()),
+        };
+        let result = translate_mneme(&intent).unwrap();
+        let mcp = result.mcp.as_ref().unwrap();
+        assert_eq!(mcp.arguments["tag"], "important");
+        assert_eq!(result.permission, PermissionLevel::SystemWrite);
+    }
+}

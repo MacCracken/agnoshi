@@ -241,3 +241,225 @@ pub(crate) fn translate_agnostic(intent: &Intent) -> Result<Translation> {
         _ => unreachable!("translate_agnostic called with non-agnostic intent"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mcp_tool_name(t: &Translation) -> &str {
+        t.mcp.as_ref().unwrap().tool_name.as_str()
+    }
+
+    fn mcp_args(t: &Translation) -> &serde_json::Value {
+        &t.mcp.as_ref().unwrap().arguments
+    }
+
+    #[test]
+    fn test_agnostic_submit_task() {
+        let intent = Intent::AgnosticSubmitTask {
+            title: "Login test".to_string(),
+            description: Some("Test login flow".to_string()),
+            target_url: Some("https://example.com".to_string()),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_submit_task");
+        assert_eq!(mcp_args(&t)["title"], "Login test");
+        assert_eq!(mcp_args(&t)["description"], "Test login flow");
+        assert_eq!(mcp_args(&t)["target_url"], "https://example.com");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_agnostic_submit_task_no_description() {
+        let intent = Intent::AgnosticSubmitTask {
+            title: "Smoke test".to_string(),
+            description: None,
+            target_url: None,
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_submit_task");
+        // When description is None, it falls back to title
+        assert_eq!(mcp_args(&t)["description"], "Smoke test");
+    }
+
+    #[test]
+    fn test_agnostic_task_status() {
+        let intent = Intent::AgnosticTaskStatus {
+            task_id: "task-99".to_string(),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_task_status");
+        assert_eq!(mcp_args(&t)["task_id"], "task-99");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_structured_results() {
+        let intent = Intent::AgnosticStructuredResults {
+            session_id: "sess-1".to_string(),
+            result_type: Some("summary".to_string()),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_structured_results");
+        assert_eq!(mcp_args(&t)["session_id"], "sess-1");
+        assert_eq!(mcp_args(&t)["result_type"], "summary");
+    }
+
+    #[test]
+    fn test_agnostic_list_presets() {
+        let intent = Intent::AgnosticListPresets {
+            domain: Some("web".to_string()),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_list_presets");
+        assert_eq!(mcp_args(&t)["domain"], "web");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_agent_status() {
+        let intent = Intent::AgnosticAgentStatus;
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_agent_status");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_dashboard_with_section() {
+        let intent = Intent::AgnosticDashboard {
+            section: Some("failures".to_string()),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_dashboard");
+        assert_eq!(mcp_args(&t)["section"], "failures");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_dashboard_no_section() {
+        let intent = Intent::AgnosticDashboard { section: None };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_dashboard");
+        assert!(mcp_args(&t).get("section").is_none());
+    }
+
+    #[test]
+    fn test_agnostic_trends() {
+        let intent = Intent::AgnosticTrends;
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_trends");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_compare() {
+        let intent = Intent::AgnosticCompare {
+            session_a: "s1".to_string(),
+            session_b: "s2".to_string(),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_compare");
+        assert_eq!(mcp_args(&t)["session_a"], "s1");
+        assert_eq!(mcp_args(&t)["session_b"], "s2");
+    }
+
+    #[test]
+    fn test_agnostic_run_crew() {
+        let intent = Intent::AgnosticRunCrew {
+            title: "Perf suite".to_string(),
+            preset: Some("load-test".to_string()),
+            gpu_required: true,
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_run_crew");
+        assert_eq!(mcp_args(&t)["title"], "Perf suite");
+        assert_eq!(mcp_args(&t)["preset"], "load-test");
+        assert_eq!(mcp_args(&t)["gpu_required"], true);
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_agnostic_run_crew_no_gpu() {
+        let intent = Intent::AgnosticRunCrew {
+            title: "Basic suite".to_string(),
+            preset: None,
+            gpu_required: false,
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_run_crew");
+        assert!(mcp_args(&t).get("gpu_required").is_none());
+    }
+
+    #[test]
+    fn test_agnostic_crew_status() {
+        let intent = Intent::AgnosticCrewStatus {
+            crew_id: "crew-42".to_string(),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_crew_status");
+        assert_eq!(mcp_args(&t)["crew_id"], "crew-42");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_list_crews() {
+        let intent = Intent::AgnosticListCrews {
+            status: Some("running".to_string()),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_list_crews");
+        assert_eq!(mcp_args(&t)["status"], "running");
+    }
+
+    #[test]
+    fn test_agnostic_cancel_crew() {
+        let intent = Intent::AgnosticCancelCrew {
+            crew_id: "crew-7".to_string(),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_cancel_crew");
+        assert_eq!(mcp_args(&t)["crew_id"], "crew-7");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_agnostic_list_definitions() {
+        let intent = Intent::AgnosticListDefinitions {
+            domain: Some("testing".to_string()),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_list_definitions");
+        assert_eq!(mcp_args(&t)["domain"], "testing");
+    }
+
+    #[test]
+    fn test_agnostic_create_agent() {
+        let intent = Intent::AgnosticCreateAgent {
+            agent_key: "qa-bot".to_string(),
+            name: "QA Bot".to_string(),
+            role: "automated testing".to_string(),
+        };
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnostic_create_agent");
+        assert_eq!(mcp_args(&t)["agent_key"], "qa-bot");
+        assert_eq!(mcp_args(&t)["name"], "QA Bot");
+        assert_eq!(mcp_args(&t)["role"], "automated testing");
+        assert_eq!(t.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_agnostic_gpu_status() {
+        let intent = Intent::AgnosticGpuStatus;
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnos_gpu_probe");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_agnostic_gpu_memory() {
+        let intent = Intent::AgnosticGpuMemory;
+        let t = translate_agnostic(&intent).unwrap();
+        assert_eq!(mcp_tool_name(&t), "agnos_gpu_probe");
+        assert_eq!(t.permission, PermissionLevel::Safe);
+    }
+}
