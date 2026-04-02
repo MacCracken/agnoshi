@@ -91,6 +91,50 @@ impl LlmClient {
         }
     }
 
+    /// Generate command suggestion with shell context
+    pub async fn suggest_command_with_context(
+        &self,
+        request: &str,
+        cwd: &str,
+        recent_commands: &[String],
+        last_exit_code: i32,
+    ) -> Result<String> {
+        let system = "You are an expert Linux shell assistant in the AGNOS operating system. \
+            Given a natural language request and the current shell context, output ONLY the \
+            shell command(s) that would accomplish the task. No explanation, no markdown — \
+            just the command(s), one per line.";
+
+        let mut context_parts = vec![format!("Request: {}", request)];
+        context_parts.push(format!("Working directory: {}", cwd));
+        if last_exit_code != 0 {
+            context_parts.push(format!("Last command exit code: {}", last_exit_code));
+        }
+        if !recent_commands.is_empty() {
+            let recent: Vec<&String> = recent_commands.iter().rev().take(5).collect();
+            context_parts.push(format!(
+                "Recent commands: {}",
+                recent
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+
+        let prompt = context_parts.join("\n");
+
+        match self.chat(system, &prompt).await {
+            Ok(cmd) => Ok(cmd),
+            Err(e) => {
+                warn!("LLM suggestion failed, falling back: {}", e);
+                Ok(format!(
+                    "# Suggested command for: {}\n# (LLM Gateway unavailable: {})",
+                    request, e
+                ))
+            }
+        }
+    }
+
     /// Explain what a command does
     pub async fn explain_command(&self, command: &str) -> Result<String> {
         let system = "You are an expert Linux shell teacher in the AGNOS operating system. \
@@ -107,6 +151,28 @@ impl LlmClient {
                     "Command: {}\n(Explanation unavailable — LLM Gateway error: {})",
                     command, e
                 ))
+            }
+        }
+    }
+
+    /// Suggest a fix for a failed command
+    pub async fn suggest_fix(&self, command: &str, exit_code: i32, stderr: &str) -> Result<String> {
+        let system = "You are an expert Linux shell debugger in the AGNOS operating system. \
+            A command failed. Analyze the error and suggest a fix. Output ONLY: \
+            1) A one-line diagnosis of the problem. \
+            2) The corrected command(s), one per line. \
+            No markdown, no code fences, no explanation beyond the diagnosis line.";
+
+        let prompt = format!(
+            "Command: {}\nExit code: {}\nError output:\n{}",
+            command, exit_code, stderr
+        );
+
+        match self.chat(system, &prompt).await {
+            Ok(suggestion) => Ok(suggestion),
+            Err(e) => {
+                debug!("LLM fix suggestion unavailable: {}", e);
+                Ok(String::new())
             }
         }
     }

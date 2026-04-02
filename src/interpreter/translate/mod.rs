@@ -61,12 +61,19 @@ impl Interpreter {
                 agnos::translate_agnos(intent)
             }
 
-            // System: journal, device, mount, boot, update
+            // System: journal, device, mount, boot, update, chmod, chown, symlink, archive, cron, service enable, env
             Intent::JournalView { .. }
             | Intent::DeviceInfo { .. }
             | Intent::MountControl { .. }
             | Intent::BootConfig { .. }
-            | Intent::SystemUpdate { .. } => system::translate_system(intent),
+            | Intent::SystemUpdate { .. }
+            | Intent::Chmod { .. }
+            | Intent::Chown { .. }
+            | Intent::Symlink { .. }
+            | Intent::Archive { .. }
+            | Intent::Cron { .. }
+            | Intent::ServiceEnable { .. }
+            | Intent::EnvVar { .. } => system::translate_system(intent),
 
             // Knowledge / RAG
             Intent::KnowledgeSearch { .. } | Intent::RagQuery { .. } => {

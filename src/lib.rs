@@ -18,6 +18,7 @@
 pub mod aliases;
 pub mod approval;
 pub mod audit;
+pub mod checkpoint;
 pub mod commands;
 pub mod completion;
 pub mod config;

@@ -7,6 +7,7 @@ use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 
 use crate::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
+use crate::checkpoint::CheckpointManager;
 use crate::config::ShellConfig;
 use crate::history::CommandHistory;
 use crate::interpreter::{Intent, Interpreter};
@@ -31,6 +32,7 @@ pub struct Session {
     prompt_renderer: PromptRenderer,
     prompt_context: PromptContext,
     llm: LlmClient,
+    checkpoint: CheckpointManager,
 }
 
 impl Session {
@@ -57,6 +59,8 @@ impl Session {
             initial_mode.to_string(),
         );
 
+        let checkpoint = CheckpointManager::new();
+
         Ok(Self {
             _config: config,
             _security: security,
@@ -70,6 +74,7 @@ impl Session {
             prompt_renderer,
             prompt_context,
             llm,
+            checkpoint,
         })
     }
 
@@ -170,6 +175,14 @@ impl Session {
                 self.ui.show_history(&self.history);
                 return Ok(Some(Ok(())));
             }
+            "undo" => {
+                match self.checkpoint.undo_last().await {
+                    Ok(Some(msg)) => self.ui.show_info(&msg),
+                    Ok(None) => self.ui.show_warning("Nothing to undo"),
+                    Err(e) => self.ui.show_error(&format!("Undo failed: {}", e)),
+                }
+                return Ok(Some(Ok(())));
+            }
             _ if cmd.starts_with("mode ") => {
                 let new_mode = cmd.strip_prefix("mode ").unwrap();
                 match new_mode {
@@ -219,10 +232,66 @@ impl Session {
                 }
             }
             Intent::Unknown => {
-                // Try to execute as shell command with warning
-                self.ui
-                    .show_warning("I didn't understand. Executing as shell command.");
-                self.execute_shell_command(input).await?;
+                // Try LLM for better interpretation before falling back
+                self.ui.show_info("Interpreting with AI...");
+                match self
+                    .llm
+                    .suggest_command_with_context(
+                        input,
+                        &self.cwd.to_string_lossy(),
+                        &self
+                            .history
+                            .get_recent(5)
+                            .iter()
+                            .map(|e| e.to_string())
+                            .collect::<Vec<_>>(),
+                        self.prompt_context.last_exit_code,
+                    )
+                    .await
+                {
+                    Ok(suggestion) if !suggestion.starts_with('#') => {
+                        self.ui
+                            .show_info(&format!("Suggestion: {}", suggestion.trim()));
+                        // Parse the first line as a shell command
+                        let cmd_line = suggestion.lines().next().unwrap_or("").trim();
+                        if !cmd_line.is_empty() {
+                            let parts: Vec<&str> = cmd_line.split_whitespace().collect();
+                            if !parts.is_empty() {
+                                let cmd = parts[0].to_string();
+                                let args: Vec<String> =
+                                    parts[1..].iter().map(|s| s.to_string()).collect();
+                                // Check permission before executing
+                                let perm = crate::security::analyze_command_permission(&cmd, &args);
+                                if perm.requires_approval() {
+                                    let request = ApprovalRequest::Command {
+                                        command: cmd.clone(),
+                                        args: args.clone(),
+                                        reason: format!("AI-suggested command for: {}", input),
+                                        risk_level: crate::approval::RiskLevel::from_permission(
+                                            &perm,
+                                        ),
+                                    };
+                                    match self.approval.request(&request).await? {
+                                        ApprovalResponse::Approved
+                                        | ApprovalResponse::ApprovedOnce => {
+                                            self.execute_command(&cmd, &args).await?;
+                                        }
+                                        _ => {
+                                            self.ui.show_info("Action cancelled");
+                                        }
+                                    }
+                                } else {
+                                    self.execute_command(&cmd, &args).await?;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        self.ui
+                            .show_warning("Could not interpret. Executing as shell command.");
+                        self.execute_shell_command(input).await?;
+                    }
+                }
             }
             _ => {
                 // Translate to command
@@ -470,6 +539,36 @@ impl Session {
         use std::process::Stdio;
         use tokio::process::Command;
 
+        // Checkpoint destructive operations before execution
+        match cmd {
+            "rm" => {
+                // Find first non-flag argument as the target path
+                if let Some(target) = args.iter().find(|a| !a.starts_with('-')) {
+                    let path = self.cwd.join(target);
+                    if let Ok(Some(cp)) = self.checkpoint.checkpoint_remove(&path).await {
+                        self.ui.show_info(&format!(
+                            "Checkpoint created ({}). Use 'undo' to restore.",
+                            cp.id
+                        ));
+                    }
+                }
+            }
+            "mv" => {
+                if args.len() >= 2 {
+                    let non_flag: Vec<&String> =
+                        args.iter().filter(|a| !a.starts_with('-')).collect();
+                    if non_flag.len() >= 2 {
+                        let cp = self.checkpoint.checkpoint_move(non_flag[0], non_flag[1]);
+                        self.ui.show_info(&format!(
+                            "Checkpoint created ({}). Use 'undo' to reverse.",
+                            cp.id
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+
         let mut command = Command::new(cmd);
         command
             .args(args)
@@ -510,8 +609,33 @@ impl Session {
                             let reader = tokio::io::BufReader::new(stderr);
                             use tokio::io::AsyncBufReadExt;
                             let mut lines = reader.lines();
+                            let mut stderr_lines = Vec::new();
                             while let Some(line) = lines.next_line().await? {
                                 self.ui.show_error(&line);
+                                stderr_lines.push(line);
+                            }
+
+                            // Error recovery: ask LLM for a fix suggestion
+                            if self.mode_manager.current().ai_available() {
+                                let full_cmd = if args.is_empty() {
+                                    cmd.to_string()
+                                } else {
+                                    format!("{} {}", cmd, args.join(" "))
+                                };
+                                let stderr_text = format!(
+                                    "Working directory: {}\n{}",
+                                    self.cwd.to_string_lossy(),
+                                    stderr_lines.join("\n")
+                                );
+                                let exit_code = self.prompt_context.last_exit_code;
+                                if let Ok(suggestion) = self
+                                    .llm
+                                    .suggest_fix(&full_cmd, exit_code, &stderr_text)
+                                    .await
+                                    && !suggestion.is_empty()
+                                {
+                                    self.ui.show_suggestion(&suggestion);
+                                }
                             }
                         }
                     }

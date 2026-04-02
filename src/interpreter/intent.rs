@@ -677,6 +677,33 @@ pub enum Intent {
         toml: String,
     },
 
+    /// Change file permissions
+    Chmod { path: String, mode: String },
+    /// Change file ownership
+    Chown { path: String, owner: String },
+    /// Create symbolic link
+    Symlink { target: String, link: String },
+    /// Compress/archive files
+    Archive {
+        action: String,
+        archive: String,
+        files: Vec<String>,
+    },
+    /// Manage cron jobs
+    Cron {
+        action: String,
+        schedule: Option<String>,
+        command: Option<String>,
+    },
+    /// Enable/disable systemd services
+    ServiceEnable { service: String, enable: bool },
+    /// Environment variable operations
+    EnvVar {
+        action: String,
+        name: Option<String>,
+        value: Option<String>,
+    },
+
     /// Piped command chain (cmd1 | cmd2)
     Pipeline { commands: Vec<String> },
     /// Question/Information request

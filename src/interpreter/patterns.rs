@@ -67,6 +67,34 @@ pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
         r"(?i)^(show|display|view|what)\s+(me\s+)?(my\s+)?(network|ip|net)\s*(info|information|address|config|configuration|status|interfaces?)?$",
     );
     r(
+        "chmod",
+        r"(?i)^(?:(chmod|change\s+perm(?:ission)?s?\s+(?:of\s+)?|set\s+perm(?:ission)?s?\s+(?:on\s+)?)\s*(.+?)(?:\s+(?:to\s+)?(\d{3,4}|[ugoa]*[+-=][rwxXst]*))?\s*$|make\s+(.+?)\s+executable\s*$)",
+    );
+    r(
+        "chown",
+        r"(?i)^(chown|change\s+own(?:er(?:ship)?)?)\s+(.+?)\s+(?:to\s+)?(\S+)$",
+    );
+    r(
+        "symlink",
+        r"(?i)^(?:create\s+)?(?:a\s+)?(?:sym(?:bolic)?\s*)?link\s+(?:from\s+)?(.+?)\s+(?:to|->|pointing\s+to)\s+(.+)$",
+    );
+    r(
+        "archive",
+        r"(?i)^(tar|zip|compress|archive|extract|unzip|untar|decompress)\s+(.+)$",
+    );
+    r(
+        "cron",
+        r"(?i)^(cron|schedule|crontab)\s+(list|add|remove|edit|show)?\s*(.*)$",
+    );
+    r(
+        "service_enable",
+        r"(?i)^(enable|disable)\s+(?:service\s+)?(\S+?)(?:\s+(?:on\s+boot|at\s+(?:boot|startup)))?\s*$",
+    );
+    r(
+        "envvar",
+        r"(?i)^(set|export|unset|show|print|echo)\s+(?:env(?:ironment)?\s+)?(?:var(?:iable)?\s+)?(\$?\w+)(?:\s*=\s*(.+))?$",
+    );
+    r(
         "audit",
         r"(?i)^(show|view|display|check)\s+(the\s+)?(audit|security)\s*(log|trail|history|entries)?(\s+for\s+(agent\s+)?(.+?))?(\s+(in|from)\s+(the\s+)?(last\s+)?(.+))?$",
     );

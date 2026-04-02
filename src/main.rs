@@ -10,6 +10,7 @@ use tracing::info;
 
 mod approval;
 pub mod audit;
+pub mod checkpoint;
 pub mod commands;
 pub mod config;
 pub mod history;

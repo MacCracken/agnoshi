@@ -310,6 +310,121 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
         return Some(Intent::NetworkInfo);
     }
 
+    // Chmod: "chmod 755 script.sh", "make file executable", "change permissions of file to 644"
+    if let Some(caps) = interp.try_captures("chmod", input_lower) {
+        // Group 4 = path from "make <path> executable"
+        // Group 2 = path from "chmod/change permissions" form
+        let path = caps
+            .get(4)
+            .or_else(|| caps.get(2))
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default();
+        let mode = if caps.get(4).is_some() {
+            "+x".to_string()
+        } else {
+            caps.get(3)
+                .map(|m| m.as_str().trim().to_string())
+                .unwrap_or_else(|| "+x".to_string())
+        };
+        if !path.is_empty() {
+            return Some(Intent::Chmod { path, mode });
+        }
+    }
+
+    // Chown: "chown file.txt to root:root", "change owner of file to user"
+    if let Some(caps) = interp.try_captures("chown", input_lower) {
+        let path = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let owner = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
+        if !path.is_empty() && !owner.is_empty() {
+            return Some(Intent::Chown { path, owner });
+        }
+    }
+
+    // Symlink: "create symlink from X to Y", "link X to Y"
+    if let Some(caps) = interp.try_captures("symlink", input_lower) {
+        let link = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let target = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        if !link.is_empty() && !target.is_empty() {
+            return Some(Intent::Symlink { target, link });
+        }
+    }
+
+    // Archive: "tar archive.tar.gz src/", "zip backup.zip src/", "extract archive.tar.gz"
+    if let Some(caps) = interp.try_captures("archive", input_lower) {
+        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_lowercase();
+        let rest = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let parts: Vec<String> = rest.split_whitespace().map(|s| s.to_string()).collect();
+        let (archive, files) = if parts.len() > 1 {
+            (parts[0].clone(), parts[1..].to_vec())
+        } else {
+            (parts.first().cloned().unwrap_or_default(), vec![])
+        };
+        return Some(Intent::Archive {
+            action,
+            archive,
+            files,
+        });
+    }
+
+    // Cron: "cron list", "schedule add */5 * * * * backup.sh"
+    if let Some(caps) = interp.try_captures("cron", input_lower) {
+        let action = caps
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_else(|| "list".to_string());
+        let rest = caps
+            .get(3)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        // For add action, try to split schedule from command
+        let (schedule, command) = if action == "add" {
+            if let Some(r) = &rest {
+                // Simple heuristic: last token is the command, rest is schedule
+                let tokens: Vec<&str> = r.split_whitespace().collect();
+                if tokens.len() > 1 {
+                    let cmd = tokens.last().unwrap().to_string();
+                    let sched = tokens[..tokens.len() - 1].join(" ");
+                    (Some(sched), Some(cmd))
+                } else {
+                    (None, rest.clone())
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, rest)
+        };
+        return Some(Intent::Cron {
+            action,
+            schedule,
+            command,
+        });
+    }
+
+    // Service enable/disable: "enable nginx on boot", "disable bluetooth"
+    if let Some(caps) = interp.try_captures("service_enable", input_lower) {
+        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_lowercase();
+        let service = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        if !service.is_empty() {
+            let enable = action == "enable";
+            return Some(Intent::ServiceEnable { service, enable });
+        }
+    }
+
+    // Env var: "set PATH=/usr/bin", "export FOO=bar", "show env HOME"
+    if let Some(caps) = interp.try_captures("envvar", input_lower) {
+        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_lowercase();
+        let name = caps
+            .get(2)
+            .map(|m| m.as_str().trim().trim_start_matches('$').to_string());
+        let value = caps.get(3).map(|m| m.as_str().trim().to_string());
+        return Some(Intent::EnvVar {
+            action,
+            name,
+            value,
+        });
+    }
+
     // Disk usage: "how much disk space in /home", "disk usage"
     if let Some(caps) = interp.try_captures("du", input_lower) {
         let path = caps

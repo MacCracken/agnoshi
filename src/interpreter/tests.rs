@@ -3316,4 +3316,268 @@ mod tests {
         let intent = interpreter.parse("search for TODO in src");
         assert!(matches!(intent, Intent::SearchContent { .. }));
     }
+
+    // --- Core shell domain intent tests ---
+
+    #[test]
+    fn test_parse_chmod_direct() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("chmod 755 script.sh");
+        assert!(
+            matches!(intent, Intent::Chmod { .. }),
+            "Expected Chmod, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_chmod_natural() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("make file executable");
+        assert!(
+            matches!(intent, Intent::Chmod { .. }),
+            "Expected Chmod, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_chown() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("chown file.txt to root:root");
+        assert!(
+            matches!(intent, Intent::Chown { .. }),
+            "Expected Chown, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_symlink() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("create symlink from /usr/bin/python to /usr/bin/python3");
+        assert!(
+            matches!(intent, Intent::Symlink { .. }),
+            "Expected Symlink, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_archive_tar() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("tar archive.tar.gz src/");
+        assert!(
+            matches!(intent, Intent::Archive { .. }),
+            "Expected Archive, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_archive_extract() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("extract backup.zip");
+        assert!(
+            matches!(intent, Intent::Archive { .. }),
+            "Expected Archive, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_cron_list() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("cron list");
+        assert!(
+            matches!(intent, Intent::Cron { .. }),
+            "Expected Cron, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_service_enable() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("enable nginx on boot");
+        assert!(
+            matches!(intent, Intent::ServiceEnable { ref service, enable: true, .. } if service == "nginx"),
+            "Expected ServiceEnable(nginx, true), got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_service_disable() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("disable bluetooth");
+        assert!(
+            matches!(intent, Intent::ServiceEnable { ref service, enable: false, .. } if service == "bluetooth"),
+            "Expected ServiceEnable(bluetooth, false), got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_envvar_set() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("set PATH=/usr/bin");
+        assert!(
+            matches!(intent, Intent::EnvVar { .. }),
+            "Expected EnvVar, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_envvar_export() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("export FOO=bar");
+        assert!(
+            matches!(intent, Intent::EnvVar { .. }),
+            "Expected EnvVar, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_parse_envvar_show() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("show env HOME");
+        assert!(
+            matches!(intent, Intent::EnvVar { .. }),
+            "Expected EnvVar, got {:?}",
+            intent
+        );
+    }
+
+    #[test]
+    fn test_translate_chmod() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::Chmod {
+            path: "script.sh".to_string(),
+            mode: "755".to_string(),
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "chmod");
+        assert_eq!(translation.args, vec!["755", "script.sh"]);
+    }
+
+    #[test]
+    fn test_translate_chown() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::Chown {
+            path: "file.txt".to_string(),
+            owner: "root:root".to_string(),
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "chown");
+        assert_eq!(translation.args, vec!["root:root", "file.txt"]);
+        assert_eq!(translation.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_translate_symlink() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::Symlink {
+            target: "/usr/bin/python3".to_string(),
+            link: "/usr/bin/python".to_string(),
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "ln");
+        assert_eq!(
+            translation.args,
+            vec!["-s", "/usr/bin/python3", "/usr/bin/python"]
+        );
+    }
+
+    #[test]
+    fn test_translate_archive_tar() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::Archive {
+            action: "tar".to_string(),
+            archive: "archive.tar.gz".to_string(),
+            files: vec!["src/".to_string()],
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "tar");
+        assert!(translation.args.contains(&"-czf".to_string()));
+    }
+
+    #[test]
+    fn test_translate_archive_extract_zip() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::Archive {
+            action: "extract".to_string(),
+            archive: "backup.zip".to_string(),
+            files: vec![],
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "unzip");
+    }
+
+    #[test]
+    fn test_translate_cron_list() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::Cron {
+            action: "list".to_string(),
+            schedule: None,
+            command: None,
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "crontab");
+        assert_eq!(translation.args, vec!["-l"]);
+    }
+
+    #[test]
+    fn test_translate_service_enable() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::ServiceEnable {
+            service: "nginx".to_string(),
+            enable: true,
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "systemctl");
+        assert_eq!(translation.args, vec!["enable", "nginx"]);
+        assert_eq!(translation.permission, PermissionLevel::Admin);
+    }
+
+    #[test]
+    fn test_translate_service_disable() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::ServiceEnable {
+            service: "bluetooth".to_string(),
+            enable: false,
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "systemctl");
+        assert_eq!(translation.args, vec!["disable", "bluetooth"]);
+    }
+
+    #[test]
+    fn test_translate_envvar_show() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::EnvVar {
+            action: "show".to_string(),
+            name: Some("HOME".to_string()),
+            value: None,
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "env");
+        assert_eq!(translation.permission, PermissionLevel::Safe);
+    }
+
+    #[test]
+    fn test_translate_envvar_export() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::EnvVar {
+            action: "export".to_string(),
+            name: Some("FOO".to_string()),
+            value: Some("bar".to_string()),
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "export");
+        assert_eq!(translation.args, vec!["FOO=bar"]);
+        assert_eq!(translation.permission, PermissionLevel::UserWrite);
+    }
 }

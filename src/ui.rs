@@ -166,6 +166,16 @@ impl Ui {
         eprintln!("  {} {}", style("✗").red(), style(message).red());
     }
 
+    /// Show fix suggestion after a command failure
+    pub fn show_suggestion(&self, suggestion: &str) {
+        for line in suggestion.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                println!("  {} {}", style("?").cyan(), style(trimmed).cyan());
+            }
+        }
+    }
+
     /// Clear screen
     pub fn clear_screen(&self) {
         let _ = self.term.clear_screen();

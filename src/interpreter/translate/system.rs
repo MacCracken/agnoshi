@@ -217,6 +217,204 @@ pub(crate) fn translate_system(intent: &Intent) -> Result<Translation> {
             })
         }
 
+        Intent::Chmod { path, mode } => {
+            let desc = format!("Change permissions of {} to {}", path, mode);
+            let permission =
+                if path.starts_with("/etc") || path.starts_with("/usr") || path.starts_with("/sys")
+                {
+                    PermissionLevel::SystemWrite
+                } else {
+                    PermissionLevel::UserWrite
+                };
+            Ok(Translation {
+                command: "chmod".to_string(),
+                args: vec![mode.clone(), path.clone()],
+                description: desc.clone(),
+                permission,
+                explanation: desc,
+                mcp: None,
+            })
+        }
+
+        Intent::Chown { path, owner } => {
+            let desc = format!("Change ownership of {} to {}", path, owner);
+            Ok(Translation {
+                command: "chown".to_string(),
+                args: vec![owner.clone(), path.clone()],
+                description: desc.clone(),
+                permission: PermissionLevel::Admin,
+                explanation: desc,
+                mcp: None,
+            })
+        }
+
+        Intent::Symlink { target, link } => {
+            let desc = format!("Create symbolic link {} -> {}", link, target);
+            Ok(Translation {
+                command: "ln".to_string(),
+                args: vec!["-s".to_string(), target.clone(), link.clone()],
+                description: desc.clone(),
+                permission: PermissionLevel::UserWrite,
+                explanation: desc,
+                mcp: None,
+            })
+        }
+
+        Intent::Archive {
+            action,
+            archive,
+            files,
+        } => {
+            let (command, args, desc) = match action.as_str() {
+                "tar" | "archive" | "compress" => {
+                    let mut a = vec!["-czf".to_string(), archive.clone()];
+                    a.extend(files.iter().cloned());
+                    let d = format!("Create tar archive {}", archive);
+                    ("tar".to_string(), a, d)
+                }
+                "zip" => {
+                    let mut a = vec!["-r".to_string(), archive.clone()];
+                    a.extend(files.iter().cloned());
+                    let d = format!("Create zip archive {}", archive);
+                    ("zip".to_string(), a, d)
+                }
+                "extract" | "untar" | "decompress" => {
+                    let d = format!("Extract archive {}", archive);
+                    if archive.ends_with(".zip") {
+                        ("unzip".to_string(), vec![archive.clone()], d)
+                    } else {
+                        (
+                            "tar".to_string(),
+                            vec!["-xf".to_string(), archive.clone()],
+                            d,
+                        )
+                    }
+                }
+                "unzip" => {
+                    let d = format!("Extract zip archive {}", archive);
+                    ("unzip".to_string(), vec![archive.clone()], d)
+                }
+                _ => {
+                    let d = format!("Archive operation on {}", archive);
+                    (
+                        "tar".to_string(),
+                        vec!["-czf".to_string(), archive.clone()],
+                        d,
+                    )
+                }
+            };
+            Ok(Translation {
+                command,
+                args,
+                description: desc.clone(),
+                permission: PermissionLevel::UserWrite,
+                explanation: desc,
+                mcp: None,
+            })
+        }
+
+        Intent::Cron {
+            action,
+            schedule,
+            command,
+        } => {
+            let (args, desc, permission) = match action.as_str() {
+                "list" | "show" => (
+                    vec!["-l".to_string()],
+                    "List crontab entries".to_string(),
+                    PermissionLevel::UserWrite,
+                ),
+                "add" => {
+                    let sched = schedule.as_deref().unwrap_or("* * * * *");
+                    let cmd = command.as_deref().unwrap_or("echo hello");
+                    (
+                        vec!["-l".to_string()],
+                        format!("Add cron job: {} {}", sched, cmd),
+                        PermissionLevel::SystemWrite,
+                    )
+                }
+                "remove" => (
+                    vec!["-r".to_string()],
+                    "Remove crontab entries".to_string(),
+                    PermissionLevel::SystemWrite,
+                ),
+                "edit" => (
+                    vec!["-e".to_string()],
+                    "Edit crontab".to_string(),
+                    PermissionLevel::SystemWrite,
+                ),
+                other => {
+                    return Err(anyhow!("Unknown cron action: {}", other));
+                }
+            };
+            Ok(Translation {
+                command: "crontab".to_string(),
+                args,
+                description: desc.clone(),
+                permission,
+                explanation: desc,
+                mcp: None,
+            })
+        }
+
+        Intent::ServiceEnable { service, enable } => {
+            let action_str = if *enable { "enable" } else { "disable" };
+            let desc = format!("{} service {}", action_str, service);
+            Ok(Translation {
+                command: "systemctl".to_string(),
+                args: vec![action_str.to_string(), service.clone()],
+                description: desc.clone(),
+                permission: PermissionLevel::Admin,
+                explanation: desc,
+                mcp: None,
+            })
+        }
+
+        Intent::EnvVar {
+            action,
+            name,
+            value,
+        } => {
+            let var_name = name.as_deref().unwrap_or("VAR");
+            match action.as_str() {
+                "show" | "print" | "echo" => {
+                    let desc = format!("Show environment variable {}", var_name);
+                    Ok(Translation {
+                        command: "env".to_string(),
+                        args: vec![],
+                        description: desc.clone(),
+                        permission: PermissionLevel::Safe,
+                        explanation: desc,
+                        mcp: None,
+                    })
+                }
+                "set" | "export" => {
+                    let val = value.as_deref().unwrap_or("");
+                    let desc = format!("Set environment variable {}={}", var_name, val);
+                    Ok(Translation {
+                        command: "export".to_string(),
+                        args: vec![format!("{}={}", var_name, val)],
+                        description: desc.clone(),
+                        permission: PermissionLevel::UserWrite,
+                        explanation: desc,
+                        mcp: None,
+                    })
+                }
+                "unset" => {
+                    let desc = format!("Unset environment variable {}", var_name);
+                    Ok(Translation {
+                        command: "unset".to_string(),
+                        args: vec![var_name.to_string()],
+                        description: desc.clone(),
+                        permission: PermissionLevel::UserWrite,
+                        explanation: desc,
+                        mcp: None,
+                    })
+                }
+                other => Err(anyhow!("Unknown env var action: {}", other)),
+            }
+        }
+
         _ => unreachable!("translate_system called with non-system intent"),
     }
 }
