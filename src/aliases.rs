@@ -29,6 +29,7 @@ impl AliasManager {
     }
 
     /// Expand input if it starts with a known alias
+    #[must_use]
     pub fn expand(&self, input: &str) -> String {
         let trimmed = input.trim();
         // Check if the first word matches an alias
@@ -46,6 +47,7 @@ impl AliasManager {
     }
 
     /// List all aliases
+    #[must_use]
     pub fn list(&self) -> Vec<(&str, &str)> {
         let mut pairs: Vec<_> = self
             .aliases
@@ -57,11 +59,13 @@ impl AliasManager {
     }
 
     /// Get alias count
+    #[must_use]
     pub fn count(&self) -> usize {
         self.aliases.len()
     }
 
     /// Check if an alias exists
+    #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.aliases.contains_key(name)
     }

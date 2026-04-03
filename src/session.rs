@@ -41,7 +41,7 @@ impl Session {
         security: SecurityContext,
         initial_mode: Mode,
     ) -> Result<Self> {
-        let mode_manager = ModeManager::new(initial_mode.clone(), true);
+        let mode_manager = ModeManager::new(initial_mode, true);
         let interpreter = Interpreter::new();
         let approval = ApprovalManager::new();
         let history = CommandHistory::new(&config.history_file).await?;
@@ -542,8 +542,8 @@ impl Session {
         // Checkpoint destructive operations before execution
         match cmd {
             "rm" => {
-                // Find first non-flag argument as the target path
-                if let Some(target) = args.iter().find(|a| !a.starts_with('-')) {
+                // Checkpoint all non-flag target paths
+                for target in args.iter().filter(|a| !a.starts_with('-')) {
                     let path = self.cwd.join(target);
                     if let Ok(Some(cp)) = self.checkpoint.checkpoint_remove(&path).await {
                         self.ui.show_info(&format!(
@@ -577,9 +577,13 @@ impl Session {
             .stderr(Stdio::piped());
 
         match command.spawn() {
-            Ok(mut child) => {
-                match child.wait().await {
-                    Ok(status) => {
+            Ok(child) => {
+                // Read stdout/stderr concurrently with waiting to avoid pipe deadlock.
+                // If the child fills the pipe buffer (~64KB), wait() would block forever
+                // because we haven't drained the pipes yet.
+                match child.wait_with_output().await {
+                    Ok(output) => {
+                        let status = output.status;
                         // Track exit code for prompt
                         self.prompt_context.last_exit_code = status.code().unwrap_or_else(|| {
                             // Process killed by signal — convention: 128 + signal number
@@ -594,25 +598,17 @@ impl Session {
                             }
                         });
 
-                        if let Some(stdout) = child.stdout.take() {
-                            let reader = tokio::io::BufReader::new(stdout);
-                            use tokio::io::AsyncBufReadExt;
-                            let mut lines = reader.lines();
-                            while let Some(line) = lines.next_line().await? {
-                                self.ui.show_output(&line);
-                            }
+                        let stdout_text = String::from_utf8_lossy(&output.stdout);
+                        for line in stdout_text.lines() {
+                            self.ui.show_output(line);
                         }
 
-                        if !status.success()
-                            && let Some(stderr) = child.stderr.take()
-                        {
-                            let reader = tokio::io::BufReader::new(stderr);
-                            use tokio::io::AsyncBufReadExt;
-                            let mut lines = reader.lines();
+                        if !status.success() {
+                            let stderr_text = String::from_utf8_lossy(&output.stderr);
                             let mut stderr_lines = Vec::new();
-                            while let Some(line) = lines.next_line().await? {
-                                self.ui.show_error(&line);
-                                stderr_lines.push(line);
+                            for line in stderr_text.lines() {
+                                self.ui.show_error(line);
+                                stderr_lines.push(line.to_string());
                             }
 
                             // Error recovery: ask LLM for a fix suggestion
@@ -622,7 +618,7 @@ impl Session {
                                 } else {
                                     format!("{} {}", cmd, args.join(" "))
                                 };
-                                let stderr_text = format!(
+                                let stderr_ctx = format!(
                                     "Working directory: {}\n{}",
                                     self.cwd.to_string_lossy(),
                                     stderr_lines.join("\n")
@@ -630,7 +626,7 @@ impl Session {
                                 let exit_code = self.prompt_context.last_exit_code;
                                 if let Ok(suggestion) = self
                                     .llm
-                                    .suggest_fix(&full_cmd, exit_code, &stderr_text)
+                                    .suggest_fix(&full_cmd, exit_code, &stderr_ctx)
                                     .await
                                     && !suggestion.is_empty()
                                 {
@@ -876,9 +872,9 @@ mod tests {
     #[test]
     fn test_mode_manager_toggle() {
         let mut manager = ModeManager::new(Mode::Human, true);
-        manager.toggle();
+        manager.toggle().unwrap();
         assert_eq!(manager.current(), &Mode::AiAssisted);
-        manager.toggle();
+        manager.toggle().unwrap();
         assert_eq!(manager.current(), &Mode::Human);
     }
 

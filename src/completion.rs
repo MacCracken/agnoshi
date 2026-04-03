@@ -81,22 +81,25 @@ impl CompletionEngine {
         }
     }
 
-    /// Register an agent name for completion
+    /// Register an agent name for completion (stored lowercase for
+    /// case-insensitive matching).
     pub fn register_agent(&mut self, name: String) {
-        self.agent_names.insert(name);
+        self.agent_names.insert(name.to_lowercase());
     }
 
-    /// Register a service name for completion
+    /// Register a service name for completion (stored lowercase for
+    /// case-insensitive matching).
     pub fn register_service(&mut self, name: String) {
-        self.service_names.insert(name);
+        self.service_names.insert(name.to_lowercase());
     }
 
     /// Remove an agent name
     pub fn deregister_agent(&mut self, name: &str) {
-        self.agent_names.remove(name);
+        self.agent_names.remove(&name.to_lowercase());
     }
 
     /// Get completions for partial input
+    #[must_use]
     pub fn complete(&self, partial: &str) -> Vec<String> {
         if partial.is_empty() {
             return Vec::new();
@@ -129,6 +132,7 @@ impl CompletionEngine {
     }
 
     /// Get context-aware completions (after a known prefix like "start service")
+    #[must_use]
     pub fn complete_contextual(&self, words: &[&str]) -> Vec<String> {
         match words {
             ["start", partial] | ["stop", partial] | ["restart", partial] => self
@@ -171,11 +175,13 @@ impl CompletionEngine {
     }
 
     /// Number of registered agents
+    #[must_use]
     pub fn agent_count(&self) -> usize {
         self.agent_names.len()
     }
 
     /// Number of registered services
+    #[must_use]
     pub fn service_count(&self) -> usize {
         self.service_names.len()
     }

@@ -3,6 +3,7 @@
 use crate::security::PermissionLevel;
 
 /// Check if user has permission for an action
+#[must_use]
 pub fn check_permission(user: &str, required: PermissionLevel) -> bool {
     // Root can do anything
     if user == "root" {
@@ -16,6 +17,8 @@ pub fn check_permission(user: &str, required: PermissionLevel) -> bool {
         PermissionLevel::SystemWrite => false, // Requires escalation
         PermissionLevel::Admin => false,       // Requires root
         PermissionLevel::Blocked => false,     // Never allowed
+        #[allow(unreachable_patterns)] // PermissionLevel is #[non_exhaustive]
+        _ => false, // Future variants default to denied
     }
 }
 

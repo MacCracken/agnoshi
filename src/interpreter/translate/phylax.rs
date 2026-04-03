@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use serde_json::json;
 
 use crate::interpreter::intent::{Intent, Translation};
 use crate::security::PermissionLevel;
@@ -17,7 +18,7 @@ pub(crate) fn translate_phylax(intent: &Intent) -> Result<Translation> {
                     "-H".to_string(),
                     "Content-Type: application/json".to_string(),
                     "-d".to_string(),
-                    format!(r#"{{"path":"{}","mode":"{}"}}"#, target, mode_str),
+                    json!({"path": target, "mode": mode_str}).to_string(),
                 ],
                 description: format!("Scan {} for threats", target),
                 permission: PermissionLevel::Admin,

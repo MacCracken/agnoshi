@@ -162,13 +162,11 @@ impl AuditViewer {
         lines.push("\u{2500}".repeat(90));
 
         for entry in entries {
-            let ts = if entry.timestamp.len() > 24 {
-                &entry.timestamp[..24]
-            } else {
-                &entry.timestamp
-            };
-            let input_truncated = if entry.input.len() > 30 {
-                format!("{}...", &entry.input[..27])
+            // Truncate safely at char boundaries to avoid panic on multi-byte UTF-8
+            let ts: String = entry.timestamp.chars().take(24).collect();
+            let input_truncated = if entry.input.chars().count() > 30 {
+                let truncated: String = entry.input.chars().take(27).collect();
+                format!("{}...", truncated)
             } else {
                 entry.input.clone()
             };

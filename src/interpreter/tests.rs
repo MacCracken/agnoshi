@@ -346,70 +346,63 @@ mod tests {
     #[test]
     fn test_parse_question_how() {
         let interpreter = Interpreter::new();
-        // The list regex is all-optional and matches almost anything.
-        // Questions like "how..." are caught by list first.
+        // "how" is a question starter, not a list starter — correctly parsed as Question
         let intent = interpreter.parse("how do I configure SSH?");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Question { .. }));
     }
 
     #[test]
     fn test_parse_question_why() {
         let interpreter = Interpreter::new();
-        // Same: list regex catches this before question pattern
+        // "why" is a question starter — correctly parsed as Question
         let intent = interpreter.parse("why is my disk full?");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Question { .. }));
     }
 
     #[test]
     fn test_parse_question_is() {
         let interpreter = Interpreter::new();
         let intent = interpreter.parse("is the server running?");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Question { .. }));
     }
 
     #[test]
     fn test_parse_question_via_existing_pattern() {
-        // The existing test_parse_question in session.rs uses "what is my IP address?"
-        // which works because "what" is one of the list starters AND matches question.
-        // Let's verify the question pattern itself works by testing directly on
-        // the regex, since the parser checks list first.
         let interpreter = Interpreter::new();
+        // "what" is both a list starter and question starter.
+        // List is checked before question, so "what is my IP address?" matches list.
         let intent = interpreter.parse("what is my IP address?");
-        // "what" matches list pattern first, so this is ListFiles
         assert!(matches!(intent, Intent::ListFiles { .. }));
     }
 
     #[test]
     fn test_parse_shell_command_single_word() {
         let interpreter = Interpreter::new();
-        // "htop" — single word, no spaces. The list pattern has optional groups
-        // so a single word may or may not match. Let's verify actual behavior.
+        // "htop" — single word, no spaces. List regex now requires a starter word
+        // (show/list/display/what/see), so "htop" falls through to ShellCommand.
         let intent = interpreter.parse("htop");
-        // The list regex: ^(show|list|display|what|see)?\s*... with all optional groups
-        // "htop" doesn't match the start words but the entire regex is optional...
-        // Actually the list regex matches empty strings too since all groups are optional.
-        // So "htop" matches as ListFiles. This is expected behavior of the broad regex.
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::ShellCommand { .. }));
     }
 
     #[test]
     fn test_parse_shell_command_with_slash() {
         let interpreter = Interpreter::new();
+        // Starts with "/" — falls through to ShellCommand since list regex
+        // now requires a starter word.
         let intent = interpreter.parse("/usr/bin/env python3");
-        // Starts with "/" so hits the `input.starts_with("/")` branch
-        // But list regex is checked first and may match. Let's verify.
-        // The list regex will likely match this too, so it becomes ListFiles.
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::ShellCommand { .. }));
     }
 
     #[test]
     fn test_parse_change_directory_go_to() {
         let interpreter = Interpreter::new();
-        // "go to /tmp" — "go" is not in list starters but list regex is all-optional
-        // Let's verify: the list regex might match. The cd regex checks for "go to".
-        // Since list is checked before cd, if list matches, we get ListFiles.
+        // "go to /tmp" — "go" is not a list starter, so list doesn't match.
+        // The cd regex matches "go to" and correctly parses as ChangeDirectory.
         let intent = interpreter.parse("go to /tmp");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::ChangeDirectory { .. }));
+        if let Intent::ChangeDirectory { path } = intent {
+            assert_eq!(path, "/tmp");
+        }
     }
 
     #[test]
@@ -702,28 +695,26 @@ mod tests {
     #[test]
     fn test_parse_empty_input() {
         let interpreter = Interpreter::new();
-        // Empty string after trim — the list regex matches empty due to all-optional groups
+        // Empty string doesn't match any pattern — falls through to Unknown
         let intent = interpreter.parse("");
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::Unknown));
     }
 
     #[test]
     fn test_parse_whitespace_only_input() {
         let interpreter = Interpreter::new();
         let intent = interpreter.parse("   ");
-        // After trim, empty string — list regex matches
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        // After trim, empty string — no pattern matches, falls to Unknown
+        assert!(matches!(intent, Intent::Unknown));
     }
 
     #[test]
     fn test_parse_single_word_no_space_goes_to_shell_command() {
         let interpreter = Interpreter::new();
-        // Single word with no space and doesn't start with "/" falls to ShellCommand
-        // BUT the list regex is checked first and matches everything due to optional groups
-        // Verify: if list matches, it's ListFiles; otherwise ShellCommand
+        // "pwd" — single word, no space. List regex requires a starter word.
+        // Falls through to ShellCommand.
         let intent = interpreter.parse("pwd");
-        // "pwd" -> list regex matches (all groups optional), so ListFiles
-        assert!(matches!(intent, Intent::ListFiles { .. }));
+        assert!(matches!(intent, Intent::ShellCommand { .. }));
     }
 
     #[test]
@@ -3713,5 +3704,151 @@ mod tests {
             vec!["ansamblu", "up", "-f", "docker-compose.yml"]
         );
         assert_eq!(translation.permission, PermissionLevel::SystemWrite);
+    }
+
+    // ====================================================================
+    // P(-1) hardening tests — verifying critical regex and parser fixes
+    // ====================================================================
+
+    #[test]
+    fn test_list_regex_requires_starter_word() {
+        let interpreter = Interpreter::new();
+
+        // "list" is a list starter — unambiguous, no other pattern claims it
+        let intent = interpreter.parse("list directories");
+        assert!(matches!(intent, Intent::ListFiles { .. }));
+
+        // "what files" — "what" is a list starter
+        let intent = interpreter.parse("what files are here");
+        assert!(matches!(intent, Intent::ListFiles { .. }));
+
+        // Words that are NOT list starters should NOT match as ListFiles
+        let intent = interpreter.parse("random word");
+        assert!(!matches!(intent, Intent::ListFiles { .. }));
+
+        // Empty string should not match (was a bug before — list regex matched everything)
+        let intent = interpreter.parse("");
+        assert!(matches!(intent, Intent::Unknown));
+
+        // Single unrecognized word should not match as ListFiles
+        let intent = interpreter.parse("htop");
+        assert!(!matches!(intent, Intent::ListFiles { .. }));
+    }
+
+    #[test]
+    fn test_cd_parses_correctly() {
+        let interpreter = Interpreter::new();
+
+        // "go to" form
+        let intent = interpreter.parse("go to /var/log");
+        assert!(matches!(intent, Intent::ChangeDirectory { .. }));
+        if let Intent::ChangeDirectory { path } = intent {
+            assert_eq!(path, "/var/log");
+        }
+
+        // "cd" form
+        let intent = interpreter.parse("cd /home/user");
+        assert!(matches!(intent, Intent::ChangeDirectory { .. }));
+        if let Intent::ChangeDirectory { path } = intent {
+            assert_eq!(path, "/home/user");
+        }
+
+        // "change to" form
+        let intent = interpreter.parse("change to /tmp");
+        assert!(matches!(intent, Intent::ChangeDirectory { .. }));
+        if let Intent::ChangeDirectory { path } = intent {
+            assert_eq!(path, "/tmp");
+        }
+
+        // "switch to" form
+        let intent = interpreter.parse("switch to /opt");
+        assert!(matches!(intent, Intent::ChangeDirectory { .. }));
+        if let Intent::ChangeDirectory { path } = intent {
+            assert_eq!(path, "/opt");
+        }
+    }
+
+    #[test]
+    fn test_find_without_in_clause() {
+        let interpreter = Interpreter::new();
+
+        // "find X" without "in" — path should be None
+        let intent = interpreter.parse("find readme.md");
+        assert!(matches!(intent, Intent::FindFiles { .. }));
+        if let Intent::FindFiles { pattern, path } = intent {
+            assert_eq!(pattern, "readme.md");
+            assert_eq!(path, None);
+        }
+
+        // "locate X" without "in"
+        let intent = interpreter.parse("locate config.toml");
+        assert!(
+            matches!(intent, Intent::FindFiles { .. }),
+            "Expected FindFiles, got {:?}",
+            intent
+        );
+        if let Intent::FindFiles { pattern, .. } = intent {
+            assert_eq!(pattern, "config.toml");
+        }
+
+        // "look for X" without "in"
+        let intent = interpreter.parse("look for Makefile");
+        assert!(matches!(intent, Intent::FindFiles { .. }));
+    }
+
+    #[test]
+    fn test_questions_parse_as_question() {
+        let interpreter = Interpreter::new();
+
+        let cases = [
+            "how do I configure SSH?",
+            "why is my disk full?",
+            "is the server running?",
+            "can I use rsync for this?",
+            "who owns this file?",
+            "when was the last backup?",
+            "where are the logs stored?",
+        ];
+        for input in cases {
+            let intent = interpreter.parse(input);
+            assert!(
+                matches!(intent, Intent::Question { .. }),
+                "Expected Question for '{}', got {:?}",
+                input,
+                intent
+            );
+        }
+    }
+
+    #[test]
+    fn test_single_word_commands_parse_as_shell() {
+        let interpreter = Interpreter::new();
+
+        let commands = ["htop", "top", "vim", "gcc", "python3", "node"];
+        for cmd in commands {
+            let intent = interpreter.parse(cmd);
+            assert!(
+                matches!(intent, Intent::ShellCommand { .. }),
+                "Expected ShellCommand for '{}', got {:?}",
+                cmd,
+                intent
+            );
+        }
+    }
+
+    #[test]
+    fn test_phylax_json_injection_safe() {
+        let interpreter = Interpreter::new();
+        // Inject a value that would break naive format!() JSON construction
+        let intent = Intent::PhylaxScan {
+            target: r#"foo","mode":"evil","inject":"true"#.to_string(),
+            mode: None,
+        };
+        let t = interpreter.translate(&intent).unwrap();
+        // The -d arg should be valid JSON with the target properly escaped
+        let json_arg = t.args.last().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(json_arg).unwrap();
+        assert_eq!(parsed["path"], r#"foo","mode":"evil","inject":"true"#);
+        assert_eq!(parsed["mode"], "on_demand");
     }
 }

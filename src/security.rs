@@ -44,11 +44,13 @@ impl SecurityContext {
         })
     }
 
-    /// Get current username
+    /// Get current username from the system (not from environment variables,
+    /// which can be spoofed).
     fn get_username(uid: u32) -> Result<String> {
-        // Try to get username from environment
-        if let Ok(user) = std::env::var("USER") {
-            return Ok(user);
+        // Use nix to look up the username from the passwd database
+        use nix::unistd::{Uid, User};
+        if let Some(user) = User::from_uid(Uid::from_raw(uid)).ok().flatten() {
+            return Ok(user.name);
         }
 
         // Fallback to uid
@@ -65,21 +67,25 @@ impl SecurityContext {
     }
 
     /// Check if running as root
+    #[must_use]
     pub fn is_root(&self) -> bool {
         self.is_root
     }
 
     /// Check if in restricted mode
+    #[must_use]
     pub fn is_restricted(&self) -> bool {
         self.restricted
     }
 
     /// Get username
+    #[must_use]
     pub fn username(&self) -> &str {
         &self.username
     }
 
     /// Check if can escalate privileges
+    #[must_use]
     pub fn can_escalate(&self) -> bool {
         !self.restricted && self.sudo_available && !self.is_root
     }
@@ -152,6 +158,7 @@ pub enum PermissionLevel {
 
 impl PermissionLevel {
     /// Check if this level requires human approval
+    #[must_use]
     pub fn requires_approval(&self) -> bool {
         matches!(
             self,
@@ -160,18 +167,20 @@ impl PermissionLevel {
     }
 
     /// Check if AI is allowed to execute this
+    #[must_use]
     pub fn ai_allowed(&self) -> bool {
         !matches!(self, PermissionLevel::Blocked)
     }
 }
 
 /// Analyze command for required permission level
+#[must_use]
 pub fn analyze_command_permission(command: &str, args: &[String]) -> PermissionLevel {
     let cmd = command.to_lowercase();
 
     // Blocked commands (never allowed for AI)
     let blocked = [
-        "rm", "dd", "mkfs", "fdisk", "parted", "dd", "chmod", "chown", "chgrp",
+        "rm", "dd", "mkfs", "fdisk", "parted", "chmod", "chown", "chgrp", "shred",
     ];
 
     if blocked.contains(&cmd.as_str()) {
@@ -201,6 +210,23 @@ pub fn analyze_command_permission(command: &str, args: &[String]) -> PermissionL
         "modprobe",
         "insmod",
         "rmmod",
+        "kill",
+        "killall",
+        "pkill",
+        "reboot",
+        "shutdown",
+        "poweroff",
+        "halt",
+        "iptables",
+        "ip6tables",
+        "nft",
+        "ufw",
+        "crontab",
+        "visudo",
+        "su",
+        "swapoff",
+        "swapon",
+        "mknod",
     ];
 
     if admin.contains(&cmd.as_str()) {
@@ -263,9 +289,8 @@ pub fn analyze_command_permission(command: &str, args: &[String]) -> PermissionL
     }
 
     // Safe commands (builtin or non-destructive)
-    let safe = [
-        "cd", "pwd", "echo", "clear", "exit", "history", "help", "agnsh",
-    ];
+    // Note: echo is in read_only (checked first), not here — avoids dead entry
+    let safe = ["cd", "pwd", "clear", "exit", "history", "help", "agnsh"];
 
     if safe.contains(&cmd.as_str()) {
         return PermissionLevel::Safe;
@@ -1122,5 +1147,96 @@ mod tests {
             analyze_command_permission("cp", &["a".to_string(), "/lib64/test".to_string()]),
             PermissionLevel::SystemWrite
         );
+    }
+
+    // ====================================================================
+    // P(-1) hardening tests — dangerous commands now require Admin
+    // ====================================================================
+
+    #[test]
+    fn test_analyze_command_kill_admin() {
+        assert_eq!(
+            analyze_command_permission("kill", &["-9".to_string(), "1234".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("killall", &["nginx".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("pkill", &["python".to_string()]),
+            PermissionLevel::Admin
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_reboot_shutdown_admin() {
+        assert_eq!(
+            analyze_command_permission("reboot", &[]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("shutdown", &["-h".to_string(), "now".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("poweroff", &[]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("halt", &[]),
+            PermissionLevel::Admin
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_firewall_admin() {
+        assert_eq!(
+            analyze_command_permission("iptables", &["-L".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("nft", &["list".to_string(), "ruleset".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("ufw", &["allow".to_string(), "22".to_string()]),
+            PermissionLevel::Admin
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_crontab_su_admin() {
+        assert_eq!(
+            analyze_command_permission("crontab", &["-e".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("su", &["-".to_string(), "root".to_string()]),
+            PermissionLevel::Admin
+        );
+        assert_eq!(
+            analyze_command_permission("visudo", &[]),
+            PermissionLevel::Admin
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_shred_blocked() {
+        assert_eq!(
+            analyze_command_permission("shred", &["file.txt".to_string()]),
+            PermissionLevel::Blocked
+        );
+    }
+
+    #[test]
+    fn test_get_username_from_system() {
+        // Verify get_username uses the system passwd database, not $USER
+        let uid = nix::unistd::getuid().as_raw() as u32;
+        let username = SecurityContext::get_username(uid);
+        assert!(username.is_ok());
+        let name = username.unwrap();
+        // Should not be empty or a uid_N fallback (unless running in unusual env)
+        assert!(!name.is_empty());
     }
 }

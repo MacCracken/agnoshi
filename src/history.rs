@@ -45,10 +45,12 @@ impl CommandHistory {
         Ok(())
     }
 
+    #[must_use]
     pub fn get_recent(&self, n: usize) -> Vec<&String> {
         self.entries.iter().rev().take(n).collect()
     }
 
+    #[must_use]
     pub fn search(&self, query: &str) -> Vec<&String> {
         self.entries
             .iter()

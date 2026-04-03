@@ -1,9 +1,9 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Compiled regex patterns, shared across all Interpreter instances.
-pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
+pub(crate) static PATTERNS: LazyLock<HashMap<String, Regex>> = LazyLock::new(|| {
     let mut p = HashMap::new();
     let mut r = |name: &str, pat: &str| {
         p.insert(
@@ -14,7 +14,7 @@ pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
     };
     r(
         "list",
-        r"(?i)^(show|list|display|what|see)?\s*(me\s+)?(all\s+)?(files|directories|dirs|folders|contents?)?\s*(in\s+)?(.+)?$",
+        r"(?i)^(show|list|display|what|see)\s+(me\s+)?(all\s+)?(files|directories|dirs|folders|contents?)?\s*(in\s+)?(.+)?$",
     );
     r(
         "show_file",
@@ -22,7 +22,7 @@ pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
     );
     r(
         "find",
-        r"(?i)^(find|locate|search\s+for|look\s+for)\s+(files?\s+(named|called)?\s+)?(.+)(\s+in\s+(.+))?$",
+        r"(?i)^(find|locate|search\s+for|look\s+for)\s+(files?\s+(named|called)?\s+)?(.+?)(\s+in\s+(.+))?$",
     );
     r(
         "grep",

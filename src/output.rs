@@ -12,6 +12,7 @@ impl OutputFormatter {
     }
 
     /// Format command output
+    #[must_use]
     pub fn format(&self, output: &str) -> String {
         match self.format.as_str() {
             "json" => self.format_json(output),
@@ -89,11 +90,13 @@ impl OutputFormatter {
         // Auto-detect format based on content
         let trimmed = output.trim();
 
-        // If it looks like JSON, format as JSON
-        if (trimmed.starts_with('{') && trimmed.ends_with('}'))
-            || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        // If it looks like JSON, try to pretty-print it (don't double-wrap)
+        if ((trimmed.starts_with('{') && trimmed.ends_with('}'))
+            || (trimmed.starts_with('[') && trimmed.ends_with(']')))
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed)
+            && let Ok(pretty) = serde_json::to_string_pretty(&parsed)
         {
-            return self.format_json(output);
+            return pretty;
         }
 
         // If it contains tabs or multi-space separators with multiple lines, format as table
@@ -142,7 +145,9 @@ mod tests {
         let formatter = OutputFormatter::new("auto");
         let input = r#"{"key": "value"}"#;
         let result = formatter.format(input);
-        assert!(result.contains("output"));
+        // Auto mode now pretty-prints JSON instead of double-wrapping it
+        assert!(result.contains("key"));
+        assert!(result.contains("value"));
     }
 
     #[test]
@@ -150,7 +155,10 @@ mod tests {
         let formatter = OutputFormatter::new("auto");
         let input = r#"[1, 2, 3]"#;
         let result = formatter.format(input);
-        assert!(result.contains("output"));
+        // Auto mode pretty-prints the JSON array
+        assert!(result.contains("1"));
+        assert!(result.contains("2"));
+        assert!(result.contains("3"));
     }
 
     #[test]

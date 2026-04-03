@@ -204,7 +204,10 @@ impl SchemaCache {
 
     /// Update the cache with newly matched categories and age out stale ones.
     pub fn update(&mut self, matched: &[String]) {
-        // Reset age for matched categories
+        // Age all categories first, before resetting matched ones
+        self.category_age.values_mut().for_each(|age| *age += 1);
+
+        // Reset age for matched categories (after aging, so they end up at 0)
         for cat in matched {
             self.category_age.insert(cat.clone(), 0);
             if !self.active_categories.contains(cat) {
@@ -212,11 +215,8 @@ impl SchemaCache {
             }
         }
 
-        // Age all categories
-        let ttl = self.ttl;
-        self.category_age.values_mut().for_each(|age| *age += 1);
-
         // Remove expired categories
+        let ttl = self.ttl;
         self.category_age.retain(|_, age| *age <= ttl);
         self.active_categories
             .retain(|cat| self.category_age.contains_key(cat));
@@ -230,6 +230,9 @@ impl SchemaCache {
     /// Filter schemas using both fresh keyword matches and cached categories.
     pub fn filter_with_cache(&mut self, input: &str, all_schemas: &[ToolSchema]) -> FilterResult {
         let mut result = filter_schemas(input, all_schemas);
+
+        // Update cache first so expired categories are pruned before merging
+        self.update(&result.matched_categories);
 
         // Add cached categories that aren't already matched
         let cached_prefixes: Vec<&str> = TOOL_CATEGORIES
@@ -250,9 +253,6 @@ impl SchemaCache {
                 result.filtered_count += 1;
             }
         }
-
-        // Update cache
-        self.update(&result.matched_categories);
 
         result
     }
@@ -443,5 +443,22 @@ mod tests {
         let result = filter_schemas("check memory", &[]);
         assert_eq!(result.filtered_count, 0);
         assert!(result.schemas.is_empty());
+    }
+
+    #[test]
+    fn test_cache_age_zero_on_match() {
+        // Verify matched categories get age 0 (not 1) after update
+        let mut cache = SchemaCache::new(1);
+        cache.update(&["test".to_string()]);
+        // With TTL=1, a matched category should survive exactly 1 unrelated update
+        assert!(cache.category_age.get("test") == Some(&0));
+
+        cache.update(&[]);
+        // After one unrelated update, age should be 1 (still within TTL=1)
+        assert!(cache.category_age.get("test") == Some(&1));
+
+        cache.update(&[]);
+        // After two unrelated updates, age 2 > TTL 1 → expired
+        assert!(!cache.category_age.contains_key("test"));
     }
 }

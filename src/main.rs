@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
     } else if args.human {
         Mode::Human
     } else {
-        config.default_mode.clone()
+        config.default_mode
     };
 
     // Create session

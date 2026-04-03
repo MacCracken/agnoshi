@@ -453,7 +453,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     }
 
     if let Some(caps) = interp.try_captures("cd", input_lower)
-        && let Some(path) = caps.get(4)
+        && let Some(path) = caps.get(5)
     {
         return Some(Intent::ChangeDirectory {
             path: path.as_str().trim().to_string(),

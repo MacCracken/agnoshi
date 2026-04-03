@@ -1,1 +1,292 @@
 timestamp,commit,branch,benchmark,estimate_ns
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_parse_simple,140580.0000
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_parse_list_files,23473.0000
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_parse_cd,13344.0000
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_translate_list_files,139.77
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_translate_cd,54.910
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_explain_ls,15.656
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_explain_cat,25.208
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_explain_rm,34.139
+2026-04-03T10:20:59Z,a98eef8,main,interpreter_parse_10_commands,125170.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/show me all files,19454.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/find files named foo,31083.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/install package vim,28607.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/show running processes,19110.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/mute track vocals,20025.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/list edge nodes,1804.3000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/shruti create session test,21414.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/search marketplace for agnostic,19934.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/search knowledge base for networking,20260.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/ark install htop,13889.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/delta list repos,3173.2000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/list tasks,3792.4000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/show balance,3694.8000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/scan ports on 192.168.1.1,11143.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/individual/show system information,18636.0000
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/batch/15,222410.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+16.721%
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/batch/100,1536800.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+16.831%
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/batch/500,7651700.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+8.9058%
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/parse_translate/15,238700.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+8.6942%
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/parse_translate/100,1575100.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+4.6144%
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/parse_translate/500,7671900.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+4.0282%
+2026-04-03T10:20:59Z,a98eef8,main,intent_parsing/edge_cases,115850.0000
+2026-04-03T10:20:59Z,a98eef8,main,system/session_lifecycle_create_execute_destroy,7466100.0000
+2026-04-03T10:20:59Z,a98eef8,main,system/session_create,7452600.0000
+2026-04-03T10:20:59Z,a98eef8,main,system/parse_translate_pipeline/10,194060.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+1.3557%
+2026-04-03T10:20:59Z,a98eef8,main,system/parse_translate_pipeline/50,957950.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+11.048%
+2026-04-03T10:20:59Z,a98eef8,main,system/parse_translate_pipeline/100,1989600.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+8.1440%
+2026-04-03T10:20:59Z,a98eef8,main,system/parse_only_pipeline/10,184380.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+2.4194%
+2026-04-03T10:20:59Z,a98eef8,main,system/parse_only_pipeline/50,904220.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+5.0696%
+2026-04-03T10:20:59Z,a98eef8,main,system/parse_only_pipeline/100,1803300.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+0.1507%
+2026-04-03T10:20:59Z,a98eef8,main,system/prompt_render_full_all_modules,4327.4000
+2026-04-03T10:20:59Z,a98eef8,main,system/prompt_render_minimal,265.53
+2026-04-03T10:20:59Z,a98eef8,main,system/prompt_render_right_prompt,472.72
+2026-04-03T10:20:59Z,a98eef8,main,system/prompt_render_repeated/10,52148.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+2.5716%
+2026-04-03T10:20:59Z,a98eef8,main,system/prompt_render_repeated/50,253300.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+0.7558%
+2026-04-03T10:20:59Z,a98eef8,main,system/prompt_render_repeated/100,554960.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+7.0564%
+2026-04-03T10:20:59Z,a98eef8,main,system/intent_classification/10,236600.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+22.996%
+2026-04-03T10:20:59Z,a98eef8,main,system/intent_classification/50,977420.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+4.3511%
+2026-04-03T10:20:59Z,a98eef8,main,system/intent_classification/100,1936700.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+2.9894%
+2026-04-03T10:20:59Z,a98eef8,main,system/intent_classification/500,9179300.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-2.7163%
+2026-04-03T10:20:59Z,a98eef8,main,system/intent_classification_diverse_15,279050.0000
+2026-04-03T10:20:59Z,a98eef8,main,system/history_add_then_search/100,23558.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-0.5680%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_add_then_search/500,71520.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-0.0925%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_add_then_search/1000,125540.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-0.2715%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_add_then_search/5000,582120.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,+0.6281%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_search_preloaded/100,8515.5000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-2.5312%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_search_preloaded/1000,76760.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-4.5667%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_search_preloaded/5000,361870.0000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-6.5158%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_get_recent/100,45.490
+2026-04-03T10:20:59Z,a98eef8,main,change:,-3.5512%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_get_recent/1000,45.701
+2026-04-03T10:20:59Z,a98eef8,main,change:,-2.1605%
+2026-04-03T10:20:59Z,a98eef8,main,system/history_get_recent/5000,45.674
+2026-04-03T10:20:59Z,a98eef8,main,change:,-4.8845%
+2026-04-03T10:20:59Z,a98eef8,main,system/explain_pipeline/5,175.73
+2026-04-03T10:20:59Z,a98eef8,main,change:,-2.3663%
+2026-04-03T10:20:59Z,a98eef8,main,system/explain_pipeline/16,653.82
+2026-04-03T10:20:59Z,a98eef8,main,change:,-2.9992%
+2026-04-03T10:20:59Z,a98eef8,main,system/explain_pipeline/50,2066.1000
+2026-04-03T10:20:59Z,a98eef8,main,change:,-5.0022%
+2026-04-03T10:20:59Z,a98eef8,main,system/explain_all_16_commands,673.97
+2026-04-03T10:20:59Z,a98eef8,main,system/explain_10_unknown_commands,400.18
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_parse_simple,143470.0000
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_parse_list_files,20912.0000
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_parse_cd,12442.0000
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_translate_list_files,139.93
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_translate_cd,57.807
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_explain_ls,17.300
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_explain_cat,26.833
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_explain_rm,36.277
+2026-04-03T11:02:07Z,a98eef8,main,interpreter_parse_10_commands,126410.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/show me all files,19131.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/find files named foo,14224.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/install package vim,17758.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/show running processes,16760.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/mute track vocals,16716.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/list edge nodes,1441.4000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/shruti create session test,18483.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/search marketplace for agnostic,17898.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/search knowledge base for networking,18499.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/ark install htop,12448.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/delta list repos,2873.9000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/list tasks,3633.2000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/show balance,3244.6000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/scan ports on 192.168.1.1,10645.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/individual/show system information,16245.0000
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/batch/15,209130.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-7.8690%
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/batch/100,1436400.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-9.2421%
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/batch/500,7180300.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-5.2941%
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/parse_translate/15,218420.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-8.4075%
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/parse_translate/100,1476900.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-5.4181%
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/parse_translate/500,7359100.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-3.3740%
+2026-04-03T11:02:07Z,a98eef8,main,intent_parsing/edge_cases,111860.0000
+2026-04-03T11:02:07Z,a98eef8,main,system/session_lifecycle_create_execute_destroy,7838900.0000
+2026-04-03T11:02:07Z,a98eef8,main,system/session_create,7511200.0000
+2026-04-03T11:02:07Z,a98eef8,main,system/parse_translate_pipeline/10,187540.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-0.0655%
+2026-04-03T11:02:07Z,a98eef8,main,system/parse_translate_pipeline/50,898720.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-6.5858%
+2026-04-03T11:02:07Z,a98eef8,main,system/parse_translate_pipeline/100,1804400.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-6.8146%
+2026-04-03T11:02:07Z,a98eef8,main,system/parse_only_pipeline/10,172780.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-6.0561%
+2026-04-03T11:02:07Z,a98eef8,main,system/parse_only_pipeline/50,845300.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-7.9675%
+2026-04-03T11:02:07Z,a98eef8,main,system/parse_only_pipeline/100,1689300.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-5.8893%
+2026-04-03T11:02:07Z,a98eef8,main,system/prompt_render_full_all_modules,4094.0000
+2026-04-03T11:02:07Z,a98eef8,main,system/prompt_render_minimal,246.55
+2026-04-03T11:02:07Z,a98eef8,main,system/prompt_render_right_prompt,478.07
+2026-04-03T11:02:07Z,a98eef8,main,system/prompt_render_repeated/10,49388.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-3.8785%
+2026-04-03T11:02:07Z,a98eef8,main,system/prompt_render_repeated/50,248350.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-2.3921%
+2026-04-03T11:02:07Z,a98eef8,main,system/prompt_render_repeated/100,894930.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+64.611%
+2026-04-03T11:02:07Z,a98eef8,main,system/intent_classification/10,201030.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+0.0192%
+2026-04-03T11:02:07Z,a98eef8,main,system/intent_classification/50,1059900.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+4.7219%
+2026-04-03T11:02:07Z,a98eef8,main,system/intent_classification/100,2042500.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+13.556%
+2026-04-03T11:02:07Z,a98eef8,main,system/intent_classification/500,8796900.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-3.3621%
+2026-04-03T11:02:07Z,a98eef8,main,system/intent_classification_diverse_15,249080.0000
+2026-04-03T11:02:07Z,a98eef8,main,system/history_add_then_search/100,23806.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+1.8262%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_add_then_search/500,71957.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+0.8181%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_add_then_search/1000,125880.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+2.0479%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_add_then_search/5000,580090.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+0.1307%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_search_preloaded/100,8596.8000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+1.1768%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_search_preloaded/1000,77950.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+1.8476%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_search_preloaded/5000,366240.0000
+2026-04-03T11:02:07Z,a98eef8,main,change:,+2.5844%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_get_recent/100,49.774
+2026-04-03T11:02:07Z,a98eef8,main,change:,+9.7495%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_get_recent/1000,50.163
+2026-04-03T11:02:07Z,a98eef8,main,change:,+10.257%
+2026-04-03T11:02:07Z,a98eef8,main,system/history_get_recent/5000,49.853
+2026-04-03T11:02:07Z,a98eef8,main,change:,+9.5154%
+2026-04-03T11:02:07Z,a98eef8,main,system/explain_pipeline/5,165.70
+2026-04-03T11:02:07Z,a98eef8,main,change:,-5.5832%
+2026-04-03T11:02:07Z,a98eef8,main,system/explain_pipeline/16,647.20
+2026-04-03T11:02:07Z,a98eef8,main,change:,-0.6439%
+2026-04-03T11:02:07Z,a98eef8,main,system/explain_pipeline/50,1987.9000
+2026-04-03T11:02:07Z,a98eef8,main,change:,-2.9010%
+2026-04-03T11:02:07Z,a98eef8,main,system/explain_all_16_commands,645.49
+2026-04-03T11:02:07Z,a98eef8,main,system/explain_10_unknown_commands,395.95
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_parse_simple,153230.0000
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_parse_list_files,21553.0000
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_parse_cd,12607.0000
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_translate_list_files,145.25
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_translate_cd,54.716
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_explain_ls,16.180
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_explain_cat,26.231
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_explain_rm,34.500
+2026-04-03T11:18:00Z,a98eef8,main,interpreter_parse_10_commands,125060.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/show me all files,20968.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/find files named foo,23247.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/install package vim,38062.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/show running processes,26094.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/mute track vocals,18050.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/list edge nodes,1774.8000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/shruti create session test,20251.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/search marketplace for agnostic,26791.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/search knowledge base for networking,39370.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/ark install htop,13711.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/delta list repos,3144.1000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/list tasks,3803.6000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/show balance,3617.5000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/scan ports on 192.168.1.1,11254.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/individual/show system information,18526.0000
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/batch/15,233540.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+11.100%
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/batch/100,1463000.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+5.5272%
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/batch/500,7146900.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+0.2928%
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/parse_translate/15,225440.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+3.2273%
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/parse_translate/100,1536900.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+5.9826%
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/parse_translate/500,7429100.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+1.6913%
+2026-04-03T11:18:00Z,a98eef8,main,intent_parsing/edge_cases,110430.0000
+2026-04-03T11:18:00Z,a98eef8,main,system/session_lifecycle_create_execute_destroy,7919000.0000
+2026-04-03T11:18:00Z,a98eef8,main,system/session_create,7878100.0000
+2026-04-03T11:18:00Z,a98eef8,main,system/parse_translate_pipeline/10,201700.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+8.2564%
+2026-04-03T11:18:00Z,a98eef8,main,system/parse_translate_pipeline/50,983590.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+10.684%
+2026-04-03T11:18:00Z,a98eef8,main,system/parse_translate_pipeline/100,2060300.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+14.870%
+2026-04-03T11:18:00Z,a98eef8,main,system/parse_only_pipeline/10,255780.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+32.688%
+2026-04-03T11:18:00Z,a98eef8,main,system/parse_only_pipeline/50,921380.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+12.583%
+2026-04-03T11:18:00Z,a98eef8,main,system/parse_only_pipeline/100,1817600.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+7.6869%
+2026-04-03T11:18:00Z,a98eef8,main,system/prompt_render_full_all_modules,4242.3000
+2026-04-03T11:18:00Z,a98eef8,main,system/prompt_render_minimal,253.97
+2026-04-03T11:18:00Z,a98eef8,main,system/prompt_render_right_prompt,458.65
+2026-04-03T11:18:00Z,a98eef8,main,system/prompt_render_repeated/10,48870.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-0.1506%
+2026-04-03T11:18:00Z,a98eef8,main,system/prompt_render_repeated/50,253920.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+0.9731%
+2026-04-03T11:18:00Z,a98eef8,main,system/prompt_render_repeated/100,500400.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-42.049%
+2026-04-03T11:18:00Z,a98eef8,main,system/intent_classification/10,190910.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-8.1356%
+2026-04-03T11:18:00Z,a98eef8,main,system/intent_classification/50,899630.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-5.1136%
+2026-04-03T11:18:00Z,a98eef8,main,system/intent_classification/100,1753900.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-7.5736%
+2026-04-03T11:18:00Z,a98eef8,main,system/intent_classification/500,9166800.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+5.2208%
+2026-04-03T11:18:00Z,a98eef8,main,system/intent_classification_diverse_15,251170.0000
+2026-04-03T11:18:00Z,a98eef8,main,system/history_add_then_search/100,23410.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-0.5806%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_add_then_search/500,68915.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-2.5597%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_add_then_search/1000,124440.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-0.8800%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_add_then_search/5000,580620.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,-0.0435%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_search_preloaded/100,15541.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+64.930%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_search_preloaded/1000,137170.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+86.659%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_search_preloaded/5000,394740.0000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+12.883%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_get_recent/100,55.948
+2026-04-03T11:18:00Z,a98eef8,main,change:,+10.955%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_get_recent/1000,59.411
+2026-04-03T11:18:00Z,a98eef8,main,change:,+29.349%
+2026-04-03T11:18:00Z,a98eef8,main,system/history_get_recent/5000,51.135
+2026-04-03T11:18:00Z,a98eef8,main,change:,+2.8478%
+2026-04-03T11:18:00Z,a98eef8,main,system/explain_pipeline/5,171.93
+2026-04-03T11:18:00Z,a98eef8,main,change:,+4.1881%
+2026-04-03T11:18:00Z,a98eef8,main,system/explain_pipeline/16,662.61
+2026-04-03T11:18:00Z,a98eef8,main,change:,+2.5677%
+2026-04-03T11:18:00Z,a98eef8,main,system/explain_pipeline/50,2889.1000
+2026-04-03T11:18:00Z,a98eef8,main,change:,+32.267%
+2026-04-03T11:18:00Z,a98eef8,main,system/explain_all_16_commands,1296.3000
+2026-04-03T11:18:00Z,a98eef8,main,system/explain_10_unknown_commands,848.79

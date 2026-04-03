@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **security** — `get_username` now reads from passwd database instead of trusting `$USER` env var (was spoofable to bypass permission checks)
+- **security** — JSON injection in phylax.rs scan target: switched from `format!()` to `serde_json::json!()`
+- **security** — added 16 missing dangerous commands to admin list: `kill`, `killall`, `pkill`, `reboot`, `shutdown`, `poweroff`, `halt`, `iptables`, `ip6tables`, `nft`, `ufw`, `crontab`, `visudo`, `su`, `swapoff`, `swapon`, `mknod`; added `shred` to blocked list
+- **security** — removed duplicate `dd` entry from blocked list
+- **interpreter** — fixed `list` regex: made first group required — was matching empty strings and arbitrary input (e.g., `""`, `"htop"`, `"go to /tmp"` all incorrectly parsed as `ListFiles`)
+- **interpreter** — fixed `cd` regex capture group: `caps.get(4)` → `caps.get(5)` — `cd` and `go to` now correctly parse as `ChangeDirectory`
+- **interpreter** — fixed `find` regex: greedy `(.+)` → non-greedy `(.+?)` so `\s+in\s+(.+)` path group can match
+- **session** — fixed pipe deadlock: replaced `child.wait()` + post-read with `child.wait_with_output()` (child filling pipe buffer could deadlock)
+- **session** — `rm` checkpoint now backs up all non-flag target files (was only checkpointing the first)
+- **mode** — `toggle()` now respects `allow_switching` guard (was bypassing it, allowing mode changes when disabled)
+- **schema_filter** — fixed cache age off-by-one: matched categories now get age 0 (not 1) after update; moved cache update before merge so expired schemas aren't returned
+- **audit** — replaced byte-offset string slicing with `chars().take(n)` to prevent panic on multi-byte UTF-8
+- **completion** — fixed case-sensitivity: registered names now lowercased at insertion for correct case-insensitive matching
+- **output** — `format_auto` now pretty-prints valid JSON instead of double-wrapping it in `{"output": ...}`
+- **permissions** — added wildcard arm for `#[non_exhaustive]` `PermissionLevel` (future variants default to denied)
+- **bench** — fixed duplicate `--all-features` flag in `bench-history.sh`
+
+### Changed
+
+- **mode** — `Mode` now derives `Copy` (all unit variants); removed unnecessary `.clone()` calls
+- **mode** — `toggle()` now returns `Result<()>` (was `()`)
+- **security** — moved `echo` out of `safe` list (was dead entry; already in `read_only` which is checked first)
+- **deps** — replaced `once_cell::sync::Lazy` with `std::sync::LazyLock` (stable in Rust 1.89)
+- **deps** — removed `once_cell` dependency
+- **deps** — added `agnosys` git URL to `deny.toml` `allow-git`
+- **api** — added `#[must_use]` to 20+ pure functions across security, permissions, commands, aliases, completion, history, output modules
+- **tests** — 1,109 unit tests (up from 1,096); 13 new tests covering regex fixes, security hardening, JSON injection, cache behavior, mode toggle
+
 ## [0.90.0] - 2026-04-02
 
 ### Added

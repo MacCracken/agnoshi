@@ -18,6 +18,7 @@ pub fn split_command(line: &str) -> Result<(String, Vec<String>)> {
 }
 
 /// Check if command is a shell builtin
+#[must_use]
 pub fn is_builtin(command: &str) -> bool {
     let builtins = ["cd", "exit", "quit", "help", "clear", "mode", "history"];
 
@@ -25,6 +26,7 @@ pub fn is_builtin(command: &str) -> bool {
 }
 
 /// Get description of a builtin command
+#[must_use]
 pub fn builtin_description(command: &str) -> Option<&'static str> {
     match command.to_lowercase().as_str() {
         "cd" => Some("Change directory"),

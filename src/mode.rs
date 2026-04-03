@@ -9,7 +9,7 @@ use std::fmt;
 
 /// Shell operating modes
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Mode {
     /// AI acts autonomously within constraints
     AiAutonomous,
@@ -107,7 +107,7 @@ impl ModeManager {
             return Err(anyhow::anyhow!("Mode switching is disabled"));
         }
 
-        self.previous = Some(self.current.clone());
+        self.previous = Some(self.current);
         self.current = mode;
 
         Ok(())
@@ -123,8 +123,13 @@ impl ModeManager {
         }
     }
 
-    /// Toggle between AI and human modes
-    pub fn toggle(&mut self) {
+    /// Toggle between AI and human modes.
+    /// Respects `allow_switching` — returns Err if switching is disabled.
+    pub fn toggle(&mut self) -> Result<()> {
+        if !self.allow_switching {
+            return Err(anyhow::anyhow!("Mode switching is disabled"));
+        }
+
         let new_mode = match self.current {
             Mode::Human => Mode::AiAssisted,
             Mode::AiAssisted => Mode::Human,
@@ -132,8 +137,9 @@ impl ModeManager {
             Mode::Strict => Mode::AiAssisted,
         };
 
-        self.previous = Some(self.current.clone());
+        self.previous = Some(self.current);
         self.current = new_mode;
+        Ok(())
     }
 
     /// List all available modes
@@ -243,29 +249,37 @@ mod tests {
     #[test]
     fn test_mode_toggle_human_to_ai() {
         let mut manager = ModeManager::new(Mode::Human, true);
-        manager.toggle();
+        manager.toggle().unwrap();
         assert_eq!(manager.current(), &Mode::AiAssisted);
     }
 
     #[test]
     fn test_mode_toggle_ai_assisted_to_human() {
         let mut manager = ModeManager::new(Mode::AiAssisted, true);
-        manager.toggle();
+        manager.toggle().unwrap();
         assert_eq!(manager.current(), &Mode::Human);
     }
 
     #[test]
     fn test_mode_toggle_autonomous_to_human() {
         let mut manager = ModeManager::new(Mode::AiAutonomous, true);
-        manager.toggle();
+        manager.toggle().unwrap();
         assert_eq!(manager.current(), &Mode::Human);
     }
 
     #[test]
     fn test_mode_toggle_strict_to_ai_assisted() {
         let mut manager = ModeManager::new(Mode::Strict, true);
-        manager.toggle();
+        manager.toggle().unwrap();
         assert_eq!(manager.current(), &Mode::AiAssisted);
+    }
+
+    #[test]
+    fn test_mode_toggle_disabled() {
+        let mut manager = ModeManager::new(Mode::Human, false);
+        let result = manager.toggle();
+        assert!(result.is_err());
+        assert_eq!(manager.current(), &Mode::Human);
     }
 
     #[test]

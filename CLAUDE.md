@@ -8,7 +8,7 @@
 - **License**: GPL-3.0-only
 - **MSRV**: 1.89
 - **Version**: SemVer 0.90.0
-- **Tests**: 1,085 (all unit via `#[cfg(test)]`)
+- **Tests**: 1,109 (all unit via `#[cfg(test)]`)
 - **Benchmarks**: 30 criterion benchmarks across 3 suites
 
 ## Consumers
