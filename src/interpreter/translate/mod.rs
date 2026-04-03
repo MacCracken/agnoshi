@@ -19,6 +19,7 @@ mod phylax;
 mod process;
 mod rasa;
 mod shruti;
+mod stiva;
 mod synapse;
 mod system;
 mod tarang;
@@ -212,6 +213,20 @@ impl Interpreter {
             | Intent::YeomanTokenBudget { .. }
             | Intent::YeomanEvents { .. }
             | Intent::YeomanSwarm { .. } => yeoman::translate_yeoman(intent),
+
+            // Stiva container runtime
+            Intent::StivaRun { .. }
+            | Intent::StivaStop { .. }
+            | Intent::StivaPs { .. }
+            | Intent::StivaRm { .. }
+            | Intent::StivaPull { .. }
+            | Intent::StivaImages
+            | Intent::StivaRmi { .. }
+            | Intent::StivaBuild { .. }
+            | Intent::StivaLogs { .. }
+            | Intent::StivaExec { .. }
+            | Intent::StivaInspect { .. }
+            | Intent::StivaAnsamblu { .. } => stiva::translate_stiva(intent),
 
             // Phylax threat detection
             Intent::PhylaxScan { .. }

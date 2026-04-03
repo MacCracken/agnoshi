@@ -713,5 +713,43 @@ pub(crate) static PATTERNS: Lazy<HashMap<String, Regex>> = Lazy::new(|| {
         r"(?i)^(?:jalwa\s+)?playlist\s+(list|create|add|remove|export)(?:\s+(.+?))?(?:\s+item\s+(\S+))?$",
     );
 
+    // Stiva container runtime
+    r(
+        "stiva_run",
+        r"(?i)^(?:stiva\s+run|run\s+container)\s+(\S+)(?:\s+(?:--name\s+|as\s+)(\S+))?(.*)$",
+    );
+    r(
+        "stiva_stop",
+        r"(?i)^(?:stiva\s+stop|stop\s+container)\s+(?:container\s+)?(\S+)$",
+    );
+    r(
+        "stiva_ps",
+        r"(?i)^(?:stiva\s+)?(?:ps|list\s+containers?)(?:\s+(-a|--all|all))?$",
+    );
+    r(
+        "stiva_rm",
+        r"(?i)^(?:stiva\s+(?:rm|remove)|(?:rm|remove)\s+container)\s+(-f\s+|--force\s+)?(\S+)$",
+    );
+    r("stiva_pull", r"(?i)^(?:stiva\s+)?pull\s+(\S+)$");
+    r(
+        "stiva_images",
+        r"(?i)^(?:stiva\s+)?(?:images|list\s+images?)$",
+    );
+    r("stiva_rmi", r"(?i)^(?:stiva\s+)?rmi\s+(\S+)$");
+    r(
+        "stiva_build",
+        r"(?i)^(?:stiva\s+)?build\s+(\S+)(?:\s+(?:-t\s+|--tag\s+)(\S+))?$",
+    );
+    r(
+        "stiva_logs",
+        r"(?i)^(?:stiva\s+)?logs?\s+(\S+)(?:\s+(?:--tail\s+|last\s+)(\d+))?$",
+    );
+    r("stiva_exec", r"(?i)^(?:stiva\s+)?exec\s+(\S+)\s+(.+)$");
+    r("stiva_inspect", r"(?i)^(?:stiva\s+)?inspect\s+(\S+)$");
+    r(
+        "stiva_ansamblu",
+        r"(?i)^(?:stiva\s+)?(?:ansamblu|compose)\s+(up|down|restart)(?:\s+(?:-f\s+)?(\S+))?$",
+    );
+
     p
 });

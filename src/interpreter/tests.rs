@@ -3580,4 +3580,138 @@ mod tests {
         assert_eq!(translation.args, vec!["FOO=bar"]);
         assert_eq!(translation.permission, PermissionLevel::UserWrite);
     }
+
+    // --- Stiva container runtime tests ---
+
+    #[test]
+    fn test_parse_stiva_run_nginx() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva run nginx");
+        assert!(
+            matches!(intent, Intent::StivaRun { ref image, .. } if image == "nginx"),
+            "Expected StivaRun with image nginx, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_parse_stiva_ps() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva ps");
+        assert!(
+            matches!(intent, Intent::StivaPs { all: false }),
+            "Expected StivaPs, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_parse_stiva_logs() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva logs myapp");
+        assert!(
+            matches!(intent, Intent::StivaLogs { ref id, tail: None } if id == "myapp"),
+            "Expected StivaLogs for myapp, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_parse_run_nginx_with_name() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva run nginx --name web");
+        assert!(
+            matches!(intent, Intent::StivaRun { ref image, ref name, .. }
+                     if image == "nginx" && name.as_deref() == Some("web")),
+            "Expected StivaRun nginx named web, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_parse_stop_container() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva stop container abc123");
+        assert!(
+            matches!(intent, Intent::StivaStop { ref id } if id == "abc123"),
+            "Expected StivaStop abc123, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_parse_compose_up() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva compose up");
+        assert!(
+            matches!(intent, Intent::StivaAnsamblu { ref action, .. } if action == "up"),
+            "Expected StivaAnsamblu up, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_parse_stiva_build_with_tag() {
+        let interpreter = Interpreter::new();
+        let intent = interpreter.parse("stiva build . -t myapp:latest");
+        assert!(
+            matches!(intent, Intent::StivaBuild { ref path, ref tag }
+                     if path == "." && tag.as_deref() == Some("myapp:latest")),
+            "Expected StivaBuild . tagged myapp:latest, got {:?}",
+            intent,
+        );
+    }
+
+    #[test]
+    fn test_translate_stiva_run() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::StivaRun {
+            image: "nginx".to_string(),
+            name: Some("web".to_string()),
+            args: vec![],
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "stiva");
+        assert_eq!(translation.args, vec!["run", "--name", "web", "nginx"]);
+        assert_eq!(translation.permission, PermissionLevel::SystemWrite);
+    }
+
+    #[test]
+    fn test_translate_stiva_ps() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::StivaPs { all: true };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "stiva");
+        assert_eq!(translation.args, vec!["ps", "-a"]);
+        assert_eq!(translation.permission, PermissionLevel::ReadOnly);
+    }
+
+    #[test]
+    fn test_translate_stiva_logs() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::StivaLogs {
+            id: "myapp".to_string(),
+            tail: Some(50),
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "stiva");
+        assert_eq!(translation.args, vec!["logs", "myapp", "--tail", "50"]);
+        assert_eq!(translation.permission, PermissionLevel::ReadOnly);
+    }
+
+    #[test]
+    fn test_translate_stiva_ansamblu() {
+        let interpreter = Interpreter::new();
+        let intent = Intent::StivaAnsamblu {
+            action: "up".to_string(),
+            file: Some("docker-compose.yml".to_string()),
+        };
+        let translation = interpreter.translate(&intent).unwrap();
+        assert_eq!(translation.command, "stiva");
+        assert_eq!(
+            translation.args,
+            vec!["ansamblu", "up", "-f", "docker-compose.yml"]
+        );
+        assert_eq!(translation.permission, PermissionLevel::SystemWrite);
+    }
 }

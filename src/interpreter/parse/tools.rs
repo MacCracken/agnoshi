@@ -204,5 +204,122 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
         }
     }
 
+    // --- Stiva container runtime intents ---
+    if let Some(caps) = interp.try_captures("stiva_run", input_lower) {
+        let image = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let name = caps
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let args: Vec<String> = caps
+            .get(3)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.split_whitespace().map(|w| w.to_string()).collect())
+            .unwrap_or_default();
+        return Some(Intent::StivaRun { image, name, args });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_stop", input_lower) {
+        let id = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        return Some(Intent::StivaStop { id });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_ps", input_lower) {
+        let all = caps.get(1).is_some();
+        return Some(Intent::StivaPs { all });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_rm", input_lower) {
+        let force = caps.get(1).is_some();
+        let id = caps
+            .get(2)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        return Some(Intent::StivaRm { id, force });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_pull", input_lower) {
+        let image = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        return Some(Intent::StivaPull { image });
+    }
+
+    if interp.try_captures("stiva_images", input_lower).is_some() {
+        return Some(Intent::StivaImages);
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_rmi", input_lower) {
+        let image = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        return Some(Intent::StivaRmi { image });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_build", input_lower) {
+        let path = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let tag = caps
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        return Some(Intent::StivaBuild { path, tag });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_logs", input_lower) {
+        let id = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let tail = caps.get(2).and_then(|m| m.as_str().parse::<usize>().ok());
+        return Some(Intent::StivaLogs { id, tail });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_exec", input_lower) {
+        let id = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let rest = caps
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default();
+        let mut parts = rest.split_whitespace();
+        let command = parts.next().unwrap_or_default().to_string();
+        let args: Vec<String> = parts.map(|w| w.to_string()).collect();
+        return Some(Intent::StivaExec { id, command, args });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_inspect", input_lower) {
+        let target = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        return Some(Intent::StivaInspect { target });
+    }
+
+    if let Some(caps) = interp.try_captures("stiva_ansamblu", input_lower) {
+        let action = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let file = caps
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        return Some(Intent::StivaAnsamblu { action, file });
+    }
+
     None
 }

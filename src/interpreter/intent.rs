@@ -677,6 +677,43 @@ pub enum Intent {
         toml: String,
     },
 
+    // Stiva container runtime
+    /// Run a container
+    StivaRun {
+        image: String,
+        name: Option<String>,
+        args: Vec<String>,
+    },
+    /// Stop a container
+    StivaStop { id: String },
+    /// List containers
+    StivaPs { all: bool },
+    /// Remove a container
+    StivaRm { id: String, force: bool },
+    /// Pull an image
+    StivaPull { image: String },
+    /// List images
+    StivaImages,
+    /// Remove an image
+    StivaRmi { image: String },
+    /// Build an image
+    StivaBuild { path: String, tag: Option<String> },
+    /// Container logs
+    StivaLogs { id: String, tail: Option<usize> },
+    /// Execute command in container
+    StivaExec {
+        id: String,
+        command: String,
+        args: Vec<String>,
+    },
+    /// Inspect container or image
+    StivaInspect { target: String },
+    /// Ansamblu (compose) operations
+    StivaAnsamblu {
+        action: String,
+        file: Option<String>,
+    },
+
     /// Change file permissions
     Chmod { path: String, mode: String },
     /// Change file ownership
