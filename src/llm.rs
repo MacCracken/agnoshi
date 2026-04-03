@@ -3,7 +3,7 @@
 //! Connects to the AGNOS LLM Gateway (port 8088) for natural language
 //! understanding and command generation.
 
-use agnos_common::telemetry::TraceContext;
+use agnostik::telemetry::TraceContext;
 use anyhow::{Context, Result};
 use tracing::{debug, warn};
 
@@ -41,15 +41,14 @@ impl LlmClient {
             "temperature": 0.3
         });
 
-        let trace_ctx = TraceContext::new_root("ai-shell");
-        let trace_headers = trace_ctx.inject_headers();
+        let trace_ctx = TraceContext::new();
+        let traceparent = trace_ctx.to_traceparent();
 
-        let mut request_builder = self.client.post(&url).json(&body);
-        for (key, value) in &trace_headers {
-            request_builder = request_builder.header(key.as_str(), value.as_str());
-        }
-
-        let resp = request_builder
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .header("traceparent", &traceparent)
             .send()
             .await
             .context("Failed to connect to LLM Gateway")?;

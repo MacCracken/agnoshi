@@ -19,9 +19,9 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-agnos-common = { path = "../agnosticos/userland/agnos-common" }
-agnosys = { path = "../agnosys", features = ["full"] }
-bote = { path = "../bote" }
+agnostik = { path = "../agnostik", features = ["telemetry"] }
+agnosys = { git = "https://github.com/MacCracken/agnosys", tag = "0.50.0", features = ["full"] }
+bote = "0.91.0"
 tokio = { version = "1.50", features = ["full", "process"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

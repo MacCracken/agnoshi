@@ -12,10 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **session** — revision workflow: `Intent::Unknown` now queries LLM with context before falling back to raw shell execution
 - **session** — richer LLM context: `suggest_command_with_context` sends CWD, recent history, and last exit code to LLM
 - **checkpoint** — checkpoint/rollback system for destructive operations (`rm`, `mv`); `undo` builtin restores files
-- **interpreter** — 7 new intent types: `Chmod`, `Chown`, `Symlink`, `Archive`, `Cron`, `ServiceEnable`, `EnvVar` with full NL parsing, translation, and tests
+- **interpreter** — 12 stiva container intents: run, stop, ps, rm, pull, images, rmi, build, logs, exec, inspect, ansamblu (compose)
+- **interpreter** — 7 new shell domain intents: `Chmod`, `Chown`, `Symlink`, `Archive`, `Cron`, `ServiceEnable`, `EnvVar` with full NL parsing, translation, and tests
 - **interpreter** — wired up 6 previously orphaned patterns: `find`, `remove`, `install`, `du`, `kill`, `netinfo` — these NL inputs were silently falling to Unknown
 - **interpreter** — 140+ command explanations (up from 12), covering file ops, process mgmt, network, archive, dev tools, and more
-- **tests** — 1,080 unit tests (up from 769)
+- **tests** — 1,096 unit tests (up from 769)
 - **docs** — CLAUDE.md with development process, principles, and DO NOTs
 - **ci** — GitHub Actions CI (ci.yml) and release (release.yml) workflows
 - **ark** — registered as `ark install --group shell` meta-package
@@ -44,8 +45,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - intent_parsing/batch/100: 2.43ms → 1.09ms (−55%)
 - intent_parsing/batch/500: 13.1ms → 5.38ms (−59%)
-
-## [Unreleased]
 
 ## [0.1.0] - 2026-04-01
 
