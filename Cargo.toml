@@ -18,9 +18,13 @@ path = "src/main.rs"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+agnostik-telemetry = ["agnostik"]
+
 [dependencies]
-agnostik = { path = "../agnostik", features = ["telemetry"] }
-agnosys = { path = "../agnosys", features = ["full"] }
+agnostik = { git = "https://github.com/MacCracken/agnostik", tag = "0.90.0", features = ["telemetry"], optional = true }
+agnosys = { git = "https://github.com/MacCracken/agnosys", tag = "0.50.0", features = ["full"] }
 bote = "0.91.0"
 tokio = { version = "1.50", features = ["full", "process"] }
 serde = { version = "1.0", features = ["derive"] }
