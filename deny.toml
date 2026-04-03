@@ -28,4 +28,7 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/MacCracken/agnosys"]
+allow-git = [
+    "https://github.com/MacCracken/agnostik",
+    "https://github.com/MacCracken/agnosys",
+]
