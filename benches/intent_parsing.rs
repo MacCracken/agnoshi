@@ -6,7 +6,8 @@
 //! package, consumer-app, and edge/DAW domains.
 
 use agnoshi::interpreter::Interpreter;
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 // ---------------------------------------------------------------------------
 // Inputs
