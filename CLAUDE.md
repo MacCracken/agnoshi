@@ -8,6 +8,10 @@
 - **License**: GPL-3.0-only
 - **MSRV**: 1.89
 - **Version**: SemVer 0.90.0
+- **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
+- **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
+- **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
+- **Recipes**: [zugot](https://github.com/MacCracken/zugot) — takumi build recipes
 - **Tests**: 1,109 (all unit via `#[cfg(test)]`)
 - **Benchmarks**: 30 criterion benchmarks across 3 suites
 
@@ -37,7 +41,8 @@ agnoshi (AI natural language shell)
 6. Cleanliness check — must be clean after review
 7. Additional tests/benchmarks from findings
 8. Post-review benchmarks — prove the wins
-9. Repeat if heavy
+9. Documentation audit — ADRs, source citations, guides, examples (see Documentation Standards in first-party-standards.md)
+10. Repeat if heavy
 
 ### Work Loop / Working Loop (continuous)
 
@@ -50,8 +55,8 @@ agnoshi (AI natural language shell)
 7. Deeper tests/benchmarks from audit observations
 8. Run benchmarks again — prove the wins
 9. If audit heavy → return to step 5
-10. Documentation — update CHANGELOG, roadmap, docs
-11. Version check — VERSION, Cargo.toml, recipe all in sync
+10. Documentation — update CHANGELOG, roadmap, docs, ADRs for design decisions, source citations for algorithms/formulas, update docs/sources.md, guides and examples for new API surface, verify recipe version in zugot
+11. Version check — VERSION, Cargo.toml, recipe (in zugot) all in sync
 12. Return to step 1
 
 ### Task Sizing
@@ -94,36 +99,19 @@ agnoshi (AI natural language shell)
 
 ```
 Root files (required):
-  README.md          — quick start, features, architecture, license
-  CHANGELOG.md       — per-version changes (Added/Changed/Fixed/Removed)
-  CLAUDE.md          — this file (development process, principles, DO NOTs)
-  CONTRIBUTING.md    — fork, branch, make check, PR workflow
-  SECURITY.md        — supported versions, scope, reporting
-  CODE_OF_CONDUCT.md — Contributor Covenant
-  LICENSE            — GPL-3.0
+  README.md, CHANGELOG.md, CLAUDE.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE
 
 docs/ (required):
-  architecture/
-    overview.md      — module map, data flow, consumers, dependency stack
-  development/
-    roadmap.md       — completed items, backlog, future features (demand-gated), v1.0 criteria
+  architecture/overview.md — module map, data flow, consumers
+  development/roadmap.md — completed, backlog, future, v1.0 criteria
 
-docs/ (when earned — not scaffolded empty):
-  adr/
-    NNN-title.md     — architectural decision records (when non-obvious choices are made)
-  development/
-    threat-model.md  — attack surface, mitigations (when security-relevant)
-    dependency-watch.md — deps to monitor for updates/CVEs
-  guides/
-    usage.md         — patterns, philosophy, code examples
-    testing.md       — test count, coverage, testing patterns
-
-ADR format:
-  # NNN — Title
-  ## Status: Accepted/Superseded
-  ## Context: Why this decision was needed
-  ## Decision: What we chose
-  ## Consequences: Trade-offs, what changes
+docs/ (when earned):
+  adr/ — architectural decision records
+  guides/ — usage guides, integration patterns
+  examples/ — worked examples
+  standards/ — external spec conformance
+  compliance/ — regulatory, audit, security compliance
+  sources.md — source citations for algorithms/formulas (required for science/math crates)
 ```
 
 ## CHANGELOG Format
