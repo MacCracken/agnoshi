@@ -184,10 +184,21 @@ pub fn analyze_command_permission(command: &str, args: &[String]) -> PermissionL
     ];
 
     if blocked.contains(&cmd.as_str()) {
-        // But allow safe variations
-        if cmd == "rm" && !args.iter().any(|a| a.starts_with('-')) {
-            // Even single-file rm requires approval — AI shell should not
-            // silently delete files without user consent.
+        if cmd == "rm" {
+            // Dangerous flags → always blocked
+            let dangerous_flags = [
+                "-r",
+                "-f",
+                "--recursive",
+                "--force",
+                "--no-preserve-root",
+                "-rf",
+                "-fr",
+            ];
+            if args.iter().any(|a| dangerous_flags.contains(&a.as_str())) {
+                return PermissionLevel::Blocked;
+            }
+            // Simple rm (no flags or safe flags like -v, -i) → requires approval
             return PermissionLevel::Admin;
         }
         return PermissionLevel::Blocked;
@@ -933,9 +944,50 @@ mod tests {
 
     #[test]
     fn test_analyze_command_rm_with_interactive_flag() {
-        // -i flag still starts with dash
+        // -i (interactive) is a safe flag — requires approval, not blocked
         assert_eq!(
             analyze_command_permission("rm", &["-i".to_string(), "file.txt".to_string()]),
+            PermissionLevel::Admin
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_rm_with_verbose_flag() {
+        // -v (verbose) is a safe flag — requires approval, not blocked
+        assert_eq!(
+            analyze_command_permission("rm", &["-v".to_string(), "file.txt".to_string()]),
+            PermissionLevel::Admin
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_rm_with_recursive_long_flag() {
+        assert_eq!(
+            analyze_command_permission("rm", &["--recursive".to_string(), "dir".to_string()]),
+            PermissionLevel::Blocked
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_rm_with_force_long_flag() {
+        assert_eq!(
+            analyze_command_permission("rm", &["--force".to_string(), "file.txt".to_string()]),
+            PermissionLevel::Blocked
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_rm_no_preserve_root() {
+        assert_eq!(
+            analyze_command_permission("rm", &["--no-preserve-root".to_string(), "/".to_string()]),
+            PermissionLevel::Blocked
+        );
+    }
+
+    #[test]
+    fn test_analyze_command_rm_fr_combined() {
+        assert_eq!(
+            analyze_command_permission("rm", &["-fr".to_string(), "dir".to_string()]),
             PermissionLevel::Blocked
         );
     }

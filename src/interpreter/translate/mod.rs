@@ -34,6 +34,8 @@ use super::intent::{Intent, Translation};
 
 impl Interpreter {
     /// Translate intent into shell command
+    #[inline]
+    #[must_use = "translation result must be used"]
     pub fn translate(&self, intent: &Intent) -> Result<Translation> {
         match intent {
             // Filesystem operations

@@ -41,7 +41,7 @@ declare -a BENCH_NS=()
 
 PREV_LINE=""
 while IFS= read -r line; do
-    if [[ "$line" == *"time:"*"["* ]]; then
+    if [[ "$line" == *"time:"*"["* ]] && [[ "$line" != *"%"* ]]; then
         BENCH_NAME=$(echo "$line" | sed -E 's/[[:space:]]*time:.*//' | xargs)
         if [ -z "$BENCH_NAME" ]; then
             BENCH_NAME=$(echo "$PREV_LINE" | xargs)
@@ -155,7 +155,8 @@ with open(md_file, "w") as f:
         f.write(f"|-----------|{'|'.join(['------'] * len(labels))}|\n")
 
         for bench in benches:
-            name = bench.split("/")[1]
+            parts = bench.split("/")
+            name = "/".join(parts[1:]) if len(parts) > 1 else bench
             vals = data[bench]
             cells = []
             for ts in pick:

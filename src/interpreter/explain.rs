@@ -2,6 +2,7 @@ use super::Interpreter;
 
 impl Interpreter {
     /// Get explanation of what a command does
+    #[must_use]
     pub fn explain(&self, command: &str, _args: &[String]) -> String {
         let cmd = command.to_lowercase();
 

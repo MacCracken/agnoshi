@@ -86,19 +86,12 @@ impl DashboardState {
                     .map(|m| m.to_string())
                     .unwrap_or_else(|| "\u{2014}".into());
                 let action = agent.last_action.as_deref().unwrap_or("\u{2014}");
-                let action_truncated = if action.len() > 20 {
-                    &action[..20]
-                } else {
-                    action
-                };
+                let action_truncated: String = action.chars().take(20).collect();
 
+                let id_truncated: String = agent.id.chars().take(36).collect();
                 lines.push(format!(
                     "{:<36} {:<12} {:>6} {:>8} {:>6} {:>6} {:<20}",
-                    if agent.id.len() > 36 {
-                        &agent.id[..36]
-                    } else {
-                        &agent.id
-                    },
+                    id_truncated,
                     agent.status,
                     cpu,
                     mem,
@@ -395,6 +388,18 @@ mod tests {
         assert_eq!(state.total_agents, 0);
         assert!(state.agents.is_empty());
         assert!(state.last_refresh.is_none());
+    }
+
+    #[test]
+    fn test_render_table_multibyte_utf8_no_panic() {
+        let mut entry = make_entry("agent-1", "running", Some(10.0), Some(64), 0);
+        // Use multi-byte emoji chars that would panic with byte slicing
+        entry.last_action = Some("处理数据🚀🎉✨💡🔥⚡🌈🎶".to_string());
+        entry.id = "日本語のエージェント名が長すぎる場合のテスト用ＩＤ".to_string();
+        let state = DashboardState::from_entries(vec![entry]);
+        // Must not panic on multi-byte char boundaries
+        let table = state.render_table();
+        assert!(!table.is_empty());
     }
 
     #[test]

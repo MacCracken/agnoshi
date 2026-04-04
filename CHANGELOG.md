@@ -27,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **output** — `format_auto` now pretty-prints valid JSON instead of double-wrapping it in `{"output": ...}`
 - **permissions** — added wildcard arm for `#[non_exhaustive]` `PermissionLevel` (future variants default to denied)
 - **bench** — fixed duplicate `--all-features` flag in `bench-history.sh`
+- **bench** — fixed `bench-history.sh` CSV parsing: criterion `change:` lines (containing `%` values) were captured alongside actual timing lines, corrupting CSV and crashing the markdown generator
+- **security** — URL parameter injection in `phylax.rs`: severity value now percent-encoded (was raw-embedded, allowing `?severity=critical&evil=true`)
+- **security** — `sanitize_url_segment()` in `package.rs` now rejects URL-special characters (`?`, `&`, `#`, `%`, `=`) in addition to path traversal sequences
+- **dashboard** — fixed UTF-8 panic: byte-offset string slicing (`&s[..N]`) replaced with `chars().take(N)` for agent ID and action truncation (was crashing on multi-byte characters)
 
 ### Changed
 
@@ -37,7 +41,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **deps** — removed `once_cell` dependency
 - **deps** — added `agnosys` git URL to `deny.toml` `allow-git`
 - **api** — added `#[must_use]` to 20+ pure functions across security, permissions, commands, aliases, completion, history, output modules
-- **tests** — 1,109 unit tests (up from 1,096); 13 new tests covering regex fixes, security hardening, JSON injection, cache behavior, mode toggle
+- **api** — added `#[inline]` to hot-path functions: `Interpreter::parse()`, `Interpreter::translate()`, `CompletionEngine::complete()`
+- **api** — added `#[must_use]` to `Interpreter::translate()` and `Interpreter::explain()`; `explain()` intentionally not `#[inline]` (17K-line match statement — inlining hurts icache)
+- **security** — `rm` permission logic now distinguishes dangerous flags (`-r`, `-f`, `-rf`, `--recursive`, `--force`, `--no-preserve-root`) from safe flags (`-v`, `-i`); safe-flagged `rm` requires approval (Admin), dangerous-flagged `rm` is Blocked
+- **deps** — removed unused `BSD-2-Clause` from `deny.toml` allow list
+- **tests** — 1,121 unit tests (up from 1,109); 12 new tests covering UTF-8 truncation, URL injection, URL sanitization, rm flag classification
 
 ## [0.90.0] - 2026-04-02
 

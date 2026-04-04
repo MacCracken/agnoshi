@@ -29,7 +29,18 @@ pub(crate) fn translate_phylax(intent: &Intent) -> Result<Translation> {
         Intent::PhylaxFindings { severity } => {
             let query = severity
                 .as_ref()
-                .map(|s| format!("?severity={}", s))
+                .map(|s| {
+                    let encoded: String = s
+                        .bytes()
+                        .map(|b| match b {
+                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                                format!("{}", b as char)
+                            }
+                            _ => format!("%{:02X}", b),
+                        })
+                        .collect();
+                    format!("?severity={}", encoded)
+                })
                 .unwrap_or_default();
             Ok(Translation {
                 command: "curl".to_string(),
@@ -130,6 +141,28 @@ mod tests {
         let t = translate_phylax(&intent).unwrap();
         assert_eq!(t.command, "curl");
         assert!(t.args.iter().any(|a| a.contains("severity=critical")));
+    }
+
+    #[test]
+    fn test_phylax_findings_url_injection_blocked() {
+        let intent = Intent::PhylaxFindings {
+            severity: Some("critical&evil=true".to_string()),
+        };
+        let t = translate_phylax(&intent).unwrap();
+        // The & must be percent-encoded, not passed raw
+        let url_arg = t.args.iter().find(|a| a.contains("severity=")).unwrap();
+        assert!(!url_arg.contains('&'), "raw & in URL: {}", url_arg);
+        assert!(url_arg.contains("%26"), "& should be encoded as %26");
+    }
+
+    #[test]
+    fn test_phylax_findings_url_injection_hash() {
+        let intent = Intent::PhylaxFindings {
+            severity: Some("high#fragment".to_string()),
+        };
+        let t = translate_phylax(&intent).unwrap();
+        let url_arg = t.args.iter().find(|a| a.contains("severity=")).unwrap();
+        assert!(!url_arg.contains('#'), "raw # in URL: {}", url_arg);
     }
 
     #[test]

@@ -99,6 +99,7 @@ impl CompletionEngine {
     }
 
     /// Get completions for partial input
+    #[inline]
     #[must_use]
     pub fn complete(&self, partial: &str) -> Vec<String> {
         if partial.is_empty() {

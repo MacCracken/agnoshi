@@ -6,8 +6,17 @@ use crate::security::PermissionLevel;
 
 /// Reject values containing path traversal sequences or URL-unsafe characters.
 fn sanitize_url_segment(value: &str) -> Result<&str> {
-    if value.contains("..") || value.contains('/') || value.contains('\\') || value.contains('\0') {
-        bail!("Invalid identifier: contains path traversal characters");
+    if value.contains("..")
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains('\0')
+        || value.contains('?')
+        || value.contains('&')
+        || value.contains('#')
+        || value.contains('%')
+        || value.contains('=')
+    {
+        bail!("Invalid identifier: contains path traversal or URL-special characters");
     }
     Ok(value)
 }
@@ -205,6 +214,31 @@ mod tests {
             package: "package\0name".to_string(),
         };
         assert!(translate_package(&intent).is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_question_mark() {
+        assert!(sanitize_url_segment("pkg?foo=bar").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_ampersand() {
+        assert!(sanitize_url_segment("pkg&evil=true").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_hash() {
+        assert!(sanitize_url_segment("pkg#fragment").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_percent_encoding() {
+        assert!(sanitize_url_segment("pkg%2fpasswd").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_url_segment_rejects_equals() {
+        assert!(sanitize_url_segment("pkg=value").is_err());
     }
 
     #[test]
