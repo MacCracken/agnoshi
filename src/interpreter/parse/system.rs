@@ -1,3 +1,4 @@
+use super::{cap_opt, cap_str};
 use crate::interpreter::Interpreter;
 use crate::interpreter::intent::{Intent, ListOptions};
 
@@ -16,10 +17,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     }
 
     if let Some(caps) = interp.try_captures("agent_info", input_lower) {
-        let agent_id = caps
-            .get(8)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let agent_id = cap_opt(&caps, 8);
         return Some(Intent::AgentInfo { agent_id });
     }
 
@@ -29,10 +27,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
             .get(1)
             .map(|m| m.as_str().to_string())
             .unwrap_or_default();
-        let service_name = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let service_name = cap_opt(&caps, 4);
         return Some(Intent::ServiceControl {
             action,
             service_name,
@@ -41,14 +36,8 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Journal view
     if let Some(caps) = interp.try_captures("journal", input_lower) {
-        let unit = caps
-            .get(6)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
-        let since = caps
-            .get(8)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let unit = cap_opt(&caps, 6);
+        let since = cap_opt(&caps, 8);
         return Some(Intent::JournalView {
             unit,
             priority: None,
@@ -61,14 +50,8 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     if let Some(caps) = interp.try_captures("journal_alt", input_lower) {
         let lines = caps.get(4).and_then(|m| m.as_str().parse::<usize>().ok());
         let priority = caps.get(5).map(|m| m.as_str().trim().to_string());
-        let unit = caps
-            .get(8)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
-        let since = caps
-            .get(10)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let unit = cap_opt(&caps, 8);
+        let since = cap_opt(&caps, 10);
         return Some(Intent::JournalView {
             unit,
             priority,
@@ -80,10 +63,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     // Device info
     if let Some(caps) = interp.try_captures("device_info", input_lower) {
         let subsystem = caps.get(4).map(|m| m.as_str().trim().to_string());
-        let device_path = caps
-            .get(9)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let device_path = cap_opt(&caps, 9);
         return Some(Intent::DeviceInfo {
             subsystem,
             device_path,
@@ -185,7 +165,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Group install: "install desktop", "setup ai", "ark install --group edge"
     if let Some(caps) = interp.try_captures("ark_install_group", input_lower) {
-        let group = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let group = cap_str(&caps, 1);
         if !group.is_empty() {
             let meta = match group.as_str() {
                 "desktop" => "agnos-desktop",
@@ -226,14 +206,14 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     }
 
     if let Some(caps) = interp.try_captures("ark_search", input_lower) {
-        let query = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let query = cap_str(&caps, 1);
         if !query.is_empty() {
             return Some(Intent::ArkSearch { query });
         }
     }
 
     if let Some(caps) = interp.try_captures("ark_info", input_lower) {
-        let package = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let package = cap_str(&caps, 2);
         if !package.is_empty() {
             return Some(Intent::ArkInfo { package });
         }
@@ -263,7 +243,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     // Filesystem patterns — more specific patterns before the broad "list" fallback
 
     if let Some(caps) = interp.try_captures("grep", input_lower) {
-        let pattern = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
+        let pattern = cap_str(&caps, 3);
         let path = caps.get(5).map(|m| m.as_str().trim().to_string());
         if !pattern.is_empty() {
             return Some(Intent::SearchContent { pattern, path });
@@ -273,16 +253,207 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     // Find files: "find files named *.rs", "locate config.toml in /etc"
     // Match against original input to preserve case in the pattern (e.g., "Makefile")
     if let Some(caps) = interp.try_captures("find", input) {
-        let pattern = caps.get(4).map_or("", |m| m.as_str()).trim().to_string();
+        let pattern = cap_str(&caps, 4);
         let path = caps.get(6).map(|m| m.as_str().trim().to_string());
         if !pattern.is_empty() {
             return Some(Intent::FindFiles { pattern, path });
         }
     }
 
+    // ── Git workflow ──────────────────────────────────────────────
+    // Must be checked before generic install/remove/service patterns.
+
+    if let Some(caps) = interp.try_captures("git_commit", input_lower) {
+        let all = caps.get(1).is_some();
+        let message = cap_str(&caps, 2);
+        if !message.is_empty() {
+            return Some(Intent::GitCommit { message, all });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("git_diff", input_lower) {
+        let staged = caps.get(1).is_some();
+        let path = cap_opt(&caps, 2);
+        return Some(Intent::GitDiff { path, staged });
+    }
+
+    if let Some(caps) = interp.try_captures("git_branch", input_lower) {
+        let delete = caps.get(1).is_some();
+        let name = caps
+            .get(3)
+            .or_else(|| caps.get(2))
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        return Some(Intent::GitBranch { name, delete });
+    }
+
+    if interp.try_captures("git_status", input_lower).is_some() {
+        return Some(Intent::GitStatus);
+    }
+
+    if let Some(caps) = interp.try_captures("git_log", input_lower) {
+        let count = caps
+            .get(1)
+            .or_else(|| caps.get(2))
+            .and_then(|m| m.as_str().parse::<u32>().ok());
+        return Some(Intent::GitLog { count });
+    }
+
+    if let Some(caps) = interp.try_captures("git_push", input_lower) {
+        let remote = cap_opt(&caps, 1);
+        let branch = cap_opt(&caps, 2);
+        return Some(Intent::GitPush { remote, branch });
+    }
+
+    if let Some(caps) = interp.try_captures("git_pull", input_lower) {
+        let remote = cap_opt(&caps, 1);
+        let branch = cap_opt(&caps, 2);
+        return Some(Intent::GitPull { remote, branch });
+    }
+
+    if let Some(caps) = interp.try_captures("git_checkout", input_lower) {
+        let target = cap_str(&caps, 1);
+        if !target.is_empty() {
+            return Some(Intent::GitCheckout { target });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("git_merge", input_lower) {
+        let branch = cap_str(&caps, 1);
+        if !branch.is_empty() {
+            return Some(Intent::GitMerge { branch });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("git_stash", input_lower) {
+        let action = caps.get(1).map_or("push", |m| m.as_str()).to_string();
+        return Some(Intent::GitStash { action });
+    }
+
+    // ── User / group management ─────────────────────────────────
+    // Must be checked before generic install/remove patterns.
+
+    if let Some(caps) = interp.try_captures("user_add", input_lower) {
+        let username = cap_str(&caps, 1);
+        let shell = caps.get(2).map(|m| m.as_str().trim().to_string());
+        let home = caps.get(3).map(|m| m.as_str().trim().to_string());
+        if !username.is_empty() {
+            return Some(Intent::UserAdd {
+                username,
+                shell,
+                home,
+            });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("user_delete", input_lower) {
+        let username = cap_str(&caps, 1);
+        let remove_home = input_lower.contains("remove") && input_lower.contains("home")
+            || input_lower.contains("-r")
+            || input_lower.contains("--remove");
+        if !username.is_empty() {
+            return Some(Intent::UserDelete {
+                username,
+                remove_home,
+            });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("user_mod", input_lower) {
+        let username = cap_str(&caps, 1);
+        let shell = caps.get(2).map(|m| m.as_str().trim().to_string());
+        let groups = caps.get(3).map(|m| m.as_str().trim().to_string());
+        if !username.is_empty() {
+            return Some(Intent::UserMod {
+                username,
+                shell,
+                groups,
+            });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("passwd", input_lower) {
+        let username = cap_opt(&caps, 1);
+        return Some(Intent::Passwd { username });
+    }
+
+    if let Some(caps) = interp.try_captures("group_add", input_lower) {
+        let groupname = cap_str(&caps, 1);
+        if !groupname.is_empty() {
+            return Some(Intent::GroupAdd { groupname });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("group_delete", input_lower) {
+        let groupname = cap_str(&caps, 1);
+        if !groupname.is_empty() {
+            return Some(Intent::GroupDelete { groupname });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("group_list", input_lower) {
+        let username = caps
+            .get(1)
+            .or_else(|| caps.get(2))
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty());
+        return Some(Intent::GroupList { username });
+    }
+
+    // ── Firewall ────────────────────────────────────────────────
+    // Must be checked before generic service enable/disable patterns.
+
+    if let Some(caps) = interp.try_captures("firewall_allow", input_lower) {
+        let port = cap_str(&caps, 1);
+        let protocol = caps.get(2).map(|m| m.as_str().trim().to_string());
+        if !port.is_empty() {
+            return Some(Intent::FirewallAllow { port, protocol });
+        }
+    }
+
+    if let Some(caps) = interp.try_captures("firewall_deny", input_lower) {
+        let port = cap_str(&caps, 1);
+        let protocol = caps.get(2).map(|m| m.as_str().trim().to_string());
+        if !port.is_empty() {
+            return Some(Intent::FirewallDeny { port, protocol });
+        }
+    }
+
+    if interp.try_captures("firewall_list", input_lower).is_some() {
+        return Some(Intent::FirewallList);
+    }
+
+    if interp
+        .try_captures("firewall_status", input_lower)
+        .is_some()
+    {
+        return Some(Intent::FirewallStatus);
+    }
+
+    if interp
+        .try_captures("firewall_enable", input_lower)
+        .is_some()
+    {
+        return Some(Intent::FirewallEnable);
+    }
+
+    if interp
+        .try_captures("firewall_disable", input_lower)
+        .is_some()
+    {
+        return Some(Intent::FirewallDisable);
+    }
+
+    if let Some(caps) = interp.try_captures("firewall_delete", input_lower) {
+        let rule = cap_str(&caps, 1);
+        if !rule.is_empty() {
+            return Some(Intent::FirewallDeleteRule { rule });
+        }
+    }
+
     // Remove: "remove /tmp/test", "delete the file old.log", "rm junk"
     if let Some(caps) = interp.try_captures("remove", input_lower) {
-        let path = caps.get(4).map_or("", |m| m.as_str()).trim().to_string();
+        let path = cap_str(&caps, 4);
         let recursive = input_lower.contains("recursiv") || input_lower.contains("-r");
         if !path.is_empty() {
             return Some(Intent::Remove { path, recursive });
@@ -333,8 +504,8 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Chown: "chown file.txt to root:root", "change owner of file to user"
     if let Some(caps) = interp.try_captures("chown", input_lower) {
-        let path = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let owner = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
+        let path = cap_str(&caps, 2);
+        let owner = cap_str(&caps, 3);
         if !path.is_empty() && !owner.is_empty() {
             return Some(Intent::Chown { path, owner });
         }
@@ -342,8 +513,8 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Symlink: "create symlink from X to Y", "link X to Y"
     if let Some(caps) = interp.try_captures("symlink", input_lower) {
-        let link = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let target = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let link = cap_str(&caps, 1);
+        let target = cap_str(&caps, 2);
         if !link.is_empty() && !target.is_empty() {
             return Some(Intent::Symlink { target, link });
         }
@@ -352,7 +523,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     // Archive: "tar archive.tar.gz src/", "zip backup.zip src/", "extract archive.tar.gz"
     if let Some(caps) = interp.try_captures("archive", input_lower) {
         let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_lowercase();
-        let rest = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let rest = cap_str(&caps, 2);
         let parts: Vec<String> = rest.split_whitespace().map(|s| s.to_string()).collect();
         let (archive, files) = if parts.len() > 1 {
             (parts[0].clone(), parts[1..].to_vec())
@@ -372,10 +543,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
             .get(2)
             .map(|m| m.as_str().trim().to_string())
             .unwrap_or_else(|| "list".to_string());
-        let rest = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let rest = cap_opt(&caps, 3);
         // For add action, try to split schedule from command
         let (schedule, command) = if action == "add" {
             if let Some(r) = &rest {
@@ -404,7 +572,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     // Service enable/disable: "enable nginx on boot", "disable bluetooth"
     if let Some(caps) = interp.try_captures("service_enable", input_lower) {
         let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_lowercase();
-        let service = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let service = cap_str(&caps, 2);
         if !service.is_empty() {
             let enable = action == "enable";
             return Some(Intent::ServiceEnable { service, enable });
@@ -427,10 +595,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Disk usage: "how much disk space in /home", "disk usage"
     if let Some(caps) = interp.try_captures("du", input_lower) {
-        let path = caps
-            .get(9)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let path = cap_opt(&caps, 9);
         return Some(Intent::DiskUsage { path });
     }
 
@@ -501,21 +666,21 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Marketplace patterns
     if let Some(caps) = interp.try_captures("marketplace_install", input_lower) {
-        let package = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
+        let package = cap_str(&caps, 3);
         if !package.is_empty() {
             return Some(Intent::MarketplaceInstall { package });
         }
     }
 
     if let Some(caps) = interp.try_captures("marketplace_uninstall", input_lower) {
-        let package = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
+        let package = cap_str(&caps, 3);
         if !package.is_empty() {
             return Some(Intent::MarketplaceUninstall { package });
         }
     }
 
     if let Some(caps) = interp.try_captures("marketplace_search", input_lower) {
-        let query = caps.get(4).map_or("", |m| m.as_str()).trim().to_string();
+        let query = cap_str(&caps, 4);
         if !query.is_empty() {
             return Some(Intent::MarketplaceSearch { query });
         }
@@ -537,7 +702,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
 
     // Knowledge/RAG patterns
     if let Some(caps) = interp.try_captures("knowledge", input_lower) {
-        let query = caps.get(5).map_or("", |m| m.as_str()).trim().to_string();
+        let query = cap_str(&caps, 5);
         if !query.is_empty() {
             return Some(Intent::KnowledgeSearch {
                 query,
@@ -547,7 +712,7 @@ pub(super) fn parse_core(interp: &Interpreter, input: &str, input_lower: &str) -
     }
 
     if let Some(caps) = interp.try_captures("rag_query", input_lower) {
-        let query = caps.get(3).map_or("", |m| m.as_str()).trim().to_string();
+        let query = cap_str(&caps, 3);
         if !query.is_empty() {
             return Some(Intent::RagQuery { query });
         }

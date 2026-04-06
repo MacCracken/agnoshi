@@ -6,6 +6,23 @@ mod tools;
 use super::Interpreter;
 use super::intent::Intent;
 
+/// Extract a required capture group as an owned String, or empty string if absent.
+#[inline]
+pub(super) fn cap_str(caps: &regex::Captures<'_>, group: usize) -> String {
+    caps.get(group)
+        .map_or("", |m| m.as_str())
+        .trim()
+        .to_string()
+}
+
+/// Extract an optional capture group as `Option<String>`, filtering out empty matches.
+#[inline]
+pub(super) fn cap_opt(caps: &regex::Captures<'_>, group: usize) -> Option<String> {
+    caps.get(group)
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 impl Interpreter {
     /// Parse natural language input into intent
     #[inline]

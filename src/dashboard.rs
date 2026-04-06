@@ -119,7 +119,7 @@ pub struct DashboardClient {
 
 impl DashboardClient {
     pub fn new(endpoint: Option<String>) -> Self {
-        let endpoint = endpoint.unwrap_or_else(|| "http://127.0.0.1:8090".to_string());
+        let endpoint = endpoint.unwrap_or_else(|| crate::config::DEFAULT_MCP_BASE_URL.to_string());
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()

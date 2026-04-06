@@ -1,6 +1,8 @@
 use crate::interpreter::Interpreter;
 use crate::interpreter::intent::Intent;
 
+use super::{cap_opt, cap_str};
+
 /// Parse consumer platform intents: Agnostic, Edge, SecureYeoman, Delta, Aequi, Photis Nadi
 pub(super) fn parse_platforms(
     interp: &Interpreter,
@@ -9,11 +11,8 @@ pub(super) fn parse_platforms(
 ) -> Option<Intent> {
     // --- Agnostic QA platform intents ---
     if let Some(caps) = interp.try_captures("agnostic_run", input_lower) {
-        let title = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let target_url = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let title = cap_str(&caps, 1);
+        let target_url = cap_opt(&caps, 3);
         if !title.is_empty() {
             return Some(Intent::AgnosticSubmitTask {
                 title: title.clone(),
@@ -24,18 +23,15 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("agnostic_status", input_lower) {
-        let task_id = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let task_id = cap_str(&caps, 1);
         if !task_id.is_empty() {
             return Some(Intent::AgnosticTaskStatus { task_id });
         }
     }
 
     if let Some(caps) = interp.try_captures("agnostic_report", input_lower) {
-        let session_id = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let result_type = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let session_id = cap_str(&caps, 1);
+        let result_type = cap_opt(&caps, 3);
         if !session_id.is_empty() {
             return Some(Intent::AgnosticStructuredResults {
                 session_id,
@@ -45,10 +41,7 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("agnostic_list_suites", input_lower) {
-        let domain = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let domain = cap_opt(&caps, 2);
         return Some(Intent::AgnosticListPresets { domain });
     }
 
@@ -60,10 +53,7 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("agnostic_dashboard", input_lower) {
-        let section = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let section = cap_opt(&caps, 3);
         return Some(Intent::AgnosticDashboard { section });
     }
     if interp
@@ -73,8 +63,8 @@ pub(super) fn parse_platforms(
         return Some(Intent::AgnosticTrends);
     }
     if let Some(caps) = interp.try_captures("agnostic_compare", input_lower) {
-        let session_a = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let session_b = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let session_a = cap_str(&caps, 1);
+        let session_b = cap_str(&caps, 2);
         if !session_a.is_empty() && !session_b.is_empty() {
             return Some(Intent::AgnosticCompare {
                 session_a,
@@ -84,11 +74,8 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("agnostic_run_crew", input_lower) {
-        let title = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let preset = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let title = cap_str(&caps, 2);
+        let preset = cap_opt(&caps, 4);
         let gpu_required = caps.get(5).is_some();
         if !title.is_empty() {
             return Some(Intent::AgnosticRunCrew {
@@ -100,51 +87,38 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("agnostic_crew_status", input_lower) {
-        let crew_id = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let crew_id = cap_str(&caps, 2);
         if !crew_id.is_empty() {
             return Some(Intent::AgnosticCrewStatus { crew_id });
         }
     }
 
     if let Some(caps) = interp.try_captures("agnostic_list_crews", input_lower) {
-        let status = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let status = cap_opt(&caps, 3);
         return Some(Intent::AgnosticListCrews { status });
     }
 
     if let Some(caps) = interp.try_captures("agnostic_cancel_crew", input_lower) {
-        let crew_id = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let crew_id = cap_str(&caps, 2);
         if !crew_id.is_empty() {
             return Some(Intent::AgnosticCancelCrew { crew_id });
         }
     }
 
     if let Some(caps) = interp.try_captures("agnostic_list_presets", input_lower) {
-        let domain = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let domain = cap_opt(&caps, 3);
         return Some(Intent::AgnosticListPresets { domain });
     }
 
     if let Some(caps) = interp.try_captures("agnostic_list_definitions", input_lower) {
-        let domain = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let domain = cap_opt(&caps, 4);
         return Some(Intent::AgnosticListDefinitions { domain });
     }
 
     if let Some(caps) = interp.try_captures("agnostic_create_agent", input_lower) {
-        let agent_key = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let name = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let role = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_default();
+        let agent_key = cap_str(&caps, 1);
+        let name = cap_str(&caps, 2);
+        let role = cap_opt(&caps, 3).unwrap_or_default();
         if !agent_key.is_empty() && !name.is_empty() {
             return Some(Intent::AgnosticCreateAgent {
                 agent_key,
@@ -170,19 +144,13 @@ pub(super) fn parse_platforms(
 
     // --- Edge fleet management intents ---
     if let Some(caps) = interp.try_captures("edge_list", input_lower) {
-        let status = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let status = cap_opt(&caps, 3);
         return Some(Intent::EdgeListNodes { status });
     }
 
     if let Some(caps) = interp.try_captures("edge_deploy", input_lower) {
-        let task = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let node = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let task = cap_str(&caps, 1);
+        let node = cap_opt(&caps, 2);
         if !task.is_empty() {
             return Some(Intent::EdgeDeploy { task, node });
         }
@@ -195,10 +163,7 @@ pub(super) fn parse_platforms(
             .map_or("", |m| m.as_str())
             .trim()
             .to_string();
-        let version = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let version = cap_opt(&caps, 3);
         if !node.is_empty() {
             return Some(Intent::EdgeUpdate { node, version });
         }
@@ -213,28 +178,22 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("edge_decommission", input_lower) {
-        let node = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let node = cap_str(&caps, 1);
         if !node.is_empty() {
             return Some(Intent::EdgeDecommission { node });
         }
     }
 
     if let Some(caps) = interp.try_captures("edge_logs", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let node = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let node = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::EdgeLogs { action, node });
         }
     }
     if let Some(caps) = interp.try_captures("edge_config", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let node = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let node = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::EdgeConfig {
                 action,
@@ -246,11 +205,8 @@ pub(super) fn parse_platforms(
 
     // --- SecureYeoman AI platform intents ---
     if let Some(caps) = interp.try_captures("yeoman_agents", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let agent_id = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let agent_id = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::YeomanAgents {
                 action,
@@ -261,11 +217,8 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("yeoman_tasks", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let description = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let description = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::YeomanTasks {
                 action,
@@ -276,22 +229,16 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("yeoman_tools", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let query = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let query = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::YeomanTools { action, query });
         }
     }
 
     if let Some(caps) = interp.try_captures("yeoman_integrations", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let name = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let name = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::YeomanIntegrations { action, name });
         }
@@ -302,21 +249,15 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("yeoman_logs", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let agent_id = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let agent_id = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::YeomanLogs { action, agent_id });
         }
     }
     if let Some(caps) = interp.try_captures("yeoman_workflows", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let name = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let name = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::YeomanWorkflows { action, name });
         }
@@ -332,25 +273,22 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("yeoman_tool_execute", input_lower) {
-        let tool_name = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let args = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let tool_name = cap_str(&caps, 1);
+        let args = cap_opt(&caps, 2);
         if !tool_name.is_empty() {
             return Some(Intent::YeomanToolExecute { tool_name, args });
         }
     }
 
     if let Some(caps) = interp.try_captures("yeoman_brain_query", input_lower) {
-        let query = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let query = cap_str(&caps, 1);
         if !query.is_empty() {
             return Some(Intent::YeomanBrainQuery { query, limit: None });
         }
     }
 
     if let Some(caps) = interp.try_captures("yeoman_brain_sync", input_lower) {
-        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let action = cap_str(&caps, 1);
         if !action.is_empty() {
             return Some(Intent::YeomanBrainSync {
                 action,
@@ -360,11 +298,8 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("yeoman_token_budget", input_lower) {
-        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let pool = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 1);
+        let pool = cap_opt(&caps, 2);
         if !action.is_empty() {
             return Some(Intent::YeomanTokenBudget {
                 action,
@@ -375,22 +310,16 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("yeoman_events", input_lower) {
-        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let limit = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 1);
+        let limit = cap_opt(&caps, 2);
         if !action.is_empty() {
             return Some(Intent::YeomanEvents { action, limit });
         }
     }
 
     if let Some(caps) = interp.try_captures("yeoman_swarm", input_lower) {
-        let action = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let extra = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 1);
+        let extra = cap_opt(&caps, 2);
         if !action.is_empty() {
             return Some(Intent::YeomanSwarm {
                 action,
@@ -402,8 +331,8 @@ pub(super) fn parse_platforms(
 
     // --- Delta code hosting intents ---
     if let Some(caps) = interp.try_captures("delta_create_repo", input_lower) {
-        let name = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let description = caps.get(4).map(|m| m.as_str().trim().to_string());
+        let name = cap_str(&caps, 2);
+        let description = cap_opt(&caps, 4);
         if !name.is_empty() {
             return Some(Intent::DeltaCreateRepo { name, description });
         }
@@ -422,14 +351,8 @@ pub(super) fn parse_platforms(
             .map_or("list", |m| m.as_str())
             .trim()
             .to_string();
-        let repo = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
-        let title = caps
-            .get(6)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let repo = cap_opt(&caps, 4);
+        let title = cap_opt(&caps, 6);
         return Some(Intent::DeltaPr {
             action,
             repo,
@@ -438,31 +361,19 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("delta_push", input_lower) {
-        let repo = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
-        let branch = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let repo = cap_opt(&caps, 2);
+        let branch = cap_opt(&caps, 4);
         return Some(Intent::DeltaPush { repo, branch });
     }
 
     if let Some(caps) = interp.try_captures("delta_ci", input_lower) {
-        let repo = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let repo = cap_opt(&caps, 4);
         return Some(Intent::DeltaCiStatus { repo });
     }
 
     if let Some(caps) = interp.try_captures("delta_branches", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let name = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let name = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::DeltaBranches {
                 action,
@@ -472,11 +383,8 @@ pub(super) fn parse_platforms(
         }
     }
     if let Some(caps) = interp.try_captures("delta_review", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let pr_id = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let pr_id = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::DeltaReview { action, pr_id });
         }
@@ -484,17 +392,17 @@ pub(super) fn parse_platforms(
 
     // --- Aequi accounting intents ---
     if let Some(caps) = interp.try_captures("aequi_tax", input_lower) {
-        let quarter = caps.get(6).map(|m| m.as_str().trim().to_string());
+        let quarter = cap_opt(&caps, 6);
         return Some(Intent::AequiTaxEstimate { quarter });
     }
 
     if let Some(caps) = interp.try_captures("aequi_schedule_c", input_lower) {
-        let year = caps.get(4).map(|m| m.as_str().trim().to_string());
+        let year = cap_opt(&caps, 4);
         return Some(Intent::AequiScheduleC { year });
     }
 
     if let Some(caps) = interp.try_captures("aequi_import", input_lower) {
-        let file_path = caps.get(4).map_or("", |m| m.as_str()).trim().to_string();
+        let file_path = cap_str(&caps, 4);
         if !file_path.is_empty() {
             return Some(Intent::AequiImportBank { file_path });
         }
@@ -517,11 +425,8 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("aequi_invoices", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let client = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let client = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::AequiInvoices { action, client });
         }
@@ -533,10 +438,7 @@ pub(super) fn parse_platforms(
             .trim()
             .replace(' ', "_")
             .to_string();
-        let period = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let period = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::AequiReports { action, period });
         }
@@ -544,29 +446,29 @@ pub(super) fn parse_platforms(
 
     // --- Photis Nadi task management intents ---
     if let Some(caps) = interp.try_captures("task_list", input_lower) {
-        let status = caps.get(4).map(|m| m.as_str().trim().to_string());
+        let status = cap_opt(&caps, 4);
         return Some(Intent::TaskList { status });
     }
 
     // Note: task_create uses original-case input for title preservation
     if let Some(caps) = interp.try_captures("task_create", input) {
-        let title = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let title = cap_str(&caps, 2);
         if !title.is_empty() {
-            let priority = caps.get(4).map(|m| m.as_str().trim().to_string());
+            let priority = cap_opt(&caps, 4);
             return Some(Intent::TaskCreate { title, priority });
         }
     }
 
     if let Some(caps) = interp.try_captures("task_update", input_lower) {
-        let task_id = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let status = caps.get(3).map(|m| m.as_str().trim().to_string());
+        let task_id = cap_str(&caps, 2);
+        let status = cap_opt(&caps, 3);
         if !task_id.is_empty() {
             return Some(Intent::TaskUpdate { task_id, status });
         }
     }
 
     if let Some(caps) = interp.try_captures("ritual_check", input_lower) {
-        let date = caps.get(2).map(|m| m.as_str().trim().to_string());
+        let date = cap_opt(&caps, 2);
         return Some(Intent::RitualCheck { date });
     }
 
@@ -581,21 +483,15 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("photis_boards", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let name = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let name = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::PhotoisBoards { action, name });
         }
     }
     if let Some(caps) = interp.try_captures("photis_notes", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let content = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let content = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::PhotoisNotes { action, content });
         }
@@ -611,20 +507,14 @@ pub(super) fn parse_platforms(
             .or_else(|| caps.get(2))
             .map(|m| m.as_str().trim().to_string())
             .unwrap_or_default();
-        let mode = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let mode = cap_opt(&caps, 3);
         if !target.is_empty() {
             return Some(Intent::PhylaxScan { target, mode });
         }
     }
 
     if let Some(caps) = interp.try_captures("phylax_findings", input_lower) {
-        let severity = caps
-            .get(1)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let severity = cap_opt(&caps, 1);
         return Some(Intent::PhylaxFindings { severity });
     }
 
@@ -649,17 +539,14 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("tron_risk", input_lower) {
-        let agent_id = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let agent_id = cap_str(&caps, 1);
         if !agent_id.is_empty() {
             return Some(Intent::TronRisk { agent_id });
         }
     }
 
     if let Some(caps) = interp.try_captures("tron_audit", input_lower) {
-        let agent_id = caps
-            .get(1)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let agent_id = cap_opt(&caps, 1);
         let limit = caps
             .get(2)
             .and_then(|m| m.as_str().trim().parse::<usize>().ok());
@@ -667,7 +554,7 @@ pub(super) fn parse_platforms(
     }
 
     if let Some(caps) = interp.try_captures("tron_policy", input_lower) {
-        let toml = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
+        let toml = cap_str(&caps, 1);
         if !toml.is_empty() {
             return Some(Intent::TronPolicy { toml });
         }

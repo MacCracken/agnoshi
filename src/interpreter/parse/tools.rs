@@ -1,6 +1,8 @@
 use crate::interpreter::Interpreter;
 use crate::interpreter::intent::Intent;
 
+use super::{cap_opt, cap_str};
+
 /// Parse trading + network tool intents: BullShift, network scanning
 pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Intent> {
     // --- BullShift trading intents ---
@@ -10,23 +12,14 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             .map_or("summary", |m| m.as_str())
             .trim()
             .to_string();
-        let period = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let period = cap_opt(&caps, 4);
         return Some(Intent::BullShiftPortfolio { action, period });
     }
 
     if let Some(caps) = interp.try_captures("bullshift_orders", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let symbol = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
-        let side = caps
-            .get(6)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let symbol = cap_opt(&caps, 4);
+        let side = cap_opt(&caps, 6);
         if !action.is_empty() {
             return Some(Intent::BullShiftOrders {
                 action,
@@ -42,41 +35,29 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             .map_or("quote", |m| m.as_str())
             .trim()
             .to_string();
-        let symbol = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let symbol = cap_opt(&caps, 2);
         return Some(Intent::BullShiftMarket { action, symbol });
     }
 
     if let Some(caps) = interp.try_captures("bullshift_alerts", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let symbol = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let symbol = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::BullShiftAlerts { action, symbol });
         }
     }
 
     if let Some(caps) = interp.try_captures("bullshift_strategy", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let name = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let name = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::BullShiftStrategy { action, name });
         }
     }
 
     if let Some(caps) = interp.try_captures("bullshift_accounts", input_lower) {
-        let action = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        let broker = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let action = cap_str(&caps, 2);
+        let broker = cap_opt(&caps, 4);
         if !action.is_empty() {
             return Some(Intent::BullShiftAccounts { action, broker });
         }
@@ -88,10 +69,7 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             .map_or("trades", |m| m.as_str())
             .trim()
             .to_string();
-        let period = caps
-            .get(4)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let period = cap_opt(&caps, 4);
         return Some(Intent::BullShiftHistory { action, period });
     }
 
@@ -145,10 +123,7 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             });
         }
         if caps.get(3).is_some() || full.contains("arp scan") {
-            let target = caps
-                .get(3)
-                .map(|m| m.as_str().trim().to_string())
-                .filter(|s| !s.is_empty());
+            let target = cap_opt(&caps, 3);
             return Some(Intent::NetworkScan {
                 action: "arp_scan".into(),
                 target,
@@ -210,14 +185,8 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             .get(1)
             .map(|m| m.as_str().to_string())
             .unwrap_or_default();
-        let name = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
-        let args: Vec<String> = caps
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty())
+        let name = cap_opt(&caps, 2);
+        let args: Vec<String> = cap_opt(&caps, 3)
             .map(|s| s.split_whitespace().map(|w| w.to_string()).collect())
             .unwrap_or_default();
         return Some(Intent::StivaRun { image, name, args });
@@ -270,10 +239,7 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             .get(1)
             .map(|m| m.as_str().to_string())
             .unwrap_or_default();
-        let tag = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let tag = cap_opt(&caps, 2);
         return Some(Intent::StivaBuild { path, tag });
     }
 
@@ -314,10 +280,7 @@ pub(super) fn parse_tools(interp: &Interpreter, input_lower: &str) -> Option<Int
             .get(1)
             .map(|m| m.as_str().to_string())
             .unwrap_or_default();
-        let file = caps
-            .get(2)
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|s| !s.is_empty());
+        let file = cap_opt(&caps, 2);
         return Some(Intent::StivaAnsamblu { action, file });
     }
 

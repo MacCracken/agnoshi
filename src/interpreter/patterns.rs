@@ -751,5 +751,101 @@ pub(crate) static PATTERNS: LazyLock<HashMap<String, Regex>> = LazyLock::new(|| 
         r"(?i)^(?:stiva\s+)?(?:ansamblu|compose)\s+(up|down|restart)(?:\s+(?:-f\s+)?(\S+))?$",
     );
 
+    // ── Git workflow ──────────────────────────────────────────────
+    r(
+        "git_commit",
+        r#"(?i)^(?:git\s+)?commit(?:\s+(-a|--all|all))?(?:\s+(?:-m\s+|(?:with\s+)?message\s+)["']?(.+?)["']?)$"#,
+    );
+    r(
+        "git_diff",
+        r"(?i)^(?:git\s+)?diff(?:\s+(--staged|--cached|staged))?(?:\s+(.+))?$",
+    );
+    r(
+        "git_branch",
+        r"(?i)^(?:git\s+)?branch(?:\s+(-d|--delete|delete)\s+(\S+)|\s+(\S+))?$",
+    );
+    r("git_status", r"(?i)^(?:git\s+)?status$");
+    r(
+        "git_log",
+        r"(?i)^(?:git\s+)?log(?:\s+(?:-n\s*|--oneline\s+|-(\d+)|last\s+(\d+)(?:\s+commits?)?))?$",
+    );
+    r(
+        "git_push",
+        r"(?i)^(?:git\s+)?push(?:\s+(\S+))?(?:\s+(\S+))?$",
+    );
+    r(
+        "git_pull",
+        r"(?i)^(?:git\s+)?pull(?:\s+(\S+))?(?:\s+(\S+))?$",
+    );
+    r(
+        "git_checkout",
+        r"(?i)^(?:git\s+)?(?:checkout|switch)(?:\s+(?:-b\s+)?(\S+))$",
+    );
+    r("git_merge", r"(?i)^(?:git\s+)?merge\s+(\S+)$");
+    r(
+        "git_stash",
+        r"(?i)^(?:git\s+)?stash(?:\s+(push|pop|list|drop|apply|show))?$",
+    );
+
+    // ── User / group management ─────────────────────────────────
+    r(
+        "user_add",
+        r"(?i)^(?:(?:add|create)\s+user|useradd)\s+(\S+)(?:\s+(?:(?:with\s+)?shell|--shell|-s)\s+(\S+))?(?:\s+(?:home|--home|-d)\s+(\S+))?$",
+    );
+    r(
+        "user_delete",
+        r"(?i)^(?:(?:delete|remove)\s+user|userdel)\s+(\S+)(?:\s+(?:(?:and\s+)?(?:remove\s+)?home|--remove|-r))?$",
+    );
+    r(
+        "user_mod",
+        r"(?i)^(?:(?:modify|change|update)\s+user|usermod)\s+(\S+)(?:\s+(?:(?:set\s+)?shell|--shell|-s)\s+(\S+))?(?:\s+(?:(?:add\s+to\s+)?groups?|--groups|-G)\s+(\S+))?$",
+    );
+    r(
+        "passwd",
+        r"(?i)^(?:(?:change|set|reset)\s+password(?:\s+(?:for|of))?\s+|passwd\s+)(\S+)$|^(?:change|reset)\s+(?:my\s+)?password$",
+    );
+    r(
+        "group_add",
+        r"(?i)^(?:(?:add|create)\s+group|groupadd)\s+(\S+)$",
+    );
+    r(
+        "group_delete",
+        r"(?i)^(?:(?:delete|remove)\s+group|groupdel)\s+(\S+)$",
+    );
+    r(
+        "group_list",
+        r"(?i)^(?:(?:list|show)\s+groups(?:\s+(?:for|of)\s+(\S+))?|groups(?:\s+(\S+))?)$",
+    );
+
+    // ── Firewall ────────────────────────────────────────────────
+    r(
+        "firewall_allow",
+        r"(?i)^(?:(?:firewall|ufw|nft)\s+)?allow\s+(?:port\s+)?(\d+(?:/\S+)?)(?:\s+(?:proto(?:col)?\s+)?(\S+))?$",
+    );
+    r(
+        "firewall_deny",
+        r"(?i)^(?:(?:firewall|ufw|nft)\s+)?(?:deny|block|reject)\s+(?:port\s+)?(\d+(?:/\S+)?)(?:\s+(?:proto(?:col)?\s+)?(\S+))?$",
+    );
+    r(
+        "firewall_list",
+        r"(?i)^(?:(?:firewall|ufw|nft)\s+)?(?:list|show)\s+(?:firewall\s+)?rules$",
+    );
+    r(
+        "firewall_status",
+        r"(?i)^(?:(?:firewall|ufw|nft)\s+)?(?:firewall\s+)?status$",
+    );
+    r(
+        "firewall_enable",
+        r"(?i)^(?:(?:firewall|ufw|nft)\s+)?enable\s+firewall$|^ufw\s+enable$",
+    );
+    r(
+        "firewall_disable",
+        r"(?i)^(?:(?:firewall|ufw|nft)\s+)?disable\s+firewall$|^ufw\s+disable$",
+    );
+    r(
+        "firewall_delete",
+        r"(?i)^(?:firewall|ufw|nft)\s+delete\s+(?:rule\s+)?(.+)$",
+    );
+
     p
 });

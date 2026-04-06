@@ -3,6 +3,7 @@
 //! Coordinates all shell components and handles the main event loop
 
 use anyhow::{Result, anyhow};
+use tracing::{debug, info, warn};
 
 use std::path::PathBuf;
 
@@ -20,13 +21,10 @@ use crate::ui::Ui;
 
 /// Main shell session
 pub struct Session {
-    _config: ShellConfig,
-    _security: SecurityContext,
     mode_manager: ModeManager,
     interpreter: Interpreter,
     approval: ApprovalManager,
     history: CommandHistory,
-    _output: OutputFormatter,
     ui: Ui,
     cwd: PathBuf,
     prompt_renderer: PromptRenderer,
@@ -45,7 +43,7 @@ impl Session {
         let interpreter = Interpreter::new();
         let approval = ApprovalManager::new();
         let history = CommandHistory::new(&config.history_file).await?;
-        let output = OutputFormatter::new(&config.output_format);
+        let _output = OutputFormatter::new(&config.output_format);
         let llm = LlmClient::new(config.llm_endpoint.clone());
         let ui = Ui::new();
         let cwd = std::env::current_dir()?;
@@ -62,13 +60,10 @@ impl Session {
         let checkpoint = CheckpointManager::new();
 
         Ok(Self {
-            _config: config,
-            _security: security,
             mode_manager,
             interpreter,
             approval,
             history,
-            _output: output,
             ui,
             cwd,
             prompt_renderer,
@@ -250,11 +245,16 @@ impl Session {
                     .await
                 {
                     Ok(suggestion) if !suggestion.starts_with('#') => {
-                        self.ui
-                            .show_info(&format!("Suggestion: {}", suggestion.trim()));
-                        // Parse the first line as a shell command
+                        // Validate LLM-generated command syntax before presenting
                         let cmd_line = suggestion.lines().next().unwrap_or("").trim();
-                        if !cmd_line.is_empty() {
+                        if cmd_line.is_empty() || shlex::split(cmd_line).is_none() {
+                            self.ui.show_warning(
+                                "AI generated an invalid command. Executing raw input.",
+                            );
+                            self.execute_shell_command(input).await?;
+                        } else {
+                            self.ui
+                                .show_info(&format!("Suggestion: {}", suggestion.trim()));
                             let parts: Vec<&str> = cmd_line.split_whitespace().collect();
                             if !parts.is_empty() {
                                 let cmd = parts[0].to_string();
@@ -314,9 +314,11 @@ impl Session {
                             #[allow(clippy::collapsible_match)]
                             match self.approval.request(&request).await? {
                                 ApprovalResponse::Approved | ApprovalResponse::ApprovedOnce => {
+                                    info!(command = %translation.command, permission = ?translation.permission, "Approved");
                                     self.execute_translation(&translation).await?;
                                 }
                                 ApprovalResponse::Denied | ApprovalResponse::DenyAndBlock => {
+                                    warn!(command = %translation.command, permission = ?translation.permission, "Denied by user");
                                     self.ui.show_info("Action cancelled by user");
                                 }
                                 ApprovalResponse::Modify(modified) => {
@@ -473,7 +475,10 @@ impl Session {
 
         let client = reqwest::Client::new();
         let resp = client
-            .post("http://127.0.0.1:8090/v1/mcp/tools/call")
+            .post(format!(
+                "{}/v1/mcp/tools/call",
+                crate::config::DEFAULT_MCP_BASE_URL
+            ))
             .json(&request)
             .send()
             .await;
@@ -539,6 +544,9 @@ impl Session {
         use std::process::Stdio;
         use tokio::process::Command;
 
+        let start = std::time::Instant::now();
+        debug!(command = cmd, args = ?args, cwd = %self.cwd.display(), "Executing command");
+
         // Checkpoint destructive operations before execution
         match cmd {
             "rm" => {
@@ -597,6 +605,14 @@ impl Session {
                                 -1
                             }
                         });
+
+                        let elapsed = start.elapsed();
+                        info!(
+                            command = cmd,
+                            exit_code = self.prompt_context.last_exit_code,
+                            duration_ms = elapsed.as_millis() as u64,
+                            "Command completed"
+                        );
 
                         let stdout_text = String::from_utf8_lossy(&output.stdout);
                         for line in stdout_text.lines() {

@@ -21,13 +21,18 @@ impl Sandbox {
     /// Apply Landlock restrictions for shell command execution.
     ///
     /// Grants read-only access to system paths and read-write to /tmp.
+    /// Protects sensitive dotfiles (.bashrc, .ssh, .gitconfig) as read-only.
     /// The calling process is restricted after this call.
+    ///
+    /// **Known gap:** Network egress control requires Landlock v4+ (Linux 6.7+).
+    /// Currently not enforced — pending agnosys network Landlock API.
+    /// Until then, outbound network access is unrestricted in sandboxed commands.
     pub fn apply_landlock(&self) -> Result<()> {
         if !self.enabled {
             return Ok(());
         }
 
-        let rules = vec![
+        let mut rules = vec![
             FilesystemRule::read_only("/usr"),
             FilesystemRule::read_only("/lib"),
             FilesystemRule::read_only("/lib64"),
@@ -37,6 +42,16 @@ impl Sandbox {
             FilesystemRule::read_write("/tmp"),
             FilesystemRule::read_write("/var/tmp"),
         ];
+
+        // Protect sensitive dotfiles from modification (OWASP ASI03)
+        if let Some(home) = dirs::home_dir() {
+            for dotfile in &[".bashrc", ".zshrc", ".profile", ".gitconfig", ".ssh"] {
+                let path = home.join(dotfile);
+                if path.exists() {
+                    rules.push(FilesystemRule::read_only(path));
+                }
+            }
+        }
 
         match security::apply_landlock(&rules) {
             Ok(()) => {

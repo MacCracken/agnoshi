@@ -3851,4 +3851,538 @@ mod tests {
         assert_eq!(parsed["path"], r#"foo","mode":"evil","inject":"true"#);
         assert_eq!(parsed["mode"], "on_demand");
     }
+
+    // ── Git workflow tests ──────────────────────────────────────
+
+    #[test]
+    fn test_parse_git_status() {
+        let interp = Interpreter::new();
+        assert!(matches!(interp.parse("git status"), Intent::GitStatus));
+    }
+
+    #[test]
+    fn test_parse_git_commit_with_message() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git commit -m fix the bug");
+        assert!(matches!(intent, Intent::GitCommit { .. }));
+        if let Intent::GitCommit { message, all } = intent {
+            assert_eq!(message, "fix the bug");
+            assert!(!all);
+        }
+    }
+
+    #[test]
+    fn test_parse_git_commit_all() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git commit -a -m update deps");
+        assert!(matches!(intent, Intent::GitCommit { .. }));
+        if let Intent::GitCommit { all, .. } = intent {
+            assert!(all);
+        }
+    }
+
+    #[test]
+    fn test_parse_git_diff() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git diff");
+        assert!(matches!(intent, Intent::GitDiff { staged: false, .. }));
+    }
+
+    #[test]
+    fn test_parse_git_diff_staged() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git diff --staged");
+        assert!(matches!(intent, Intent::GitDiff { staged: true, .. }));
+    }
+
+    #[test]
+    fn test_parse_git_branch_list() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git branch");
+        assert!(matches!(
+            intent,
+            Intent::GitBranch {
+                name: None,
+                delete: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_git_branch_create() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git branch feature-x");
+        assert!(matches!(intent, Intent::GitBranch { .. }));
+        if let Intent::GitBranch { name, delete } = intent {
+            assert_eq!(name.as_deref(), Some("feature-x"));
+            assert!(!delete);
+        }
+    }
+
+    #[test]
+    fn test_parse_git_branch_delete() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git branch -d old-branch");
+        assert!(matches!(intent, Intent::GitBranch { .. }));
+        if let Intent::GitBranch { name, delete } = intent {
+            assert_eq!(name.as_deref(), Some("old-branch"));
+            assert!(delete);
+        }
+    }
+
+    #[test]
+    fn test_parse_git_log() {
+        let interp = Interpreter::new();
+        assert!(matches!(
+            interp.parse("git log"),
+            Intent::GitLog { count: None }
+        ));
+    }
+
+    #[test]
+    fn test_parse_git_log_count() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git log -10");
+        if let Intent::GitLog { count } = intent {
+            assert_eq!(count, Some(10));
+        } else {
+            panic!("Expected GitLog");
+        }
+    }
+
+    #[test]
+    fn test_parse_git_push() {
+        let interp = Interpreter::new();
+        assert!(matches!(interp.parse("git push"), Intent::GitPush { .. }));
+    }
+
+    #[test]
+    fn test_parse_git_push_remote_branch() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git push origin main");
+        if let Intent::GitPush { remote, branch } = intent {
+            assert_eq!(remote.as_deref(), Some("origin"));
+            assert_eq!(branch.as_deref(), Some("main"));
+        } else {
+            panic!("Expected GitPush");
+        }
+    }
+
+    #[test]
+    fn test_parse_git_pull() {
+        let interp = Interpreter::new();
+        assert!(matches!(interp.parse("git pull"), Intent::GitPull { .. }));
+    }
+
+    #[test]
+    fn test_parse_git_checkout() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git checkout develop");
+        assert!(matches!(intent, Intent::GitCheckout { .. }));
+        if let Intent::GitCheckout { target } = intent {
+            assert_eq!(target, "develop");
+        }
+    }
+
+    #[test]
+    fn test_parse_git_merge() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("git merge feature");
+        assert!(matches!(intent, Intent::GitMerge { .. }));
+        if let Intent::GitMerge { branch } = intent {
+            assert_eq!(branch, "feature");
+        }
+    }
+
+    #[test]
+    fn test_parse_git_stash() {
+        let interp = Interpreter::new();
+        assert!(matches!(interp.parse("git stash"), Intent::GitStash { .. }));
+        let intent = interp.parse("git stash pop");
+        if let Intent::GitStash { action } = intent {
+            assert_eq!(action, "pop");
+        } else {
+            panic!("Expected GitStash");
+        }
+    }
+
+    #[test]
+    fn test_translate_git_commit() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::GitCommit {
+                message: "fix bug".to_string(),
+                all: false,
+            })
+            .unwrap();
+        assert_eq!(t.command, "git");
+        assert!(t.args.contains(&"commit".to_string()));
+        assert!(t.args.contains(&"-m".to_string()));
+        assert!(t.args.contains(&"fix bug".to_string()));
+    }
+
+    #[test]
+    fn test_translate_git_status() {
+        let interp = Interpreter::new();
+        let t = interp.translate(&Intent::GitStatus).unwrap();
+        assert_eq!(t.command, "git");
+        assert_eq!(t.args, vec!["status"]);
+    }
+
+    #[test]
+    fn test_translate_git_push_origin_main() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::GitPush {
+                remote: Some("origin".to_string()),
+                branch: Some("main".to_string()),
+            })
+            .unwrap();
+        assert_eq!(t.command, "git");
+        assert_eq!(t.args, vec!["push", "origin", "main"]);
+    }
+
+    #[test]
+    fn test_translate_git_diff_staged() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::GitDiff {
+                path: None,
+                staged: true,
+            })
+            .unwrap();
+        assert_eq!(t.command, "git");
+        assert!(t.args.contains(&"--staged".to_string()));
+    }
+
+    // ── User / group management tests ───────────────────────────
+
+    #[test]
+    fn test_parse_user_add() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("add user alice");
+        assert!(matches!(intent, Intent::UserAdd { .. }));
+        if let Intent::UserAdd {
+            username,
+            shell,
+            home,
+        } = intent
+        {
+            assert_eq!(username, "alice");
+            assert!(shell.is_none());
+            assert!(home.is_none());
+        }
+    }
+
+    #[test]
+    fn test_parse_user_add_with_shell() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("useradd bob --shell /bin/zsh");
+        assert!(matches!(intent, Intent::UserAdd { .. }));
+        if let Intent::UserAdd {
+            username, shell, ..
+        } = intent
+        {
+            assert_eq!(username, "bob");
+            assert_eq!(shell.as_deref(), Some("/bin/zsh"));
+        }
+    }
+
+    #[test]
+    fn test_parse_user_delete() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("delete user charlie");
+        assert!(matches!(intent, Intent::UserDelete { .. }));
+        if let Intent::UserDelete {
+            username,
+            remove_home,
+        } = intent
+        {
+            assert_eq!(username, "charlie");
+            assert!(!remove_home);
+        }
+    }
+
+    #[test]
+    fn test_parse_user_delete_remove_home() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("userdel dave --remove");
+        assert!(matches!(intent, Intent::UserDelete { .. }));
+        if let Intent::UserDelete { remove_home, .. } = intent {
+            assert!(remove_home);
+        }
+    }
+
+    #[test]
+    fn test_parse_user_mod() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("modify user eve shell /bin/fish");
+        assert!(matches!(intent, Intent::UserMod { .. }));
+        if let Intent::UserMod {
+            username, shell, ..
+        } = intent
+        {
+            assert_eq!(username, "eve");
+            assert_eq!(shell.as_deref(), Some("/bin/fish"));
+        }
+    }
+
+    #[test]
+    fn test_parse_passwd() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("change password for frank");
+        assert!(matches!(intent, Intent::Passwd { .. }));
+        if let Intent::Passwd { username } = intent {
+            assert_eq!(username.as_deref(), Some("frank"));
+        }
+    }
+
+    #[test]
+    fn test_parse_group_add() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("create group developers");
+        assert!(matches!(intent, Intent::GroupAdd { .. }));
+        if let Intent::GroupAdd { groupname } = intent {
+            assert_eq!(groupname, "developers");
+        }
+    }
+
+    #[test]
+    fn test_parse_group_delete() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("delete group legacy");
+        assert!(matches!(intent, Intent::GroupDelete { .. }));
+        if let Intent::GroupDelete { groupname } = intent {
+            assert_eq!(groupname, "legacy");
+        }
+    }
+
+    #[test]
+    fn test_parse_group_list() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("list groups for alice");
+        assert!(matches!(intent, Intent::GroupList { .. }));
+        if let Intent::GroupList { username } = intent {
+            assert_eq!(username.as_deref(), Some("alice"));
+        }
+    }
+
+    #[test]
+    fn test_parse_groups_command() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("groups bob");
+        assert!(matches!(intent, Intent::GroupList { .. }));
+        if let Intent::GroupList { username } = intent {
+            assert_eq!(username.as_deref(), Some("bob"));
+        }
+    }
+
+    #[test]
+    fn test_translate_user_add() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::UserAdd {
+                username: "alice".to_string(),
+                shell: Some("/bin/zsh".to_string()),
+                home: None,
+            })
+            .unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"useradd".to_string()));
+        assert!(t.args.contains(&"alice".to_string()));
+        assert!(t.args.contains(&"-s".to_string()));
+    }
+
+    #[test]
+    fn test_translate_user_delete_with_home() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::UserDelete {
+                username: "bob".to_string(),
+                remove_home: true,
+            })
+            .unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"userdel".to_string()));
+        assert!(t.args.contains(&"-r".to_string()));
+    }
+
+    #[test]
+    fn test_translate_group_add() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::GroupAdd {
+                groupname: "devs".to_string(),
+            })
+            .unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"groupadd".to_string()));
+        assert!(t.args.contains(&"devs".to_string()));
+    }
+
+    #[test]
+    fn test_translate_group_list() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::GroupList {
+                username: Some("alice".to_string()),
+            })
+            .unwrap();
+        assert_eq!(t.command, "groups");
+        assert_eq!(t.args, vec!["alice"]);
+    }
+
+    // ── Firewall tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_firewall_allow() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("allow port 8080");
+        assert!(matches!(intent, Intent::FirewallAllow { .. }));
+        if let Intent::FirewallAllow { port, protocol } = intent {
+            assert_eq!(port, "8080");
+            assert!(protocol.is_none());
+        }
+    }
+
+    #[test]
+    fn test_parse_firewall_allow_with_protocol() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("ufw allow 443 tcp");
+        assert!(matches!(intent, Intent::FirewallAllow { .. }));
+        if let Intent::FirewallAllow { port, protocol } = intent {
+            assert_eq!(port, "443");
+            assert_eq!(protocol.as_deref(), Some("tcp"));
+        }
+    }
+
+    #[test]
+    fn test_parse_firewall_deny() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("deny port 22");
+        assert!(matches!(intent, Intent::FirewallDeny { .. }));
+        if let Intent::FirewallDeny { port, .. } = intent {
+            assert_eq!(port, "22");
+        }
+    }
+
+    #[test]
+    fn test_parse_firewall_block() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("block port 3389");
+        assert!(matches!(intent, Intent::FirewallDeny { .. }));
+    }
+
+    #[test]
+    fn test_parse_firewall_list() {
+        let interp = Interpreter::new();
+        assert!(matches!(
+            interp.parse("list firewall rules"),
+            Intent::FirewallList
+        ));
+        assert!(matches!(
+            interp.parse("show firewall rules"),
+            Intent::FirewallList
+        ));
+    }
+
+    #[test]
+    fn test_parse_firewall_status() {
+        let interp = Interpreter::new();
+        assert!(matches!(
+            interp.parse("firewall status"),
+            Intent::FirewallStatus
+        ));
+        assert!(matches!(interp.parse("ufw status"), Intent::FirewallStatus));
+    }
+
+    #[test]
+    fn test_parse_firewall_enable() {
+        let interp = Interpreter::new();
+        assert!(matches!(
+            interp.parse("enable firewall"),
+            Intent::FirewallEnable
+        ));
+        assert!(matches!(interp.parse("ufw enable"), Intent::FirewallEnable));
+    }
+
+    #[test]
+    fn test_parse_firewall_disable() {
+        let interp = Interpreter::new();
+        assert!(matches!(
+            interp.parse("disable firewall"),
+            Intent::FirewallDisable
+        ));
+    }
+
+    #[test]
+    fn test_parse_firewall_delete() {
+        let interp = Interpreter::new();
+        let intent = interp.parse("ufw delete rule 3");
+        assert!(matches!(intent, Intent::FirewallDeleteRule { .. }));
+        if let Intent::FirewallDeleteRule { rule } = intent {
+            assert_eq!(rule, "3");
+        }
+    }
+
+    #[test]
+    fn test_translate_firewall_allow() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::FirewallAllow {
+                port: "8080".to_string(),
+                protocol: Some("tcp".to_string()),
+            })
+            .unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"ufw".to_string()));
+        assert!(t.args.contains(&"allow".to_string()));
+        assert!(t.args.contains(&"8080/tcp".to_string()));
+    }
+
+    #[test]
+    fn test_translate_firewall_deny() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::FirewallDeny {
+                port: "22".to_string(),
+                protocol: None,
+            })
+            .unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"ufw".to_string()));
+        assert!(t.args.contains(&"deny".to_string()));
+        assert!(t.args.contains(&"22".to_string()));
+    }
+
+    #[test]
+    fn test_translate_firewall_enable() {
+        let interp = Interpreter::new();
+        let t = interp.translate(&Intent::FirewallEnable).unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"ufw".to_string()));
+        assert!(t.args.contains(&"enable".to_string()));
+    }
+
+    #[test]
+    fn test_translate_firewall_status() {
+        let interp = Interpreter::new();
+        let t = interp.translate(&Intent::FirewallStatus).unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"ufw".to_string()));
+        assert!(t.args.contains(&"verbose".to_string()));
+    }
+
+    #[test]
+    fn test_translate_firewall_delete_rule() {
+        let interp = Interpreter::new();
+        let t = interp
+            .translate(&Intent::FirewallDeleteRule {
+                rule: "5".to_string(),
+            })
+            .unwrap();
+        assert_eq!(t.command, "sudo");
+        assert!(t.args.contains(&"delete".to_string()));
+        assert!(t.args.contains(&"5".to_string()));
+    }
 }

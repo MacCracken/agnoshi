@@ -173,135 +173,149 @@ impl PermissionLevel {
     }
 }
 
+// ── Command classification lists ────────────────────────────────
+
+/// Commands that are never allowed for AI execution.
+const BLOCKED_COMMANDS: &[&str] = &[
+    "rm", "dd", "mkfs", "fdisk", "parted", "chmod", "chown", "chgrp", "shred",
+];
+
+/// Dangerous `rm` flags that escalate to Blocked.
+const RM_DANGEROUS_FLAGS: &[&str] = &[
+    "-r",
+    "-f",
+    "--recursive",
+    "--force",
+    "--no-preserve-root",
+    "-rf",
+    "-fr",
+];
+
+/// Commands requiring administrative approval.
+const ADMIN_COMMANDS: &[&str] = &[
+    "apt",
+    "yum",
+    "dnf",
+    "pacman",
+    "systemctl",
+    "service",
+    "useradd",
+    "userdel",
+    "usermod",
+    "groupadd",
+    "mount",
+    "umount",
+    "modprobe",
+    "insmod",
+    "rmmod",
+    "kill",
+    "killall",
+    "pkill",
+    "reboot",
+    "shutdown",
+    "poweroff",
+    "halt",
+    "iptables",
+    "ip6tables",
+    "nft",
+    "ufw",
+    "crontab",
+    "visudo",
+    "su",
+    "swapoff",
+    "swapon",
+    "mknod",
+];
+
+/// Commands that modify files (may escalate to SystemWrite based on path).
+const WRITE_COMMANDS: &[&str] = &[
+    "cp", "mv", "ln", "touch", "mkdir", "rmdir", "tee", "sed", "awk",
+];
+
+/// Read-only commands that never modify state.
+const READ_ONLY_COMMANDS: &[&str] = &[
+    "ls", "cat", "head", "tail", "less", "more", "grep", "find", "ps", "top", "htop", "df", "du",
+    "free", "uptime", "uname", "ifconfig", "ip", "netstat", "ss", "pwd", "echo", "date", "whoami",
+    "id",
+];
+
+/// Builtins and non-destructive shell commands.
+const SAFE_COMMANDS: &[&str] = &["cd", "pwd", "clear", "exit", "history", "help", "agnsh"];
+
+/// Normalize a path for safe comparison, resolving `..` and `.` components.
+fn normalize_path(path: &str) -> std::path::PathBuf {
+    if path.starts_with('/') {
+        std::path::Path::new(path)
+            .canonicalize()
+            .unwrap_or_else(|_| {
+                let mut components = Vec::new();
+                for component in std::path::Path::new(path).components() {
+                    match component {
+                        std::path::Component::ParentDir => {
+                            components.pop();
+                        }
+                        std::path::Component::CurDir => {}
+                        other => components.push(other),
+                    }
+                }
+                components.iter().collect()
+            })
+    } else {
+        std::path::PathBuf::from(path)
+    }
+}
+
+/// Check whether any argument targets a protected system directory.
+fn targets_system_path(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        let normalized = normalize_path(a);
+        let path_str = normalized.to_string_lossy();
+        path_str.starts_with("/etc/")
+            || path_str == "/etc"
+            || path_str.starts_with("/usr/")
+            || path_str == "/usr"
+            || path_str.starts_with("/bin/")
+            || path_str == "/bin"
+            || path_str.starts_with("/sbin/")
+            || path_str == "/sbin"
+            || path_str.starts_with("/lib")
+    })
+}
+
 /// Analyze command for required permission level
 #[must_use]
 pub fn analyze_command_permission(command: &str, args: &[String]) -> PermissionLevel {
     let cmd = command.to_lowercase();
 
-    // Blocked commands (never allowed for AI)
-    let blocked = [
-        "rm", "dd", "mkfs", "fdisk", "parted", "chmod", "chown", "chgrp", "shred",
-    ];
-
-    if blocked.contains(&cmd.as_str()) {
+    if BLOCKED_COMMANDS.contains(&cmd.as_str()) {
         if cmd == "rm" {
-            // Dangerous flags → always blocked
-            let dangerous_flags = [
-                "-r",
-                "-f",
-                "--recursive",
-                "--force",
-                "--no-preserve-root",
-                "-rf",
-                "-fr",
-            ];
-            if args.iter().any(|a| dangerous_flags.contains(&a.as_str())) {
+            if args
+                .iter()
+                .any(|a| RM_DANGEROUS_FLAGS.contains(&a.as_str()))
+            {
                 return PermissionLevel::Blocked;
             }
-            // Simple rm (no flags or safe flags like -v, -i) → requires approval
             return PermissionLevel::Admin;
         }
         return PermissionLevel::Blocked;
     }
 
-    // Admin commands
-    let admin = [
-        "apt",
-        "yum",
-        "dnf",
-        "pacman",
-        "systemctl",
-        "service",
-        "useradd",
-        "userdel",
-        "usermod",
-        "groupadd",
-        "mount",
-        "umount",
-        "modprobe",
-        "insmod",
-        "rmmod",
-        "kill",
-        "killall",
-        "pkill",
-        "reboot",
-        "shutdown",
-        "poweroff",
-        "halt",
-        "iptables",
-        "ip6tables",
-        "nft",
-        "ufw",
-        "crontab",
-        "visudo",
-        "su",
-        "swapoff",
-        "swapon",
-        "mknod",
-    ];
-
-    if admin.contains(&cmd.as_str()) {
+    if ADMIN_COMMANDS.contains(&cmd.as_str()) {
         return PermissionLevel::Admin;
     }
 
-    // System write commands
-    let system_write = [
-        "cp", "mv", "ln", "touch", "mkdir", "rmdir", "tee", "sed", "awk",
-    ];
-
-    if system_write.contains(&cmd.as_str()) {
-        // Check if targeting system directories
-        if args.iter().any(|a| {
-            // Normalize path to prevent traversal attacks (e.g., /usr/../etc/passwd)
-            let normalized = if a.starts_with('/') {
-                // Attempt to canonicalize; fall back to cleaning the path manually
-                std::path::Path::new(a).canonicalize().unwrap_or_else(|_| {
-                    // Manual normalization for paths that don't exist yet
-                    let mut components = Vec::new();
-                    for component in std::path::Path::new(a).components() {
-                        match component {
-                            std::path::Component::ParentDir => {
-                                components.pop();
-                            }
-                            std::path::Component::CurDir => {}
-                            other => components.push(other),
-                        }
-                    }
-                    components.iter().collect()
-                })
-            } else {
-                std::path::PathBuf::from(a)
-            };
-            let path_str = normalized.to_string_lossy();
-            path_str.starts_with("/etc/")
-                || path_str == "/etc"
-                || path_str.starts_with("/usr/")
-                || path_str == "/usr"
-                || path_str.starts_with("/bin/")
-                || path_str == "/bin"
-                || path_str.starts_with("/sbin/")
-                || path_str == "/sbin"
-                || path_str.starts_with("/lib")
-        }) {
+    if WRITE_COMMANDS.contains(&cmd.as_str()) {
+        if targets_system_path(args) {
             return PermissionLevel::SystemWrite;
         }
         return PermissionLevel::UserWrite;
     }
 
-    // Read-only commands
-    let read_only = [
-        "ls", "cat", "head", "tail", "less", "more", "grep", "find", "ps", "top", "htop", "df",
-        "du", "free", "uptime", "uname", "ifconfig", "ip", "netstat", "ss", "pwd", "echo", "date",
-        "whoami", "id",
-    ];
-
-    if read_only.contains(&cmd.as_str()) {
+    if READ_ONLY_COMMANDS.contains(&cmd.as_str()) {
         return PermissionLevel::ReadOnly;
     }
 
-    // Safe commands (builtin or non-destructive)
-    // Note: echo is in read_only (checked first), not here — avoids dead entry
-    let safe = ["cd", "pwd", "clear", "exit", "history", "help", "agnsh"];
+    let safe = SAFE_COMMANDS;
 
     if safe.contains(&cmd.as_str()) {
         return PermissionLevel::Safe;

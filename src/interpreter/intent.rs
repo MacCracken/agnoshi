@@ -741,6 +741,80 @@ pub enum Intent {
         value: Option<String>,
     },
 
+    // ── Git workflow ──────────────────────────────────────────────
+    /// Git commit with message
+    GitCommit { message: String, all: bool },
+    /// Git diff (working tree or staged)
+    GitDiff { path: Option<String>, staged: bool },
+    /// Git branch operations (list / create / delete)
+    GitBranch { name: Option<String>, delete: bool },
+    /// Git status
+    GitStatus,
+    /// Git log
+    GitLog { count: Option<u32> },
+    /// Git push
+    GitPush {
+        remote: Option<String>,
+        branch: Option<String>,
+    },
+    /// Git pull
+    GitPull {
+        remote: Option<String>,
+        branch: Option<String>,
+    },
+    /// Git checkout / switch branch
+    GitCheckout { target: String },
+    /// Git merge
+    GitMerge { branch: String },
+    /// Git stash operations
+    GitStash { action: String },
+
+    // ── User / group management ─────────────────────────────────
+    /// Add a user account
+    UserAdd {
+        username: String,
+        shell: Option<String>,
+        home: Option<String>,
+    },
+    /// Delete a user account
+    UserDelete { username: String, remove_home: bool },
+    /// Modify a user account
+    UserMod {
+        username: String,
+        shell: Option<String>,
+        groups: Option<String>,
+    },
+    /// Change password
+    Passwd { username: Option<String> },
+    /// Add a group
+    GroupAdd { groupname: String },
+    /// Delete a group
+    GroupDelete { groupname: String },
+    /// List groups for a user
+    GroupList { username: Option<String> },
+
+    // ── Firewall ────────────────────────────────────────────────
+    /// Allow traffic on port
+    FirewallAllow {
+        port: String,
+        protocol: Option<String>,
+    },
+    /// Deny traffic on port
+    FirewallDeny {
+        port: String,
+        protocol: Option<String>,
+    },
+    /// List firewall rules
+    FirewallList,
+    /// Firewall status
+    FirewallStatus,
+    /// Enable firewall
+    FirewallEnable,
+    /// Disable firewall
+    FirewallDisable,
+    /// Delete a firewall rule
+    FirewallDeleteRule { rule: String },
+
     /// Piped command chain (cmd1 | cmd2)
     Pipeline { commands: Vec<String> },
     /// Question/Information request

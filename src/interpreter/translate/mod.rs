@@ -7,6 +7,8 @@ mod bullshift;
 mod delta;
 mod edge;
 mod filesystem;
+mod firewall;
+mod git;
 mod jalwa;
 mod knowledge;
 mod marketplace;
@@ -25,6 +27,7 @@ mod system;
 mod tarang;
 mod tazama;
 mod tron;
+mod user;
 mod yeoman;
 
 use anyhow::{Result, anyhow};
@@ -271,6 +274,36 @@ impl Interpreter {
             | Intent::ProductivityStats { .. }
             | Intent::PhotoisBoards { .. }
             | Intent::PhotoisNotes { .. } => photis::translate_photis(intent),
+
+            // Git workflow
+            Intent::GitCommit { .. }
+            | Intent::GitDiff { .. }
+            | Intent::GitBranch { .. }
+            | Intent::GitStatus
+            | Intent::GitLog { .. }
+            | Intent::GitPush { .. }
+            | Intent::GitPull { .. }
+            | Intent::GitCheckout { .. }
+            | Intent::GitMerge { .. }
+            | Intent::GitStash { .. } => git::translate_git(intent),
+
+            // User / group management
+            Intent::UserAdd { .. }
+            | Intent::UserDelete { .. }
+            | Intent::UserMod { .. }
+            | Intent::Passwd { .. }
+            | Intent::GroupAdd { .. }
+            | Intent::GroupDelete { .. }
+            | Intent::GroupList { .. } => user::translate_user(intent),
+
+            // Firewall
+            Intent::FirewallAllow { .. }
+            | Intent::FirewallDeny { .. }
+            | Intent::FirewallList
+            | Intent::FirewallStatus
+            | Intent::FirewallEnable
+            | Intent::FirewallDisable
+            | Intent::FirewallDeleteRule { .. } => firewall::translate_firewall(intent),
 
             // Shell / pipeline
             Intent::ShellCommand { .. } | Intent::Pipeline { .. } => misc::translate_misc(intent),

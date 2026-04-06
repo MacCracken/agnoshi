@@ -8,9 +8,9 @@
 
 ## v1.0.0 Criteria
 
-- [ ] Git workflow intents — commit, diff, branch, status, log, PR operations
-- [ ] User/group management intents — useradd, userdel, usermod, passwd, groups
-- [ ] Firewall intents — ufw/nftables allow, deny, list rules
+- [x] Git workflow intents — commit, diff, branch, status, log, push, pull, checkout, merge, stash (2026-04-05)
+- [x] User/group management intents — useradd, userdel, usermod, passwd, groupadd, groupdel, groups (2026-04-05)
+- [x] Firewall intents — ufw allow, deny, list, status, enable, disable, delete rule (2026-04-05)
 - [ ] All 30+ translators production-tested
 - [ ] Approval workflow battle-tested
 

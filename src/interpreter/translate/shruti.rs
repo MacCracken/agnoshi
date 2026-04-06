@@ -77,7 +77,9 @@ pub(crate) fn translate_shruti(intent: &Intent) -> Result<Translation> {
             if let Some(g) = gain {
                 a.insert(
                     "gain".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from_f64(*g).unwrap()),
+                    serde_json::Number::from_f64(*g)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null),
                 );
             }
             if let Some(m) = mute {

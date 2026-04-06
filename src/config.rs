@@ -1,5 +1,8 @@
 //! Shell configuration
 
+/// Default MCP gateway base URL (used by translators, dashboard, session).
+pub const DEFAULT_MCP_BASE_URL: &str = "http://127.0.0.1:8090";
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
