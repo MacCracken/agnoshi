@@ -389,3 +389,68 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-04-05T07:34:20Z,c567038,main,system/explain_pipeline/50,2553.1000
 2026-04-05T07:34:20Z,c567038,main,system/explain_all_16_commands,855.76
 2026-04-05T07:34:20Z,c567038,main,system/explain_10_unknown_commands,516.72
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_parse_simple,218280.0000
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_parse_list_files,32043.0000
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_parse_cd,18556.0000
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_translate_list_files,166.94
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_translate_cd,77.206
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_explain_ls,55.813
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_explain_cat,71.302
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_explain_rm,76.777
+2026-04-06T03:15:44Z,5a662b0,main,interpreter_parse_10_commands,217470.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/show me all files,34264.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/find files named foo,27259.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/install package vim,29127.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/show running processes,28555.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/mute track vocals,29606.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/list edge nodes,1922.1000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/shruti create session test,30856.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/search marketplace for agnostic,31177.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/search knowledge base for networking,30170.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/ark install htop,16398.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/delta list repos,3631.6000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/list tasks,4361.4000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/show balance,4043.5000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/scan ports on 192.168.1.1,13598.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/individual/show system information,25754.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/batch/15,309960.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/batch/100,2086500.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/batch/500,10239000.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/parse_translate/15,335230.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/parse_translate/100,2197000.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/parse_translate/500,10781000.0000
+2026-04-06T03:15:44Z,5a662b0,main,intent_parsing/edge_cases,166050.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/session_lifecycle_create_execute_destroy,8938400.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/session_create,9207300.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/parse_translate_pipeline/10,290480.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/parse_translate_pipeline/50,1402200.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/parse_translate_pipeline/100,2772600.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/parse_only_pipeline/10,283480.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/parse_only_pipeline/50,1337500.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/parse_only_pipeline/100,2668900.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/prompt_render_full_all_modules,5077.2000
+2026-04-06T03:15:44Z,5a662b0,main,system/prompt_render_minimal,249.42
+2026-04-06T03:15:44Z,5a662b0,main,system/prompt_render_right_prompt,508.88
+2026-04-06T03:15:44Z,5a662b0,main,system/prompt_render_repeated/10,59822.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/prompt_render_repeated/50,296250.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/prompt_render_repeated/100,600340.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/intent_classification/10,273000.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/intent_classification/50,1322100.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/intent_classification/100,2574500.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/intent_classification/500,13325000.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/intent_classification_diverse_15,379020.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_add_then_search/100,35770.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_add_then_search/500,99179.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_add_then_search/1000,164090.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_add_then_search/5000,752590.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_search_preloaded/100,13028.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_search_preloaded/1000,98053.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_search_preloaded/5000,463420.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/history_get_recent/100,58.125
+2026-04-06T03:15:44Z,5a662b0,main,system/history_get_recent/1000,57.307
+2026-04-06T03:15:44Z,5a662b0,main,system/history_get_recent/5000,59.010
+2026-04-06T03:15:44Z,5a662b0,main,system/explain_pipeline/5,332.77
+2026-04-06T03:15:44Z,5a662b0,main,system/explain_pipeline/16,1106.4000
+2026-04-06T03:15:44Z,5a662b0,main,system/explain_pipeline/50,3378.6000
+2026-04-06T03:15:44Z,5a662b0,main,system/explain_all_16_commands,1075.0000
+2026-04-06T03:15:44Z,5a662b0,main,system/explain_10_unknown_commands,594.33
