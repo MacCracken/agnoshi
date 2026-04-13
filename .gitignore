@@ -1,10 +1,11 @@
 # Build
-/target/
-**/*.rs.bk
+/build/
+*.o
+*.elf
 
-# Cargo
-Cargo.lock
-!Cargo.lock
+# Rust legacy (rust-old/)
+rust-old/target/
+rust-old/rust_out
 
 # IDE
 .idea/
@@ -26,9 +27,6 @@ tarpaulin-report.*
 
 # Claude Code
 .claude/
-
-# Benchmarks (CSV history is tracked, raw criterion output is not)
-/target/criterion/
 
 # Environment / secrets
 .env
