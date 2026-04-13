@@ -1,0 +1,18 @@
+# agnoshi — Cyrius port
+# Ported from 27251 lines of Rust
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+
+fn main() {
+    alloc_init();
+    println("agnoshi ready");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
