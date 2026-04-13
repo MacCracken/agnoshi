@@ -146,3 +146,14 @@ Rules:
 - Breaking changes get a **Breaking** section with migration guide
 - Group by module when multiple changes in one release
 - Link to ADR if a change was driven by an architectural decision
+
+## Known Issues
+
+- **Build error: `undefined variable 'ModeManager'`** — incomplete port, NOT a compiler limit.
+  The code references `ModeManager` which hasn't been defined yet. Fix the port, don't blame cc3.
+- **benchmarks-rust-v-cyrius.md claims "exceeds cc3's function/token limits"** — FALSE.
+  agnoshi has 198 functions (limit: 2048) and ~3050 lines. Nowhere near any limit.
+  The bench fails because the code doesn't compile, not because of capacity.
+- **ADR-002 style decisions based on missing features** — always check the Cyrius stdlib
+  before writing ADRs about missing functionality. `lib/async.cyr`, `lib/thread.cyr`,
+  `lib/http.cyr`, `lib/net.cyr` all exist.

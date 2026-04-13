@@ -31,6 +31,7 @@
 - [x] M8: Username validation via `is_safe_username()` after passwd lookup (2026-04-13)
 - [x] M9: Sudo re-verification (existence + root ownership) at escalation time (2026-04-13)
 - [x] Security regression test suite: `tests/test_security.tcyr` (2026-04-13)
+- [ ] Benchmark suite: `tests/bench_core.bcyr` — blocked on cc3 inline comment + include order fixes
 
 ## Future (post-v1.0.0, demand-gated)
 

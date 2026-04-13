@@ -1,9 +1,3 @@
-// permissions.cyr — Permission levels and command classification
-//
-// Every command is classified into a permission level before execution.
-// AI never gets Blocked; humans approve SystemWrite and Admin.
-
-// Permission level constants
 enum PermissionLevel {
     SAFE = 0;
     READ_ONLY = 1;
@@ -12,37 +6,24 @@ enum PermissionLevel {
     ADMIN = 4;
     BLOCKED = 5;
 }
-
-// Check if this level requires human approval
 fn perm_requires_approval(level) {
     return (level == PermissionLevel.SYSTEM_WRITE) || (level == PermissionLevel.ADMIN) || (level == PermissionLevel.BLOCKED);
 }
-
-// Check if AI is allowed to execute at this level
 fn perm_ai_allowed(level) {
     return (level != PermissionLevel.BLOCKED);
 }
-
-// Check if user has permission for an action
 fn check_permission(user, required) {
-    // Root can do anything
     if (streq(user, "root") == 1) {
         return 1;
     }
-    // Check based on level
     if (required == PermissionLevel.SAFE) { return 1; }
     if (required == PermissionLevel.READ_ONLY) { return 1; }
     if (required == PermissionLevel.USER_WRITE) { return 1; }
     if (required == PermissionLevel.SYSTEM_WRITE) { return 0; }
     if (required == PermissionLevel.ADMIN) { return 0; }
     if (required == PermissionLevel.BLOCKED) { return 0; }
-    return 0; // future variants default to denied
+    return 0; 
 }
-
-// --- Command classification ---
-
-// Check if a command string matches any in a list
-// Returns 1 if cmd matches, 0 otherwise
 fn is_blocked_command(cmd) {
     if (streq(cmd, "dd") == 1) { return 1; }
     if (streq(cmd, "mkfs") == 1) { return 1; }
@@ -54,7 +35,6 @@ fn is_blocked_command(cmd) {
     if (streq(cmd, "shred") == 1) { return 1; }
     return 0;
 }
-
 fn is_admin_command(cmd) {
     if (streq(cmd, "apt") == 1) { return 1; }
     if (streq(cmd, "yum") == 1) { return 1; }
@@ -90,7 +70,6 @@ fn is_admin_command(cmd) {
     if (streq(cmd, "mknod") == 1) { return 1; }
     return 0;
 }
-
 fn is_write_command(cmd) {
     if (streq(cmd, "cp") == 1) { return 1; }
     if (streq(cmd, "mv") == 1) { return 1; }
@@ -103,7 +82,6 @@ fn is_write_command(cmd) {
     if (streq(cmd, "awk") == 1) { return 1; }
     return 0;
 }
-
 fn is_readonly_command(cmd) {
     if (streq(cmd, "ls") == 1) { return 1; }
     if (streq(cmd, "cat") == 1) { return 1; }
@@ -132,7 +110,6 @@ fn is_readonly_command(cmd) {
     if (streq(cmd, "id") == 1) { return 1; }
     return 0;
 }
-
 fn is_safe_command(cmd) {
     if (streq(cmd, "cd") == 1) { return 1; }
     if (streq(cmd, "pwd") == 1) { return 1; }
@@ -143,12 +120,9 @@ fn is_safe_command(cmd) {
     if (streq(cmd, "agnsh") == 1) { return 1; }
     return 0;
 }
-
-// Check if any arg targets a system path
 fn has_system_path_arg(args, argc) {
     for (var i = 0; i < argc; i = i + 1) {
         var arg = vec_get(args, i);
-        // Check prefixes: /etc/, /usr/, /bin/, /sbin/, /lib
         if (str_starts_with(arg, "/etc/") == 1) { return 1; }
         if (str_starts_with(arg, "/usr/") == 1) { return 1; }
         if (str_starts_with(arg, "/bin/") == 1) { return 1; }
@@ -157,79 +131,50 @@ fn has_system_path_arg(args, argc) {
     }
     return 0;
 }
-
-// M3 FIX: Parse rm flags thoroughly — handle combined flags, --, flags after args
 fn rm_has_dangerous_flags(args, argc) {
     for (var i = 0; i < argc; i = i + 1) {
         var arg = vec_get(args, i);
         var len = str_len(arg);
-
-        // "--" stops flag processing — dangerous because it hides intent
         if (streq(arg, "--") == 1) { return 1; }
-
-        // Long flags
         if (str_starts_with(arg, "--recursive") == 1) { return 1; }
         if (str_starts_with(arg, "--force") == 1) { return 1; }
         if (str_starts_with(arg, "--no-preserve-root") == 1) { return 1; }
-
-        // Short flags: check each character in combined flags like -rfv, -fir, etc.
         if (len >= 2 && str_byte_at(arg, 0) == 45 && str_byte_at(arg, 1) != 45) {
             for (var j = 1; j < len; j = j + 1) {
                 var ch = str_byte_at(arg, j);
-                if (ch == 114) { return 1; } // 'r' — recursive
-                if (ch == 102) { return 1; } // 'f' — force
-                if (ch == 82) { return 1; }  // 'R' — also recursive
+                if (ch == 114) { return 1; } 
+                if (ch == 102) { return 1; } 
+                if (ch == 82) { return 1; }  
             }
         }
     }
     return 0;
 }
-
-// Main command permission analysis
-// cmd: command name string
-// args: vec of argument strings
-// argc: number of arguments
 fn analyze_command_permission(cmd, args, argc) {
-    // C1 FIX: Extract basename to prevent bypass via absolute/relative paths
-    // e.g., /usr/bin/dd, ./rm, ../bin/chmod
     var base = get_command_basename(cmd);
-
-    // Special handling for rm
     if (streq(base, "rm") == 1) {
         if (rm_has_dangerous_flags(args, argc) == 1) {
             return PermissionLevel.BLOCKED;
         }
         return PermissionLevel.ADMIN;
     }
-
-    // Blocked commands
     if (is_blocked_command(base) == 1) {
         return PermissionLevel.BLOCKED;
     }
-
-    // Admin commands
     if (is_admin_command(base) == 1) {
         return PermissionLevel.ADMIN;
     }
-
-    // Write commands — check if targeting system paths
     if (is_write_command(base) == 1) {
         if (has_system_path_arg(args, argc) == 1) {
             return PermissionLevel.SYSTEM_WRITE;
         }
         return PermissionLevel.USER_WRITE;
     }
-
-    // Read-only commands
     if (is_readonly_command(base) == 1) {
         return PermissionLevel.READ_ONLY;
     }
-
-    // Safe builtins
     if (is_safe_command(base) == 1) {
         return PermissionLevel.SAFE;
     }
-
-    // Default: user write
     return PermissionLevel.USER_WRITE;
 }

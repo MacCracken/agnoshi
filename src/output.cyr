@@ -1,70 +1,54 @@
-// output.cyr — Output formatting
-//
-// Supports auto, json, table, and passthrough modes.
-
-// OutputFormat constants
 enum OutputFormat {
     AUTO = 0;
     JSON = 1;
     TABLE = 2;
     PLAIN = 3;
 }
-
 struct OutputFormatter { format; }
-
 fn OutputFormatter_new(format) {
-    return OutputFormatter { format };
+    var p = alloc(8);
+    store64(p, format);
+    return p;
 }
-
 fn OutputFormatter_default() {
-    return OutputFormatter { OutputFormat.AUTO };
+    var p = alloc(8);
+    store64(p, OutputFormat.AUTO);
+    return p;
 }
-
-// Format output based on configured mode
 fn OutputFormatter_format(self, output) {
-    match self.format {
+    match load64(self) {
         1 => { return output_format_json(output); }
         2 => { return output_format_table(output); }
         0 => { return output_format_auto(output); }
-        _ => { return output; } // passthrough
+        _ => { return output; }
     }
 }
-
-// Wrap output as JSON object {"output": "..."}
 fn output_format_json(output) {
     var builder = str_builder_new();
-    str_builder_append(builder, "{\"output\": \"");
-    // Escape special chars in output
+    str_builder_add(builder, "{\"output\": \"");
     var len = str_len(output);
     for (var i = 0; i < len; i = i + 1) {
         var ch = str_byte_at(output, i);
-        if (ch == 34) { str_builder_append(builder, "\\\""); }     // "
-        elif (ch == 92) { str_builder_append(builder, "\\\\"); }   // backslash
-        elif (ch == 10) { str_builder_append(builder, "\\n"); }    // newline
-        elif (ch == 9) { str_builder_append(builder, "\\t"); }     // tab
+        if (ch == 34) { str_builder_add(builder, "\\\""); }
+        elif (ch == 92) { str_builder_add(builder, "\\\\"); }
+        elif (ch == 10) { str_builder_add(builder, "\\n"); }
+        elif (ch == 9) { str_builder_add(builder, "\\t"); }
         else {
-            str_builder_append_byte(builder, ch);
+            str_builder_add_byte(builder, ch);
         }
     }
-    str_builder_append(builder, "\"}");
-    return str_builder_finish(builder);
+    str_builder_add(builder, "\"}");
+    return str_builder_build(builder);
 }
-
-// Format as aligned table (split on tabs or double-spaces)
 fn output_format_table(output) {
     var lines = str_split(output, "\n");
     var nlines = vec_len(lines);
     if (nlines == 0) { return output; }
-
-    // Parse each line into columns
     var all_rows = vec_new();
     var max_cols = 0;
-
     for (var i = 0; i < nlines; i = i + 1) {
         var line = vec_get(lines, i);
         if (str_len(line) == 0) { continue; }
-
-        // Split on tab first, then double-space
         var cols = str_split(line, "\t");
         if (vec_len(cols) <= 1) {
             cols = str_split(line, "  ");
@@ -74,16 +58,11 @@ fn output_format_table(output) {
             max_cols = vec_len(cols);
         }
     }
-
-    // If single-column, passthrough
     if (max_cols <= 1) { return output; }
-
-    // Compute max width per column
     var widths = vec_new();
     for (var c = 0; c < max_cols; c = c + 1) {
         vec_push(widths, 0);
     }
-
     var nrows = vec_len(all_rows);
     for (var r = 0; r < nrows; r = r + 1) {
         var row = vec_get(all_rows, r);
@@ -96,53 +75,39 @@ fn output_format_table(output) {
             }
         }
     }
-
-    // Render aligned
     var builder = str_builder_new();
     for (var r = 0; r < nrows; r = r + 1) {
         var row = vec_get(all_rows, r);
         var ncols = vec_len(row);
         for (var c = 0; c < ncols; c = c + 1) {
             var cell = vec_get(row, c);
-            str_builder_append(builder, cell);
-            // Pad to column width + 2 space separator
+            str_builder_add(builder, cell);
             if (c < ncols - 1) {
                 var w = vec_get(widths, c);
                 var padding = w - str_len(cell) + 2;
                 for (var p = 0; p < padding; p = p + 1) {
-                    str_builder_append(builder, " ");
+                    str_builder_add(builder, " ");
                 }
             }
         }
-        str_builder_append(builder, "\n");
+        str_builder_add(builder, "\n");
     }
-
-    return str_builder_finish(builder);
+    return str_builder_build(builder);
 }
-
-// Auto-detect format: JSON or table
 fn output_format_auto(output) {
     var len = str_len(output);
     if (len == 0) { return output; }
-
-    // Check if looks like JSON
     var first = str_byte_at(output, 0);
-    if (first == 123 || first == 91) { // { or [
-        // Attempt to just pretty-pass it through
-        // In full implementation, would parse and re-indent
+    if (first == 123 || first == 91) {
         return output;
     }
-
-    // Check if has tabs or double-spaces (table data)
     if (str_contains(output, "\t") == 1) {
         return output_format_table(output);
     }
     if (str_contains(output, "  ") == 1) {
-        // Only table-format if multi-line
         if (str_contains(output, "\n") == 1) {
             return output_format_table(output);
         }
     }
-
     return output;
 }

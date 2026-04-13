@@ -1,177 +1,127 @@
-// security.cyr — Security context and privilege management
-//
-// Ensures AI never has root access and all privileged operations
-// require human approval through secure privilege escalation.
-
-// SecurityContext: tracks user identity and privilege state
 struct SecurityContext {
     uid;
     gid;
     euid;
-    username;       // Str
-    is_root;        // 1/0
-    restricted;     // 1/0
-    sudo_available; // 1/0
+    username;
+    is_root;
+    restricted;
+    sudo_available;
 }
-
 fn SecurityContext_new(restricted) {
     var uid = syscall(SYS_GETUID);
     var gid = syscall(SYS_GETGID);
     var euid = syscall(SYS_GETEUID);
-    // H1 FIX: Check effective UID too — catches setuid binaries
     var is_root = 0;
     if (uid == 0) { is_root = 1; }
     if (euid == 0) { is_root = 1; }
-
-    // Get username from /etc/passwd lookup (validated)
     var username = security_get_username_safe(uid);
-
-    // Check if sudo is available
     var sudo_available = security_check_sudo();
-
-    // If root, force restricted mode
     var actual_restricted = restricted;
     if (is_root == 1) {
         actual_restricted = 1;
-        // Log warning: shell running as root
         syscall(SYS_WRITE, 2, "WARNING: Shell running as root - AI features disabled for safety\n", 64);
     }
-
-    return SecurityContext { uid, gid, euid, username, is_root, actual_restricted, sudo_available };
+    var p = alloc(56);
+    store64(p, uid);
+    store64(p + 8, gid);
+    store64(p + 16, euid);
+    store64(p + 24, username);
+    store64(p + 32, is_root);
+    store64(p + 40, actual_restricted);
+    store64(p + 48, sudo_available);
+    return p;
 }
-
-// Look up username by UID from /etc/passwd
 fn security_get_username(uid) {
     var content = file_read_all("/etc/passwd");
     if (content == 0) {
         return str_from("unknown");
     }
-
     var lines = str_split(content, "\n");
     var nlines = vec_len(lines);
-    var uid_str = fmt_int(uid);
-
+    var uid_str = str_from_int(uid);
     for (var i = 0; i < nlines; i = i + 1) {
         var line = vec_get(lines, i);
         if (str_len(line) == 0) { continue; }
-
-        // passwd format: name:x:uid:gid:...
         var fields = str_split(line, ":");
         if (vec_len(fields) >= 3) {
             var field_uid = vec_get(fields, 2);
             if (streq(field_uid, uid_str) == 1) {
-                return vec_get(fields, 0); // username
+                return vec_get(fields, 0);
             }
         }
     }
-
-    // Fallback to uid_N
     return str_cat("uid_", uid_str);
 }
-
-// M8 FIX: Validate username after lookup
 fn security_get_username_safe(uid) {
     var name = security_get_username(uid);
     if (is_safe_username(name) == 1) {
         return name;
     }
-    // Unsafe characters in username — fallback
-    return str_cat("uid_", fmt_int(uid));
+    return str_cat("uid_", str_from_int(uid));
 }
-
-// Check if sudo is available
 fn security_check_sudo() {
-    // Try to find sudo in PATH
-    // Simple check: does /usr/bin/sudo exist?
     if (fs_exists("/usr/bin/sudo") == 1) { return 1; }
     if (fs_exists("/bin/sudo") == 1) { return 1; }
     return 0;
 }
-
 fn SecurityContext_is_root(self) {
-    return self.is_root;
+    return load64(self + 32);
 }
-
 fn SecurityContext_is_restricted(self) {
-    return self.restricted;
+    return load64(self + 40);
 }
-
 fn SecurityContext_username(self) {
-    return self.username;
+    return load64(self + 24);
 }
-
 fn SecurityContext_can_escalate(self) {
-    if (self.restricted == 1) { return 0; }
-    if (self.sudo_available == 0) { return 0; }
-    if (self.is_root == 1) { return 0; }
+    if (load64(self + 40) == 1) { return 0; }
+    if (load64(self + 48) == 0) { return 0; }
+    if (load64(self + 32) == 1) { return 0; }
     return 1;
 }
-
-// Execute a command as a subprocess
-// Returns exit code (0 = success)
 fn execute_command(cmd, args, argc) {
-    // Fork and exec
     var pid = syscall(SYS_FORK);
     if (pid == 0) {
-        // Child: exec the command
-        // Build argv array
         var argv = vec_new();
         vec_push(argv, cmd);
         for (var i = 0; i < argc; i = i + 1) {
             vec_push(argv, vec_get(args, i));
         }
-        // execve
         process_exec(cmd, argv);
-        syscall(SYS_EXIT, 127); // exec failed
+        syscall(SYS_EXIT, 127);
     }
-
-    // Parent: wait for child
     var status_buf[1];
     syscall(SYS_WAIT4, pid, &status_buf, 0, 0);
     var status = load64(&status_buf);
-
-    // Extract exit code from wait status
     var exit_code = (status >> 8) & 255;
     return exit_code;
 }
-
-// Execute with sudo (non-interactive)
-// M9 FIX: Re-verify sudo at escalation time, not just init
 fn execute_with_privileges(self, cmd, args, argc) {
-    if (self.restricted == 1) {
-        return 0 - 1; // error: restricted mode
+    if (load64(self + 40) == 1) {
+        return 0 - 1;
     }
-    if (self.sudo_available == 0) {
-        return 0 - 2; // error: no sudo
+    if (load64(self + 48) == 0) {
+        return 0 - 2;
     }
-
-    // Re-verify sudo exists and is owned by root at escalation time
     var sudo_path = "/usr/bin/sudo";
     if (fs_exists(sudo_path) == 0) {
         sudo_path = "/bin/sudo";
         if (fs_exists(sudo_path) == 0) {
-            return 0 - 2; // sudo disappeared
+            return 0 - 2;
         }
     }
-    // Verify sudo is owned by root (uid 0) via stat
-    // stat struct: st_dev(8) st_ino(8) st_nlink(8) st_mode(4) st_uid(4)
-    var stat_buf[18]; // 144 bytes / 8 = 18 i64s
+    var stat_buf[18];
     var stat_result = syscall(SYS_STAT, str_data(sudo_path), &stat_buf);
     if (stat_result != 0) { return 0 - 2; }
-    // st_uid is at offset 28 bytes (3.5 i64s) — load as i32 at byte offset 28
     var st_uid = load32(&stat_buf + 28);
     if (st_uid != 0) {
-        // sudo not owned by root — refuse escalation
         return 0 - 3;
     }
-
-    // Prepend sudo -n
     var sudo_args = vec_new();
     vec_push(sudo_args, "-n");
     vec_push(sudo_args, cmd);
     for (var i = 0; i < argc; i = i + 1) {
         vec_push(sudo_args, vec_get(args, i));
     }
-
     return execute_command(sudo_path, sudo_args, argc + 2);
 }

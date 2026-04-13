@@ -1,8 +1,3 @@
-// commands.cyr — Built-in shell commands
-//
-// Parsing and identification of builtin commands.
-
-// Check if a command is a shell builtin
 fn is_builtin(cmd) {
     if (streq(cmd, "cd") == 1) { return 1; }
     if (streq(cmd, "exit") == 1) { return 1; }
@@ -14,8 +9,6 @@ fn is_builtin(cmd) {
     if (streq(cmd, "undo") == 1) { return 1; }
     return 0;
 }
-
-// Get description for a builtin command
 fn builtin_description(cmd) {
     if (streq(cmd, "cd") == 1) { return "Change directory"; }
     if (streq(cmd, "exit") == 1) { return "Exit the shell"; }
@@ -27,74 +20,57 @@ fn builtin_description(cmd) {
     if (streq(cmd, "undo") == 1) { return "Undo last destructive operation"; }
     return "";
 }
-
-// Split a command line into command + args
-// Returns: cmd in first_word, args in args_vec, argc
-// Caller provides output buffers
 fn split_command_line(input, first_word_out, args_out) {
     var len = str_len(input);
     if (len == 0) { return 0; }
-
-    // Skip leading whitespace
     var pos = 0;
     while (pos < len) {
         if (str_byte_at(input, pos) != 32) { break; }
         pos = pos + 1;
     }
-
-    // Extract first word
     var wstart = pos;
     while (pos < len) {
         var ch = str_byte_at(input, pos);
-        if (ch == 32 || ch == 9) { break; } // space or tab
+        if (ch == 32 || ch == 9) { break; } 
         pos = pos + 1;
     }
-
     var cmd = str_sub(input, wstart, pos);
-    // Store command in output (as pointer value)
     store64(first_word_out, cmd);
-
-    // Parse remaining args
     var argc = 0;
     while (pos < len) {
-        // Skip whitespace
         while (pos < len) {
             var ch = str_byte_at(input, pos);
             if (ch != 32 && ch != 9) { break; }
             pos = pos + 1;
         }
         if (pos >= len) { break; }
-
-        // Handle quoted strings
-        // M5 FIX: Handle backslash escapes inside quoted strings
         var ch = str_byte_at(input, pos);
-        if (ch == 34 || ch == 39) { // " or '
+        if (ch == 34 || ch == 39) { 
             var quote = ch;
             pos = pos + 1;
             var qbuilder = str_builder_new();
             while (pos < len) {
                 var qch = str_byte_at(input, pos);
-                if (qch == 92 && pos + 1 < len) { // backslash escape
+                if (qch == 92 && pos + 1 < len) { 
                     pos = pos + 1;
                     var ech = str_byte_at(input, pos);
-                    if (ech == quote) { str_builder_append_byte(qbuilder, quote); }
-                    elif (ech == 92) { str_builder_append_byte(qbuilder, 92); }
-                    elif (ech == 110) { str_builder_append_byte(qbuilder, 10); } // \n
-                    elif (ech == 116) { str_builder_append_byte(qbuilder, 9); }  // \t
-                    else { str_builder_append_byte(qbuilder, ech); }
+                    if (ech == quote) { str_builder_add_byte(qbuilder, quote); }
+                    elif (ech == 92) { str_builder_add_byte(qbuilder, 92); }
+                    elif (ech == 110) { str_builder_add_byte(qbuilder, 10); } 
+                    elif (ech == 116) { str_builder_add_byte(qbuilder, 9); }  
+                    else { str_builder_add_byte(qbuilder, ech); }
                     pos = pos + 1;
                     continue;
                 }
                 if (qch == quote) { break; }
-                str_builder_append_byte(qbuilder, qch);
+                str_builder_add_byte(qbuilder, qch);
                 pos = pos + 1;
             }
-            var arg = str_builder_finish(qbuilder);
-            if (pos < len) { pos = pos + 1; } // skip closing quote
+            var arg = str_builder_build(qbuilder);
+            if (pos < len) { pos = pos + 1; } 
             vec_push(args_out, arg);
             argc = argc + 1;
         } else {
-            // Unquoted arg
             var astart = pos;
             while (pos < len) {
                 var ch2 = str_byte_at(input, pos);
@@ -106,6 +82,5 @@ fn split_command_line(input, first_word_out, args_out) {
             argc = argc + 1;
         }
     }
-
     return argc;
 }

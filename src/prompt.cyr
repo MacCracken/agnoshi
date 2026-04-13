@@ -1,38 +1,32 @@
-// prompt.cyr — Prompt rendering
-//
-// Modular prompt system inspired by starship.
-// Each segment renders independently based on context.
-
-// PromptContext: state passed to each prompt module
 struct PromptContext {
-    cwd;            // Str: current working directory
-    home;           // Str: home directory
-    username;       // Str
-    hostname;       // Str
-    ai_mode;        // mode enum value
-    last_exit_code; // i64
-    cmd_duration_ms;// i64
+    cwd;
+    home;
+    username;
+    hostname;
+    ai_mode;
+    last_exit_code;
+    cmd_duration_ms;
 }
-
 fn PromptContext_new(cwd, username, ai_mode) {
-    // Get home directory
     var home = str_from("/tmp");
     var home_env = getenv("HOME");
     if (home_env != 0) { home = home_env; }
-
-    // Get hostname
     var hostname_buf[256];
     var hostname = str_from("localhost");
     var result = syscall(SYS_UNAME, &hostname_buf);
     if (result == 0) {
-        // utsname: sysname(65) + nodename(65) at offset 65
-        hostname = str_from_cstr(&hostname_buf + 65);
+        hostname = str_from(&hostname_buf + 65);
     }
-
-    return PromptContext { cwd, home, username, hostname, ai_mode, 0, 0 };
+    var p = alloc(56);
+    store64(p, cwd);
+    store64(p + 8, home);
+    store64(p + 16, username);
+    store64(p + 24, hostname);
+    store64(p + 32, ai_mode);
+    store64(p + 40, 0);
+    store64(p + 48, 0);
+    return p;
 }
-
-// Abbreviate home directory to ~
 fn prompt_abbreviate_home(path, home) {
     if (str_starts_with(path, home) == 1) {
         var rest = str_sub(path, str_len(home), str_len(path));
@@ -40,118 +34,79 @@ fn prompt_abbreviate_home(path, home) {
     }
     return path;
 }
-
-// Render the AI mode segment
 fn prompt_render_mode(mode) {
     var builder = str_builder_new();
-    str_builder_append(builder, mode_prompt_prefix(mode));
-    str_builder_append(builder, " ");
-    return str_builder_finish(builder);
+    str_builder_add(builder, mode_prompt_prefix(mode));
+    str_builder_add(builder, " ");
+    return str_builder_build(builder);
 }
-
-// Render the directory segment
 fn prompt_render_directory(ctx) {
-    var display = prompt_abbreviate_home(ctx.cwd, ctx.home);
+    var display = prompt_abbreviate_home(load64(ctx), load64(ctx + 8));
     var builder = str_builder_new();
-    str_builder_append(builder, display);
-    str_builder_append(builder, " ");
-    return str_builder_finish(builder);
+    str_builder_add(builder, display);
+    str_builder_add(builder, " ");
+    return str_builder_build(builder);
 }
-
-// Detect git branch by walking up from cwd
 fn prompt_detect_git_branch(cwd) {
     var dir = cwd;
-
-    // Walk up looking for .git/
     for (var depth = 0; depth < 20; depth = depth + 1) {
         var git_head = str_cat(dir, "/.git/HEAD");
         if (fs_exists(git_head) == 1) {
             var content = file_read_all(git_head);
             if (content == 0) { return 0; }
-
-            // Strip trailing newline
             var len = str_len(content);
             if (len > 0) {
                 if (str_byte_at(content, len - 1) == 10) {
                     content = str_sub(content, 0, len - 1);
                 }
             }
-
-            // Check for "ref: refs/heads/"
             var prefix = "ref: refs/heads/";
             if (str_starts_with(content, prefix) == 1) {
                 return str_sub(content, 16, str_len(content));
             }
-
-            // Detached HEAD: return short hash
             if (str_len(content) >= 8) {
                 return str_sub(content, 0, 8);
             }
             return content;
         }
-
-        // Go up one directory
         var parent = fs_parent(dir);
-        if (streq(parent, dir) == 1) { break; } // reached root
+        if (streq(parent, dir) == 1) { break; }
         dir = parent;
     }
-
-    return 0; // not in a git repo
+    return 0;
 }
-
-// Render git branch segment
 fn prompt_render_git(cwd) {
     var branch = prompt_detect_git_branch(cwd);
     if (branch == 0) { return str_from(""); }
-
-    // H4 FIX: Validate branch name — strip control chars to prevent terminal injection
     if (is_safe_branch_name(branch) == 0) {
         branch = strip_control_chars(branch);
     }
-
     var builder = str_builder_new();
-    str_builder_append(builder, "(");
-    str_builder_append(builder, branch);
-    str_builder_append(builder, ") ");
-    return str_builder_finish(builder);
+    str_builder_add(builder, "(");
+    str_builder_add(builder, branch);
+    str_builder_add(builder, ") ");
+    return str_builder_build(builder);
 }
-
-// Render exit status segment (only if non-zero)
 fn prompt_render_exit_status(exit_code) {
     if (exit_code == 0) { return str_from(""); }
     var builder = str_builder_new();
-    str_builder_append(builder, "[");
-    str_builder_append(builder, fmt_int(exit_code));
-    str_builder_append(builder, "] ");
-    return str_builder_finish(builder);
+    str_builder_add(builder, "[");
+    str_builder_add(builder, str_from_int(exit_code));
+    str_builder_add(builder, "] ");
+    return str_builder_build(builder);
 }
-
-// Render the prompt character
 fn prompt_render_character(exit_code) {
     if (exit_code == 0) {
         return str_from("> ");
     }
     return str_from("! ");
 }
-
-// Render full prompt string
 fn prompt_render(ctx) {
     var builder = str_builder_new();
-
-    // Mode segment
-    str_builder_append(builder, prompt_render_mode(ctx.ai_mode));
-
-    // Directory segment
-    str_builder_append(builder, prompt_render_directory(ctx));
-
-    // Git branch
-    str_builder_append(builder, prompt_render_git(ctx.cwd));
-
-    // Exit status (non-zero only)
-    str_builder_append(builder, prompt_render_exit_status(ctx.last_exit_code));
-
-    // Prompt character
-    str_builder_append(builder, prompt_render_character(ctx.last_exit_code));
-
-    return str_builder_finish(builder);
+    str_builder_add(builder, prompt_render_mode(load64(ctx + 32)));
+    str_builder_add(builder, prompt_render_directory(ctx));
+    str_builder_add(builder, prompt_render_git(load64(ctx)));
+    str_builder_add(builder, prompt_render_exit_status(load64(ctx + 40)));
+    str_builder_add(builder, prompt_render_character(load64(ctx + 40)));
+    return str_builder_build(builder);
 }

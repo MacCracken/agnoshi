@@ -1,4 +1,4 @@
-// test_core.tcyr — Core module unit tests
+// test_core.tcyr -- Core module unit tests
 //
 // Tests for mode, permissions, config, aliases, history,
 // intent parsing, and translation.

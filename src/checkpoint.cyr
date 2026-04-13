@@ -1,118 +1,91 @@
-// checkpoint.cyr — Destructive operation rollback
-//
-// Before rm/mv, files are backed up so they can be restored via undo.
-// Uses temp directory for checkpoint storage.
-
-// CheckpointOp constants
 enum CheckpointOp {
     FILE_REMOVED = 0;
     FILE_MOVED = 1;
 }
-
-// Checkpoint: one recorded operation
 struct Checkpoint {
-    op;             // CheckpointOp
-    original_path;  // Str
-    backup_path;    // Str (for FILE_REMOVED) or destination (for FILE_MOVED)
+    op;
+    original_path;
+    backup_path;
 }
-
-// CheckpointManager: stack of checkpoints for undo
 struct CheckpointManager {
-    checkpoints;    // vec of Checkpoint
-    checkpoint_dir; // Str: temp dir for backups
+    checkpoints;
+    checkpoint_dir;
     count;
 }
-
 fn CheckpointManager_new() {
-    // H3 FIX: Use $HOME/.agnoshi/checkpoints instead of world-readable /tmp
     var home = getenv("HOME");
     var dir = str_from("/tmp/agnoshi-checkpoints");
     if (home != 0) {
         dir = str_cat(home, "/.agnoshi/checkpoints");
     }
     fs_mkdir_p(dir);
-    // Set dir to 0700 (owner-only)
     syscall(SYS_CHMOD, str_data(dir), 448);
-    return CheckpointManager { vec_new(), dir, 0 };
+    var p = alloc(24);
+    store64(p, vec_new());
+    store64(p + 8, dir);
+    store64(p + 16, 0);
+    return p;
 }
-
-// Checkpoint a file before removal (copy to backup)
-// Returns 1 on success, 0 if skipped (directory or missing)
 fn CheckpointManager_checkpoint_remove(self, path) {
-    // Skip directories — too large to checkpoint
     if (fs_is_dir(path) == 1) {
         return 0;
     }
-
-    // Skip if file doesn't exist
     if (fs_exists(path) == 0) {
         return 0;
     }
-
-    // Generate backup path: checkpoint_dir/N_filename
-    var idx = fmt_int(self.count);
+    var idx = str_from_int(load64(self + 16));
     var basename = fs_basename(path);
-    var backup = str_cat(self.checkpoint_dir, "/");
+    var backup = str_cat(load64(self + 8), "/");
     backup = str_cat(backup, idx);
     backup = str_cat(backup, "_");
     backup = str_cat(backup, basename);
-
-    // Copy file to backup location
     var result = fs_copy(path, backup);
     if (result != 0) {
-        return 0; // copy failed
+        return 0;
     }
-
-    // Record checkpoint
-    var cp = Checkpoint { CheckpointOp.FILE_REMOVED, path, backup };
-    vec_push(self.checkpoints, cp);
-    self.count = self.count + 1;
+    var cp = alloc(24);
+    store64(cp, CheckpointOp.FILE_REMOVED);
+    store64(cp + 8, path);
+    store64(cp + 16, backup);
+    vec_push(load64(self), cp);
+    store64(self + 16, load64(self + 16) + 1);
     return 1;
 }
-
-// Record a move operation (no copy needed, just track source/dest)
 fn CheckpointManager_checkpoint_move(self, source, destination) {
-    var cp = Checkpoint { CheckpointOp.FILE_MOVED, source, destination };
-    vec_push(self.checkpoints, cp);
-    self.count = self.count + 1;
+    var cp = alloc(24);
+    store64(cp, CheckpointOp.FILE_MOVED);
+    store64(cp + 8, source);
+    store64(cp + 16, destination);
+    vec_push(load64(self), cp);
+    store64(self + 16, load64(self + 16) + 1);
     return 1;
 }
-
-// Undo the last checkpoint operation
-// Returns description string on success, 0 on failure/empty
 fn CheckpointManager_undo_last(self) {
-    if (self.count == 0) {
-        return 0; // nothing to undo
+    if (load64(self + 16) == 0) {
+        return 0;
     }
-
-    self.count = self.count - 1;
-    var cp = vec_get(self.checkpoints, self.count);
-    // Pop from vec (shrink logical size)
-    vec_pop(self.checkpoints);
-
-    match cp.op {
+    store64(self + 16, load64(self + 16) - 1);
+    var cp = vec_get(load64(self), load64(self + 16));
+    vec_pop(load64(self));
+    match load64(cp) {
         0 => {
-            // FILE_REMOVED: restore from backup
-            var result = fs_copy(cp.backup_path, cp.original_path);
+            var result = fs_copy(load64(cp + 16), load64(cp + 8));
             if (result == 0) {
-                // Clean up backup
-                fs_remove(cp.backup_path);
-                return str_cat("Restored: ", cp.original_path);
+                fs_remove(load64(cp + 16));
+                return str_cat("Restored: ", load64(cp + 8));
             }
-            return 0; // restore failed
+            return 0;
         }
         1 => {
-            // FILE_MOVED: move back
-            var result = fs_rename(cp.backup_path, cp.original_path);
+            var result = fs_rename(load64(cp + 16), load64(cp + 8));
             if (result == 0) {
-                return str_cat("Reverted move: ", cp.original_path);
+                return str_cat("Reverted move: ", load64(cp + 8));
             }
-            return 0; // revert failed
+            return 0;
         }
     }
     return 0;
 }
-
 fn CheckpointManager_count(self) {
-    return self.count;
+    return load64(self + 16);
 }

@@ -1,4 +1,4 @@
-// test_security.tcyr — Security audit regression tests
+// test_security.tcyr -- Security audit regression tests
 //
 // Tests for each finding from the 2026-04-13 security audit.
 // These must never regress.

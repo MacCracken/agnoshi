@@ -1,9 +1,3 @@
-// mode.cyr — Shell operating modes
-//
-// Controls whether the shell is in AI autonomous mode,
-// human mode, or collaborative mode.
-
-// Mode constants
 enum Mode {
     AI_AUTONOMOUS = 0;
     AI_ASSISTED = 1;
@@ -11,7 +5,8 @@ enum Mode {
     STRICT = 3;
 }
 
-// Mode display strings
+struct ModeManager { current; previous; has_previous; allow_switching; }
+
 fn mode_display(mode) {
     match mode {
         0 => { return "AI-AUTO"; }
@@ -21,23 +16,15 @@ fn mode_display(mode) {
         _ => { return "UNKNOWN"; }
     }
 }
-
-// Check if AI is allowed to execute commands autonomously
 fn mode_ai_autonomous(mode) {
     return (mode == Mode.AI_AUTONOMOUS);
 }
-
-// Check if AI assistance is available
 fn mode_ai_available(mode) {
     return (mode != Mode.HUMAN);
 }
-
-// Check if strict approval is required
 fn mode_strict_approval(mode) {
     return (mode == Mode.STRICT);
 }
-
-// Mode description strings
 fn mode_description(mode) {
     match mode {
         0 => { return "AI acts autonomously within safety constraints"; }
@@ -47,8 +34,6 @@ fn mode_description(mode) {
         _ => { return "Unknown mode"; }
     }
 }
-
-// Mode prompt prefix (ASCII-safe since terminal encoding varies)
 fn mode_prompt_prefix(mode) {
     match mode {
         0 => { return "[AUTO]"; }
@@ -58,53 +43,50 @@ fn mode_prompt_prefix(mode) {
         _ => { return "[?]"; }
     }
 }
-
-// --- ModeManager ---
-// Struct: { current, previous, has_previous, allow_switching }
-struct ModeManager { current; previous; has_previous; allow_switching; }
-
 fn ModeManager_new(initial, allow_switching) {
-    return ModeManager { initial, 0, 0, allow_switching };
+    var p = alloc(32);
+    store64(p, initial);
+    store64(p + 8, 0);
+    store64(p + 16, 0);
+    store64(p + 24, allow_switching);
+    return p;
 }
-
 fn ModeManager_current(self) {
-    return self.current;
+    return load64(self);
 }
-
 fn ModeManager_switch(self, mode) {
-    if (self.allow_switching == 0) {
-        if (self.current != mode) {
-            return 0 - 1; // error
+    if (load64(self + 24) == 0) {
+        if (load64(self) != mode) {
+            return 0 - 1;
         }
     }
-    self.previous = self.current;
-    self.has_previous = 1;
-    self.current = mode;
-    return 0; // ok
+    store64(self + 8, load64(self));
+    store64(self + 16, 1);
+    store64(self, mode);
+    return 0;
 }
-
 fn ModeManager_revert(self) {
-    if (self.has_previous == 0) {
-        return 0 - 1; // error: no previous mode
+    if (load64(self + 16) == 0) {
+        return 0 - 1;
     }
-    self.current = self.previous;
-    self.has_previous = 0;
-    return 0; // ok
+    store64(self, load64(self + 8));
+    store64(self + 16, 0);
+    return 0;
 }
-
 fn ModeManager_toggle(self) {
-    if (self.allow_switching == 0) {
-        return 0 - 1; // error
+    if (load64(self + 24) == 0) {
+        return 0 - 1;
     }
     var new_mode = Mode.AI_ASSISTED;
-    match self.current {
-        2 => { new_mode = Mode.AI_ASSISTED; }  // Human -> AiAssisted
-        1 => { new_mode = Mode.HUMAN; }         // AiAssisted -> Human
-        0 => { new_mode = Mode.HUMAN; }         // AiAutonomous -> Human
-        3 => { new_mode = Mode.AI_ASSISTED; }   // Strict -> AiAssisted
+    var cur = load64(self);
+    match cur {
+        2 => { new_mode = Mode.AI_ASSISTED; }
+        1 => { new_mode = Mode.HUMAN; }
+        0 => { new_mode = Mode.HUMAN; }
+        3 => { new_mode = Mode.AI_ASSISTED; }
     }
-    self.previous = self.current;
-    self.has_previous = 1;
-    self.current = new_mode;
-    return 0; // ok
+    store64(self + 8, load64(self));
+    store64(self + 16, 1);
+    store64(self, new_mode);
+    return 0;
 }

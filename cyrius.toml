@@ -1,12 +1,14 @@
 [package]
 name = "agnoshi"
-version = "0.1.0"
-license = "GPL-3.0-only"
+version = "0.90.0"
 description = "AI-native natural language shell for AGNOS"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "4.2.5"
 
 [build]
-src = "src/main.cyr"
-output = "build/agnoshi"
+entry = "src/main.cyr"
+output = "agnoshi"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "fs", "json", "chrono", "hashmap", "args", "process"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "fs", "json", "chrono", "hashmap", "args", "tagged", "process", "fnptr", "net", "sakshi", "assert", "bench"]

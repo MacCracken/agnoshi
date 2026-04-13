@@ -1,27 +1,11 @@
-// agnoshi — AI-native natural language shell for AGNOS
-//
-// Translates natural language into system commands with human oversight,
-// security approval workflows, and full audit logging.
-//
-// Ported from 27,251 lines of Rust to Cyrius.
-// Original Rust implementation preserved in rust-old/ for reference.
-
-// --- Standard library ---
-include "lib/string.cyr"
-include "lib/fmt.cyr"
-include "lib/alloc.cyr"
-include "lib/vec.cyr"
-include "lib/str.cyr"
-include "lib/syscalls.cyr"
-include "lib/io.cyr"
-include "lib/fs.cyr"
-include "lib/json.cyr"
-include "lib/chrono.cyr"
-include "lib/hashmap.cyr"
-include "lib/args.cyr"
-include "lib/process.cyr"
-
-// --- Application modules ---
+# agnoshi — AI-native natural language shell for AGNOS
+#
+# Translates natural language into system commands with human oversight,
+# security approval workflows, and full audit logging.
+#
+# Ported from 27,251 lines of Rust to Cyrius.
+# Stdlib auto-included via cyrius.toml
+# Application modules
 include "src/sanitize.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
@@ -41,56 +25,45 @@ include "src/intent.cyr"
 include "src/interpreter.cyr"
 include "src/translate.cyr"
 include "src/session.cyr"
-
-// --- Helper: get environment variable ---
-// M1 FIX: Use dynamic read loop instead of fixed 8KB buffer.
-// /proc/self/environ can exceed 8KB on systems with large env.
+# --- Helper: get environment variable ---
+# M1 FIX: Use dynamic read loop instead of fixed 8KB buffer.
+# /proc/self/environ can exceed 8KB on systems with large env.
 fn getenv(name) {
     var fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0);
     if (fd < 0) { return 0; }
-
-    // Read in chunks — accumulate into a dynamic buffer
-    var capacity = 32768; // 32KB initial — covers most environments
+    var capacity = 32768;
     var buf = alloc(capacity);
     var total = 0;
-
     while (1 == 1) {
         var remaining = capacity - total;
-        if (remaining <= 0) { break; } // buffer full — stop reading
+        if (remaining <= 0) { break; }
         var chunk = syscall(SYS_READ, fd, buf + total, remaining);
         if (chunk <= 0) { break; }
         total = total + chunk;
     }
     syscall(SYS_CLOSE, fd);
-
     if (total <= 0) { return 0; }
-
-    // Parse null-separated key=value pairs
     var pos = 0;
     var name_len = strlen(name);
     while (pos < total) {
-        // Find end of this entry (null byte)
         var end = pos;
         while (end < total) {
             if (load8(buf + end) == 0) { break; }
             end = end + 1;
         }
-
-        // Check if this entry starts with name=
         var entry_len = end - pos;
         if (entry_len > name_len) {
-            var match = 1;
+            var ok_flag = 1;
             for (var i = 0; i < name_len; i = i + 1) {
                 if (load8(buf + pos + i) != load8(name + i)) {
-                    match = 0;
+                    ok_flag = 0;
                     break;
                 }
             }
-            if (match == 1) {
-                if (load8(buf + pos + name_len) == 61) { // '='
+            if (ok_flag == 1) {
+                if (load8(buf + pos + name_len) == 61) {
                     var val_start = pos + name_len + 1;
                     var val_len = end - val_start;
-                    // Bounds check
                     if (val_len < 0 || val_len > 65536) { return 0; }
                     var result = alloc(val_len + 1);
                     memcpy(result, buf + val_start, val_len);
@@ -99,81 +72,70 @@ fn getenv(name) {
                 }
             }
         }
-
         pos = end + 1;
     }
     return 0;
 }
-
-// --- String helpers used across modules ---
-
-// Case-insensitive contains
+# --- String helpers used across modules ---
+# Case-insensitive contains
 fn str_contains_ci(haystack, needle) {
     var hlen = str_len(haystack);
     var nlen = str_len(needle);
     if (nlen == 0) { return 1; }
     if (nlen > hlen) { return 0; }
-
     for (var i = 0; i <= hlen - nlen; i = i + 1) {
-        var match = 1;
+        var ok_flag = 1;
         for (var j = 0; j < nlen; j = j + 1) {
             var hc = str_byte_at(haystack, i + j);
             var nc = str_byte_at(needle, j);
-            // Lowercase both
             if (hc >= 65 && hc <= 90) { hc = hc + 32; }
             if (nc >= 65 && nc <= 90) { nc = nc + 32; }
-            if (hc != nc) { match = 0; break; }
+            if (hc != nc) { ok_flag = 0; break; }
         }
-        if (match == 1) { return 1; }
+        if (ok_flag == 1) { return 1; }
     }
     return 0;
 }
-
-// Case-insensitive find (returns index or -1)
+# Case-insensitive find (returns index or -1)
 fn str_find_ci(haystack, needle) {
     var hlen = str_len(haystack);
     var nlen = str_len(needle);
     if (nlen == 0) { return 0; }
     if (nlen > hlen) { return 0 - 1; }
-
     for (var i = 0; i <= hlen - nlen; i = i + 1) {
-        var match = 1;
+        var ok_flag = 1;
         for (var j = 0; j < nlen; j = j + 1) {
             var hc = str_byte_at(haystack, i + j);
             var nc = str_byte_at(needle, j);
             if (hc >= 65 && hc <= 90) { hc = hc + 32; }
             if (nc >= 65 && nc <= 90) { nc = nc + 32; }
-            if (hc != nc) { match = 0; break; }
+            if (hc != nc) { ok_flag = 0; break; }
         }
-        if (match == 1) { return i; }
+        if (ok_flag == 1) { return i; }
     }
     return 0 - 1;
 }
-
-// Case-insensitive find from offset
+# Case-insensitive find from offset
 fn str_find_ci_from(haystack, needle, from) {
     var hlen = str_len(haystack);
     var nlen = str_len(needle);
     if (nlen == 0) { return from; }
     if (from + nlen > hlen) { return 0 - 1; }
-
     for (var i = from; i <= hlen - nlen; i = i + 1) {
-        var match = 1;
+        var ok_flag = 1;
         for (var j = 0; j < nlen; j = j + 1) {
             var hc = str_byte_at(haystack, i + j);
             var nc = str_byte_at(needle, j);
             if (hc >= 65 && hc <= 90) { hc = hc + 32; }
             if (nc >= 65 && nc <= 90) { nc = nc + 32; }
-            if (hc != nc) { match = 0; break; }
+            if (hc != nc) { ok_flag = 0; break; }
         }
-        if (match == 1) { return i; }
+        if (ok_flag == 1) { return i; }
     }
     return 0 - 1;
 }
-
-// Case-insensitive split
+# Case-insensitive split
 fn str_split_ci(input, sep) {
-    // Simple: just use the first occurrence
     var result = vec_new();
     var idx = str_find_ci(input, sep);
     if (idx < 0) {
@@ -184,14 +146,13 @@ fn str_split_ci(input, sep) {
     vec_push(result, str_sub(input, idx + str_len(sep), str_len(input)));
     return result;
 }
-
-// String to integer
+# String to integer
 fn str_to_int(s) {
     var len = str_len(s);
     var result = 0;
     var neg = 0;
     var i = 0;
-    if (len > 0 && str_byte_at(s, 0) == 45) { // '-'
+    if (len > 0 && str_byte_at(s, 0) == 45) {
         neg = 1;
         i = 1;
     }
@@ -205,15 +166,12 @@ fn str_to_int(s) {
     if (neg == 1) { result = 0 - result; }
     return result;
 }
-
-// --- CLI argument parsing ---
-
+# --- CLI argument parsing ---
 fn parse_cli_args() {
     var argc = args_count();
     var mode = Mode.AI_ASSISTED;
     var command = 0;
     var restricted = 0;
-
     for (var i = 1; i < argc; i = i + 1) {
         var arg = args_get(i);
         if (streq(arg, "--ai") == 1 || streq(arg, "-a") == 1) {
@@ -254,46 +212,28 @@ fn parse_cli_args() {
             syscall(SYS_EXIT, 0);
         }
     }
-
-    // Return packed: mode in bits 0-7, restricted in bit 8, command as pointer
-    // We use globals for simplicity
     store64(&cli_mode, mode);
     store64(&cli_restricted, restricted);
     store64(&cli_command, command);
 }
-
-// CLI globals
-var cli_mode = 1;       // default: AI_ASSISTED
+# CLI globals
+var cli_mode = 1;
 var cli_restricted = 0;
 var cli_command = 0;
-
-// --- Entry point ---
-
+# --- Entry point ---
 fn main() {
     alloc_init();
-
-    // Parse CLI arguments
     parse_cli_args();
-
-    // Create config
     var config = ShellConfig_default();
-    config.default_mode = cli_mode;
-
-    // Create security context
+    store64(config, cli_mode);
     var security = SecurityContext_new(cli_restricted);
-
-    // Create session
     var session = Session_new(config, security, cli_mode);
-
-    // One-shot or interactive
     if (cli_command != 0) {
-        Session_execute_one_shot(&session, cli_command);
+        Session_execute_one_shot(session, cli_command);
         return 0;
     }
-
-    Session_run_interactive(&session);
+    Session_run_interactive(session);
     return 0;
 }
-
 var r = main();
 syscall(SYS_EXIT, r);

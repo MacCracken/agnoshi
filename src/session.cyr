@@ -1,145 +1,103 @@
-// session.cyr — Shell session lifecycle
-//
-// Manages the interactive shell loop: read, parse, translate,
-// approve, execute, log.
-
 struct Session {
-    mode_mgr;       // ModeManager
-    interpreter;    // Interpreter
-    approval;       // ApprovalManager
-    history;        // CommandHistory
-    checkpoint;     // CheckpointManager
-    output_fmt;     // OutputFormatter
-    prompt_ctx;     // PromptContext
-    config;         // ShellConfig
-    security;       // SecurityContext
-    cwd;            // Str: current working directory
-    running;        // 1/0
+    mode_mgr;
+    interpreter;
+    approval;
+    history;
+    checkpoint;
+    output_fmt;
+    prompt_ctx;
+    config;
+    security;
+    cwd;
+    running;
 }
-
 fn Session_new(config, security, initial_mode) {
     var allow_switch = 1;
     var mode_mgr = ModeManager_new(initial_mode, allow_switch);
     var interpreter = Interpreter_new();
     var approval = ApprovalManager_new();
-    ApprovalManager_set_auto_approve(&approval, config.auto_approve_low);
-
-    // Get current working directory
+    ApprovalManager_set_auto_approve(approval, load64(config + 24));
     var cwd_buf[4096];
     syscall(SYS_GETCWD, &cwd_buf, 4095);
-    var cwd = str_from_cstr(&cwd_buf);
-
-    var username = SecurityContext_username(&security);
+    var cwd = str_from(&cwd_buf);
+    var username = SecurityContext_username(security);
     var prompt_ctx = PromptContext_new(cwd, username, initial_mode);
-
     var history_path = str_from("/tmp/.agnsh_history");
     var home = getenv("HOME");
     if (home != 0) {
         history_path = str_cat(home, "/.agnsh_history");
     }
-    var history = CommandHistory_new(history_path, config.history_size);
+    var history = CommandHistory_new(history_path, load64(config + 8));
     var checkpoint = CheckpointManager_new();
     var output_fmt = OutputFormatter_default();
-
-    return Session {
-        mode_mgr,
-        interpreter,
-        approval,
-        history,
-        checkpoint,
-        output_fmt,
-        prompt_ctx,
-        config,
-        security,
-        cwd,
-        1
-    };
+    var p = alloc(88);
+    store64(p, mode_mgr);
+    store64(p + 8, interpreter);
+    store64(p + 16, approval);
+    store64(p + 24, history);
+    store64(p + 32, checkpoint);
+    store64(p + 40, output_fmt);
+    store64(p + 48, prompt_ctx);
+    store64(p + 56, config);
+    store64(p + 64, security);
+    store64(p + 72, cwd);
+    store64(p + 80, 1);
+    return p;
 }
-
-// Run the interactive shell loop
 fn Session_run_interactive(self) {
     ui_show_welcome();
-
-    while (self.running == 1) {
-        // Render prompt
-        var prompt = prompt_render(&self.prompt_ctx);
-
-        // Read input
+    while (load64(self + 80) == 1) {
+        var prompt = prompt_render(load64(self + 48));
         var input = read_input_line(prompt);
         if (input == 0) {
-            // EOF
             break;
         }
-
-        // Skip empty input
         if (str_len(input) == 0) { continue; }
-
-        // Input size limit (64KB)
         if (str_len(input) > 65536) {
             ui_show_error("Input too long (max 64KB)");
             continue;
         }
-
-        // Add to history
-        CommandHistory_add(&self.history, input);
-
-        // Process input
+        CommandHistory_add(load64(self + 24), input);
         Session_process_input(self, input);
     }
-
-    // Save history and show goodbye
-    CommandHistory_save(&self.history);
+    CommandHistory_save(load64(self + 24));
     ui_show_goodbye();
     return 0;
 }
-
-// Execute a single command and exit
 fn Session_execute_one_shot(self, command) {
     Session_process_input(self, command);
     return 0;
 }
-
-// Process a line of input
 fn Session_process_input(self, input) {
-    // Check for builtins first
     var handled = Session_handle_builtin(self, input);
     if (handled != 0) { return 0; }
-
-    // Dispatch based on mode
-    var mode = ModeManager_current(&self.mode_mgr);
+    var mode = ModeManager_current(load64(self));
     match mode {
-        2 => { Session_execute_shell(self, input); }       // HUMAN
-        1 => { Session_execute_assisted(self, input); }    // AI_ASSISTED
-        0 => { Session_execute_autonomous(self, input); }  // AI_AUTONOMOUS
-        3 => { Session_execute_strict(self, input); }      // STRICT
+        2 => { Session_execute_shell(self, input); }
+        1 => { Session_execute_assisted(self, input); }
+        0 => { Session_execute_autonomous(self, input); }
+        3 => { Session_execute_strict(self, input); }
     }
     return 0;
 }
-
-// Handle built-in commands. Returns 1 if handled, 0 if not.
 fn Session_handle_builtin(self, input) {
     var trimmed = str_trim(input);
-
     if (streq(trimmed, "exit") == 1 || streq(trimmed, "quit") == 1) {
-        self.running = 0;
+        store64(self + 80, 0);
         return 1;
     }
-
     if (streq(trimmed, "help") == 1) {
         ui_show_help();
         return 1;
     }
-
     if (streq(trimmed, "clear") == 1) {
         ui_clear_screen();
         return 1;
     }
-
     if (streq(trimmed, "mode") == 1) {
-        ui_show_mode(ModeManager_current(&self.mode_mgr));
+        ui_show_mode(ModeManager_current(load64(self)));
         return 1;
     }
-
     if (str_starts_with(trimmed, "mode ") == 1) {
         var mode_name = str_sub(trimmed, 5, str_len(trimmed));
         mode_name = str_trim(mode_name);
@@ -148,11 +106,10 @@ fn Session_handle_builtin(self, input) {
         if (streq(mode_name, "assist") == 1) { new_mode = Mode.AI_ASSISTED; }
         if (streq(mode_name, "auto") == 1) { new_mode = Mode.AI_AUTONOMOUS; }
         if (streq(mode_name, "strict") == 1) { new_mode = Mode.STRICT; }
-
         if (new_mode >= 0) {
-            var result = ModeManager_switch(&self.mode_mgr, new_mode);
+            var result = ModeManager_switch(load64(self), new_mode);
             if (result == 0) {
-                self.prompt_ctx.ai_mode = new_mode;
+                store64(load64(self + 48) + 32, new_mode);
                 ui_show_mode(new_mode);
             } else {
                 ui_show_error("Mode switching is disabled");
@@ -162,14 +119,12 @@ fn Session_handle_builtin(self, input) {
         }
         return 1;
     }
-
     if (streq(trimmed, "history") == 1) {
-        ui_show_history(&self.history);
+        ui_show_history(load64(self + 24));
         return 1;
     }
-
     if (streq(trimmed, "undo") == 1) {
-        var result = CheckpointManager_undo_last(&self.checkpoint);
+        var result = CheckpointManager_undo_last(load64(self + 32));
         if (result != 0) {
             ui_show_info(result);
         } else {
@@ -177,29 +132,21 @@ fn Session_handle_builtin(self, input) {
         }
         return 1;
     }
-
-    return 0; // not a builtin
+    return 0;
 }
-
-// Human mode: direct shell execution
 fn Session_execute_shell(self, input) {
-    // Parse command line
     var cmd_out[1];
     var args = vec_new();
     var argc = split_command_line(input, &cmd_out, args);
     var cmd = load64(&cmd_out);
-
     if (argc < 0 || cmd == 0) {
         ui_show_error("Failed to parse command");
         return 0;
     }
-
-    // Handle cd specially
     if (streq(cmd, "cd") == 1) {
         if (vec_len(args) > 0) {
             var dir = vec_get(args, 0);
-            // Expand ~ to home
-            if (str_byte_at(dir, 0) == 126) { // '~'
+            if (str_byte_at(dir, 0) == 126) {
                 var home = getenv("HOME");
                 if (home != 0) {
                     dir = str_cat(home, str_sub(dir, 1, str_len(dir)));
@@ -207,170 +154,127 @@ fn Session_execute_shell(self, input) {
             }
             var result = syscall(SYS_CHDIR, str_data(dir));
             if (result == 0) {
-                // Update cwd
                 var cwd_buf[4096];
                 syscall(SYS_GETCWD, &cwd_buf, 4095);
-                self.cwd = str_from_cstr(&cwd_buf);
-                self.prompt_ctx.cwd = self.cwd;
-                self.prompt_ctx.last_exit_code = 0;
+                store64(self + 72, str_from(&cwd_buf));
+                store64(load64(self + 48), load64(self + 72));
+                store64(load64(self + 48) + 40, 0);
             } else {
                 ui_show_error(str_cat("cd: no such directory: ", dir));
-                self.prompt_ctx.last_exit_code = 1;
+                store64(load64(self + 48) + 40, 1);
             }
         }
         return 0;
     }
-
-    // M7 FIX: Checkpoint rm/mv before execution — warn if checkpoint fails
     if (streq(cmd, "rm") == 1) {
         var checkpoint_ok = 1;
         for (var i = 0; i < vec_len(args); i = i + 1) {
             var arg = vec_get(args, i);
-            if (str_byte_at(arg, 0) != 45) { // not a flag (-)
-                var cp_result = CheckpointManager_checkpoint_remove(&self.checkpoint, arg);
+            if (str_byte_at(arg, 0) != 45) {
+                var cp_result = CheckpointManager_checkpoint_remove(load64(self + 32), arg);
                 if (cp_result == 0) { checkpoint_ok = 0; }
             }
         }
         if (checkpoint_ok == 0) {
-            ui_show_warning("Could not checkpoint some files — undo may not work for this operation.");
+            ui_show_warning("Could not checkpoint some files -- undo may not work for this operation.");
         }
     }
     if (streq(cmd, "mv") == 1) {
         if (vec_len(args) >= 2) {
-            CheckpointManager_checkpoint_move(&self.checkpoint,
+            CheckpointManager_checkpoint_move(load64(self + 32),
                 vec_get(args, 0), vec_get(args, 1));
         }
     }
-
-    // Execute
     var exit_code = execute_command(cmd, args, vec_len(args));
-    self.prompt_ctx.last_exit_code = exit_code;
+    store64(load64(self + 48) + 40, exit_code);
     return 0;
 }
-
-// AI-assisted mode: parse intent, translate, get approval, execute
 fn Session_execute_assisted(self, input) {
-    // Parse intent
-    var intent = Interpreter_parse(&self.interpreter, input);
-
-    // Handle question
-    if (intent.tag == IntentTag.QUESTION) {
+    var intent = Interpreter_parse(load64(self + 8), input);
+    if (load64(intent) == IntentTag.QUESTION) {
         ui_show_info("Questions require an LLM endpoint. Try 'mode human' for direct commands.");
         return 0;
     }
-
-    // Handle unknown
-    if (intent.tag == IntentTag.UNKNOWN) {
+    if (load64(intent) == IntentTag.UNKNOWN) {
         ui_show_warning("Could not understand. Try rephrasing or use 'help'.");
         return 0;
     }
-
-    // Translate to command
-    var translation = Interpreter_translate(&self.interpreter, &intent);
-
-    // Show proposed action
-    ui_show_proposed_action(translation.command, translation.args,
-        vec_len(translation.args), translation.description);
-
-    // Check permission
-    if (perm_requires_approval(translation.permission) == 1) {
-        var risk = risk_from_permission(translation.permission);
-        var response = ApprovalManager_request(&self.approval,
-            translation.command, translation.args, vec_len(translation.args), risk);
-
+    var translation = Interpreter_translate(load64(self + 8), intent);
+    ui_show_proposed_action(load64(translation), load64(translation + 8),
+        vec_len(load64(translation + 8)), load64(translation + 16));
+    if (perm_requires_approval(load64(translation + 24)) == 1) {
+        var risk = risk_from_permission(load64(translation + 24));
+        var response = ApprovalManager_request(load64(self + 16),
+            load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
         if (response != ApprovalResponse.APPROVED && response != ApprovalResponse.APPROVED_ONCE) {
             ui_show_info("Command denied.");
             return 0;
         }
     }
-
-    // Execute
-    Session_execute_translation(self, &translation);
+    Session_execute_translation(self, translation);
     return 0;
 }
-
-// AI autonomous mode: parse, check permission, execute if safe
 fn Session_execute_autonomous(self, input) {
-    var intent = Interpreter_parse(&self.interpreter, input);
-    var translation = Interpreter_translate(&self.interpreter, &intent);
-
-    // Check if AI is allowed
-    if (perm_ai_allowed(translation.permission) == 0) {
+    var intent = Interpreter_parse(load64(self + 8), input);
+    var translation = Interpreter_translate(load64(self + 8), intent);
+    if (perm_ai_allowed(load64(translation + 24)) == 0) {
         ui_show_error("AI is not allowed to execute this command.");
         return 0;
     }
-
-    // If requires approval, fall back to assisted
-    if (perm_requires_approval(translation.permission) == 1) {
-        ui_show_warning("Elevated permissions required — falling back to assisted mode.");
+    if (perm_requires_approval(load64(translation + 24)) == 1) {
+        ui_show_warning("Elevated permissions required -- falling back to assisted mode.");
         Session_execute_assisted(self, input);
         return 0;
     }
-
-    // Safe to execute
-    Session_execute_translation(self, &translation);
+    Session_execute_translation(self, translation);
     return 0;
 }
-
-// Strict mode: everything requires approval
 fn Session_execute_strict(self, input) {
-    var intent = Interpreter_parse(&self.interpreter, input);
-    var translation = Interpreter_translate(&self.interpreter, &intent);
-
-    // Always request approval in strict mode
-    var risk = risk_from_permission(translation.permission);
-    var response = ApprovalManager_request(&self.approval,
-        translation.command, translation.args, vec_len(translation.args), risk);
-
+    var intent = Interpreter_parse(load64(self + 8), input);
+    var translation = Interpreter_translate(load64(self + 8), intent);
+    var risk = risk_from_permission(load64(translation + 24));
+    var response = ApprovalManager_request(load64(self + 16),
+        load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
     if (response != ApprovalResponse.APPROVED && response != ApprovalResponse.APPROVED_ONCE) {
         ui_show_info("Command denied.");
         return 0;
     }
-
-    Session_execute_translation(self, &translation);
+    Session_execute_translation(self, translation);
     return 0;
 }
-
-// Execute a translation
 fn Session_execute_translation(self, translation) {
-    // Handle cd translation
-    if (streq(translation.command, "cd") == 1) {
-        if (vec_len(translation.args) > 0) {
-            var dir = vec_get(translation.args, 0);
+    if (streq(load64(translation), "cd") == 1) {
+        if (vec_len(load64(translation + 8)) > 0) {
+            var dir = vec_get(load64(translation + 8), 0);
             var result = syscall(SYS_CHDIR, str_data(dir));
             if (result == 0) {
                 var cwd_buf[4096];
                 syscall(SYS_GETCWD, &cwd_buf, 4095);
-                self.cwd = str_from_cstr(&cwd_buf);
-                self.prompt_ctx.cwd = self.cwd;
-                self.prompt_ctx.last_exit_code = 0;
+                store64(self + 72, str_from(&cwd_buf));
+                store64(load64(self + 48), load64(self + 72));
+                store64(load64(self + 48) + 40, 0);
             } else {
                 ui_show_error(str_cat("cd: no such directory: ", dir));
-                self.prompt_ctx.last_exit_code = 1;
+                store64(load64(self + 48) + 40, 1);
             }
         }
         return 0;
     }
-
-    // M7 FIX: Checkpoint destructive operations — warn on failure
-    if (streq(translation.command, "rm") == 1) {
-        var nargs = vec_len(translation.args);
+    if (streq(load64(translation), "rm") == 1) {
+        var nargs = vec_len(load64(translation + 8));
         var checkpoint_ok = 1;
         for (var i = 0; i < nargs; i = i + 1) {
-            var arg = vec_get(translation.args, i);
+            var arg = vec_get(load64(translation + 8), i);
             if (str_byte_at(arg, 0) != 45) {
-                var cp_result = CheckpointManager_checkpoint_remove(&self.checkpoint, arg);
+                var cp_result = CheckpointManager_checkpoint_remove(load64(self + 32), arg);
                 if (cp_result == 0) { checkpoint_ok = 0; }
             }
         }
         if (checkpoint_ok == 0) {
-            ui_show_warning("Could not checkpoint some files — undo may not work.");
+            ui_show_warning("Could not checkpoint some files -- undo may not work.");
         }
     }
-
-    // Execute command
-    var exit_code = execute_command(translation.command, translation.args, vec_len(translation.args));
-    self.prompt_ctx.last_exit_code = exit_code;
-
+    var exit_code = execute_command(load64(translation), load64(translation + 8), vec_len(load64(translation + 8)));
+    store64(load64(self + 48) + 40, exit_code);
     return 0;
 }

@@ -1,49 +1,31 @@
-// interpreter.cyr — NL -> Intent -> Translation pipeline
-//
-// Parses natural language input into structured Intent, then
-// translates Intent into shell commands with permission levels.
-//
-// Uses keyword-based pattern matching (no regex dependency).
-
-// --- Interpreter struct ---
 struct Interpreter { initialized; }
-
 fn Interpreter_new() {
-    return Interpreter { 1 };
+    var p = alloc(8);
+    store64(p, 1);
+    return p;
 }
-
-// --- Keyword helpers ---
-
-// Check if input contains a word (case-insensitive, word-boundary aware)
 fn input_has_word(input, word) {
     return str_contains_ci(input, word);
 }
-
-// Extract the last "word" from input (after the last space)
 fn extract_last_arg(input) {
-    var len = str_len(input);
+    var len = strlen(input);
     var pos = len - 1;
-    // Skip trailing whitespace
     while (pos >= 0) {
         if (str_byte_at(input, pos) != 32) { break; }
         pos = pos - 1;
     }
     var end = pos + 1;
-    // Find start of last word
     while (pos >= 0) {
         if (str_byte_at(input, pos) == 32) { break; }
         pos = pos - 1;
     }
     return str_sub(input, pos + 1, end);
 }
-
-// Extract text after a keyword (e.g., "in /tmp" -> "/tmp")
 fn extract_after(input, keyword) {
     var idx = str_find_ci(input, keyword);
     if (idx < 0) { return 0; }
-    var start = idx + str_len(keyword);
-    // Skip whitespace
-    var len = str_len(input);
+    var start = idx + strlen(keyword);
+    var len = strlen(input);
     while (start < len) {
         if (str_byte_at(input, start) != 32) { break; }
         start = start + 1;
@@ -51,305 +33,217 @@ fn extract_after(input, keyword) {
     if (start >= len) { return 0; }
     return str_trim(str_sub(input, start, len));
 }
-
-// Extract text between two keywords
 fn extract_between(input, before_kw, after_kw) {
     var start_idx = str_find_ci(input, before_kw);
     if (start_idx < 0) { return 0; }
-    var start = start_idx + str_len(before_kw);
-    var len = str_len(input);
-    // Skip whitespace
+    var start = start_idx + strlen(before_kw);
+    var len = strlen(input);
     while (start < len) {
         if (str_byte_at(input, start) != 32) { break; }
         start = start + 1;
     }
-
     var end_idx = str_find_ci_from(input, after_kw, start);
     if (end_idx < 0) { return str_trim(str_sub(input, start, len)); }
     return str_trim(str_sub(input, start, end_idx));
 }
-
-// --- Parse: NL input -> Intent ---
-
-fn Interpreter_parse(self, input) {
-    var trimmed = str_trim(input);
-    var len = str_len(trimmed);
-    if (len == 0) { return Intent_new(IntentTag.UNKNOWN); }
-
-    // --- Check for pipeline (contains " | " or " then ") ---
-    if (str_contains(trimmed, " | ") == 1 || str_contains_ci(trimmed, " then ") == 1) {
-        var intent = Intent_new(IntentTag.PIPELINE);
-        // Split on pipe or "then"
-        var parts = vec_new();
-        if (str_contains(trimmed, " | ") == 1) {
-            parts = str_split(trimmed, " | ");
-        } else {
-            parts = str_split_ci(trimmed, " then ");
-        }
-        intent.vec1 = parts;
+fn parse_show_commands(trimmed) {
+    if (input_has_word(trimmed, "file") == 1 || input_has_word(trimmed, "dir") == 1 || input_has_word(trimmed, "folder") == 1 || input_has_word(trimmed, "content") == 1) {
+        var intent = Intent_new(IntentTag.LIST_FILES);
+        var path = extract_after(trimmed, " in ");
+        store64(intent + 8, path);
+        var opts = 0;
+        if (input_has_word(trimmed, "all") == 1) { opts = opts | 1; }
+        if (input_has_word(trimmed, "detail") == 1 || input_has_word(trimmed, "long") == 1) { opts = opts | 2; }
+        if (input_has_word(trimmed, "size") == 1 || input_has_word(trimmed, "human") == 1) { opts = opts | 4; }
+        if (input_has_word(trimmed, "time") == 1 || input_has_word(trimmed, "recent") == 1) { opts = opts | 8; }
+        if (input_has_word(trimmed, "recursive") == 1) { opts = opts | 16; }
+        store64(intent + 40, opts);
         return intent;
     }
-
-    // --- Filesystem operations ---
-
-    // List files
-    if (input_has_word(trimmed, "show") == 1 || input_has_word(trimmed, "list") == 1 || input_has_word(trimmed, "display") == 1) {
-        if (input_has_word(trimmed, "file") == 1 || input_has_word(trimmed, "dir") == 1 || input_has_word(trimmed, "folder") == 1 || input_has_word(trimmed, "content") == 1) {
-            var intent = Intent_new(IntentTag.LIST_FILES);
-            // Check for path after "in"
-            var path = extract_after(trimmed, " in ");
-            intent.field1 = path; // path or 0
-            // Check for flags
-            var opts = 0;
-            if (input_has_word(trimmed, "all") == 1) { opts = opts | 1; }
-            if (input_has_word(trimmed, "detail") == 1 || input_has_word(trimmed, "long") == 1) { opts = opts | 2; }
-            if (input_has_word(trimmed, "size") == 1 || input_has_word(trimmed, "human") == 1) { opts = opts | 4; }
-            if (input_has_word(trimmed, "time") == 1 || input_has_word(trimmed, "recent") == 1) { opts = opts | 8; }
-            if (input_has_word(trimmed, "recursive") == 1) { opts = opts | 16; }
-            intent.int1 = opts;
-            return intent;
-        }
-
-        // Show processes
-        if (input_has_word(trimmed, "process") == 1 || input_has_word(trimmed, "task") == 1 || input_has_word(trimmed, "running") == 1) {
-            return Intent_new(IntentTag.SHOW_PROCESSES);
-        }
-
-        // System info
-        if (input_has_word(trimmed, "system") == 1 || input_has_word(trimmed, "computer") == 1 || input_has_word(trimmed, "machine") == 1) {
-            return Intent_new(IntentTag.SYSTEM_INFO);
-        }
-
-        // Network info
-        if (input_has_word(trimmed, "network") == 1 || input_has_word(trimmed, "ip") == 1 || input_has_word(trimmed, "net") == 1) {
-            return Intent_new(IntentTag.NETWORK_INFO);
-        }
-
-        // Disk usage
-        if (input_has_word(trimmed, "disk") == 1 || input_has_word(trimmed, "space") == 1 || input_has_word(trimmed, "usage") == 1) {
-            var intent = Intent_new(IntentTag.DISK_USAGE);
-            intent.field1 = extract_after(trimmed, " in ");
-            return intent;
-        }
-
-        // Audit
-        if (input_has_word(trimmed, "audit") == 1 || input_has_word(trimmed, "security log") == 1) {
-            var intent = Intent_new(IntentTag.AUDIT_VIEW);
-            intent.field1 = extract_after(trimmed, "agent ");
-            intent.field2 = extract_after(trimmed, "last ");
-            return intent;
-        }
-
-        // Agent info
-        if (input_has_word(trimmed, "agent") == 1) {
-            var intent = Intent_new(IntentTag.AGENT_INFO);
-            intent.field1 = extract_after(trimmed, "agent ");
-            return intent;
-        }
+    if (input_has_word(trimmed, "process") == 1 || input_has_word(trimmed, "task") == 1 || input_has_word(trimmed, "running") == 1) {
+        return Intent_new(IntentTag.SHOW_PROCESSES);
     }
-
-    // Show/read file
+    if (input_has_word(trimmed, "system") == 1 || input_has_word(trimmed, "computer") == 1 || input_has_word(trimmed, "machine") == 1) {
+        return Intent_new(IntentTag.SYSTEM_INFO);
+    }
+    if (input_has_word(trimmed, "network") == 1 || input_has_word(trimmed, "ip") == 1 || input_has_word(trimmed, "net") == 1) {
+        return Intent_new(IntentTag.NETWORK_INFO);
+    }
+    if (input_has_word(trimmed, "disk") == 1 || input_has_word(trimmed, "space") == 1 || input_has_word(trimmed, "usage") == 1) {
+        var intent = Intent_new(IntentTag.DISK_USAGE);
+        store64(intent + 8, extract_after(trimmed, " in "));
+        return intent;
+    }
+    if (input_has_word(trimmed, "audit") == 1 || input_has_word(trimmed, "security log") == 1) {
+        var intent = Intent_new(IntentTag.AUDIT_VIEW);
+        store64(intent + 8, extract_after(trimmed, "agent "));
+        store64(intent + 16, extract_after(trimmed, "last "));
+        return intent;
+    }
+    if (input_has_word(trimmed, "agent") == 1) {
+        var intent = Intent_new(IntentTag.AGENT_INFO);
+        store64(intent + 8, extract_after(trimmed, "agent "));
+        return intent;
+    }
+    return 0;
+}
+fn parse_file_ops(trimmed) {
     if (input_has_word(trimmed, "read") == 1 || input_has_word(trimmed, "cat") == 1 || input_has_word(trimmed, "open") == 1) {
         var intent = Intent_new(IntentTag.SHOW_FILE);
-        intent.field1 = extract_last_arg(trimmed);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
     if (input_has_word(trimmed, "contents of") == 1 || input_has_word(trimmed, "file content") == 1) {
         var intent = Intent_new(IntentTag.SHOW_FILE);
-        intent.field1 = extract_last_arg(trimmed);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
-
-    // Find files
     if (input_has_word(trimmed, "find") == 1 || input_has_word(trimmed, "locate") == 1 || input_has_word(trimmed, "search for") == 1) {
-        // Distinguish find files vs search content
-        if (input_has_word(trimmed, "in ") == 1 && input_has_word(trimmed, "within") == 0) {
-            // Could be "find X in Y" (search content) or "find files named X in Y"
-            if (input_has_word(trimmed, "file") == 1 || input_has_word(trimmed, "named") == 1 || input_has_word(trimmed, "called") == 1) {
-                var intent = Intent_new(IntentTag.FIND_FILES);
-                intent.field1 = extract_between(trimmed, "named ", " in ");
-                if (intent.field1 == 0) {
-                    intent.field1 = extract_between(trimmed, "called ", " in ");
-                }
-                if (intent.field1 == 0) {
-                    intent.field1 = extract_between(trimmed, "find ", " in ");
-                }
-                intent.field2 = extract_after(trimmed, " in ");
-                return intent;
-            }
-        }
         if (input_has_word(trimmed, "file") == 1 || input_has_word(trimmed, "named") == 1 || input_has_word(trimmed, "called") == 1) {
             var intent = Intent_new(IntentTag.FIND_FILES);
-            intent.field1 = extract_after(trimmed, "named ");
-            if (intent.field1 == 0) { intent.field1 = extract_after(trimmed, "called "); }
-            if (intent.field1 == 0) { intent.field1 = extract_last_arg(trimmed); }
-            intent.field2 = extract_after(trimmed, " in ");
+            store64(intent + 8, extract_after(trimmed, "named "));
+            if (load64(intent + 8) == 0) { store64(intent + 8, extract_after(trimmed, "called ")); }
+            if (load64(intent + 8) == 0) { store64(intent + 8, extract_last_arg(trimmed)); }
+            store64(intent + 16, extract_after(trimmed, " in "));
             return intent;
         }
     }
-
-    // Search content (grep)
     if (input_has_word(trimmed, "search") == 1 || input_has_word(trimmed, "grep") == 1) {
         if (input_has_word(trimmed, " in ") == 1 || input_has_word(trimmed, "within") == 1 || input_has_word(trimmed, "inside") == 1) {
             var intent = Intent_new(IntentTag.SEARCH_CONTENT);
-            intent.field1 = extract_between(trimmed, "for ", " in ");
-            if (intent.field1 == 0) { intent.field1 = extract_between(trimmed, "search ", " in "); }
-            intent.field2 = extract_after(trimmed, " in ");
-            if (intent.field2 == 0) { intent.field2 = extract_after(trimmed, "within "); }
+            store64(intent + 8, extract_between(trimmed, "for ", " in "));
+            if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "search ", " in ")); }
+            store64(intent + 16, extract_after(trimmed, " in "));
+            if (load64(intent + 16) == 0) { store64(intent + 16, extract_after(trimmed, "within ")); }
             return intent;
         }
     }
-
-    // Change directory
     if (input_has_word(trimmed, "go to") == 1 || input_has_word(trimmed, "change to") == 1 || input_has_word(trimmed, "cd ") == 1 || input_has_word(trimmed, "switch to") == 1) {
         var intent = Intent_new(IntentTag.CHANGE_DIR);
-        intent.field1 = extract_last_arg(trimmed);
-        // Clean up "directory" suffix
-        if (streq(intent.field1, "directory") == 1) {
-            intent.field1 = extract_between(trimmed, "to ", "directory");
-            if (intent.field1 == 0) { intent.field1 = extract_last_arg(trimmed); }
-        }
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
-
-    // Create directory
     if (input_has_word(trimmed, "create") == 1 || input_has_word(trimmed, "make") == 1) {
         if (input_has_word(trimmed, "directory") == 1 || input_has_word(trimmed, "folder") == 1) {
             var intent = Intent_new(IntentTag.CREATE_DIR);
-            intent.field1 = extract_last_arg(trimmed);
+            store64(intent + 8, extract_last_arg(trimmed));
             return intent;
         }
     }
-
-    // Copy
     if (input_has_word(trimmed, "copy") == 1 || input_has_word(trimmed, "duplicate") == 1) {
         var intent = Intent_new(IntentTag.COPY);
-        intent.field1 = extract_between(trimmed, "copy ", " to ");
-        if (intent.field1 == 0) { intent.field1 = extract_between(trimmed, "duplicate ", " to "); }
-        intent.field2 = extract_after(trimmed, " to ");
+        store64(intent + 8, extract_between(trimmed, "copy ", " to "));
+        if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "duplicate ", " to ")); }
+        store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
-
-    // Move/rename
     if (input_has_word(trimmed, "move") == 1 || input_has_word(trimmed, "rename") == 1) {
         var intent = Intent_new(IntentTag.MOVE);
-        intent.field1 = extract_between(trimmed, "move ", " to ");
-        if (intent.field1 == 0) { intent.field1 = extract_between(trimmed, "rename ", " to "); }
-        intent.field2 = extract_after(trimmed, " to ");
+        store64(intent + 8, extract_between(trimmed, "move ", " to "));
+        if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "rename ", " to ")); }
+        store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
-
-    // Remove
     if (input_has_word(trimmed, "remove") == 1 || input_has_word(trimmed, "delete") == 1 || input_has_word(trimmed, "rm ") == 1) {
         var intent = Intent_new(IntentTag.REMOVE);
-        intent.field1 = extract_last_arg(trimmed);
-        intent.int1 = 0;
+        store64(intent + 8, extract_last_arg(trimmed));
+        store64(intent + 40, 0);
         if (input_has_word(trimmed, "recursive") == 1 || input_has_word(trimmed, "-r") == 1) {
-            intent.int1 = 1;
+            store64(intent + 40, 1);
         }
         return intent;
     }
-
-    // Kill process
+    return 0;
+}
+fn parse_system_ops(trimmed) {
     if (input_has_word(trimmed, "kill") == 1 || input_has_word(trimmed, "terminate") == 1) {
         if (input_has_word(trimmed, "process") == 1 || input_has_word(trimmed, "pid") == 1) {
             var intent = Intent_new(IntentTag.KILL_PROCESS);
-            var pid_str = extract_last_arg(trimmed);
-            intent.int1 = str_to_int(pid_str);
+            store64(intent + 40, str_to_int(extract_last_arg(trimmed)));
             return intent;
         }
     }
-
-    // Install package
     if (input_has_word(trimmed, "install") == 1 || input_has_word(trimmed, "add package") == 1) {
         var intent = Intent_new(IntentTag.INSTALL_PACKAGE);
         var pkg = extract_after(trimmed, "install ");
         if (pkg == 0) { pkg = extract_last_arg(trimmed); }
         var pkgs = vec_new();
         vec_push(pkgs, pkg);
-        intent.vec1 = pkgs;
+        store64(intent + 56, pkgs);
         return intent;
     }
-
-    // --- Service control ---
     if (input_has_word(trimmed, "service") == 1 || input_has_word(trimmed, "systemctl") == 1) {
         var intent = Intent_new(IntentTag.SERVICE_CONTROL);
-        if (input_has_word(trimmed, "start") == 1) { intent.field1 = "start"; }
-        elif (input_has_word(trimmed, "stop") == 1) { intent.field1 = "stop"; }
-        elif (input_has_word(trimmed, "restart") == 1) { intent.field1 = "restart"; }
-        elif (input_has_word(trimmed, "status") == 1) { intent.field1 = "status"; }
-        else { intent.field1 = "list"; }
-        intent.field2 = extract_last_arg(trimmed);
+        if (input_has_word(trimmed, "start") == 1) { store64(intent + 8, "start"); }
+        elif (input_has_word(trimmed, "stop") == 1) { store64(intent + 8, "stop"); }
+        elif (input_has_word(trimmed, "restart") == 1) { store64(intent + 8, "restart"); }
+        elif (input_has_word(trimmed, "status") == 1) { store64(intent + 8, "status"); }
+        else { store64(intent + 8, "list"); }
+        store64(intent + 16, extract_last_arg(trimmed));
         return intent;
     }
-
-    // --- Git operations ---
-    if (input_has_word(trimmed, "git") == 1 || input_has_word(trimmed, "commit") == 1) {
-        if (input_has_word(trimmed, "commit") == 1) {
-            var intent = Intent_new(IntentTag.GIT_COMMIT);
-            intent.field1 = extract_after(trimmed, "-m ");
-            if (intent.field1 == 0) { intent.field1 = extract_after(trimmed, "message "); }
-            intent.int1 = 0;
-            if (input_has_word(trimmed, "-a") == 1 || input_has_word(trimmed, "all") == 1) { intent.int1 = 1; }
-            return intent;
-        }
-        if (input_has_word(trimmed, "diff") == 1) {
-            var intent = Intent_new(IntentTag.GIT_DIFF);
-            intent.int1 = 0;
-            if (input_has_word(trimmed, "staged") == 1) { intent.int1 = 1; }
-            return intent;
-        }
-        if (input_has_word(trimmed, "branch") == 1) {
-            var intent = Intent_new(IntentTag.GIT_BRANCH);
-            intent.field1 = extract_after(trimmed, "branch ");
-            intent.int1 = 0;
-            if (input_has_word(trimmed, "delete") == 1) { intent.int1 = 1; }
-            return intent;
-        }
-        if (input_has_word(trimmed, "status") == 1) { return Intent_new(IntentTag.GIT_STATUS); }
-        if (input_has_word(trimmed, "log") == 1) {
-            var intent = Intent_new(IntentTag.GIT_LOG);
-            return intent;
-        }
-        if (input_has_word(trimmed, "push") == 1) {
-            var intent = Intent_new(IntentTag.GIT_PUSH);
-            intent.field1 = extract_after(trimmed, "push ");
-            return intent;
-        }
-        if (input_has_word(trimmed, "pull") == 1) {
-            var intent = Intent_new(IntentTag.GIT_PULL);
-            return intent;
-        }
-        if (input_has_word(trimmed, "checkout") == 1) {
-            var intent = Intent_new(IntentTag.GIT_CHECKOUT);
-            intent.field1 = extract_after(trimmed, "checkout ");
-            return intent;
-        }
-        if (input_has_word(trimmed, "merge") == 1) {
-            var intent = Intent_new(IntentTag.GIT_MERGE);
-            intent.field1 = extract_after(trimmed, "merge ");
-            return intent;
-        }
-        if (input_has_word(trimmed, "stash") == 1) {
-            var intent = Intent_new(IntentTag.GIT_STASH);
-            if (input_has_word(trimmed, "pop") == 1) { intent.field1 = "pop"; }
-            elif (input_has_word(trimmed, "list") == 1) { intent.field1 = "list"; }
-            elif (input_has_word(trimmed, "apply") == 1) { intent.field1 = "apply"; }
-            else { intent.field1 = "push"; }
-            return intent;
-        }
+    return 0;
+}
+fn parse_git_ops(trimmed) {
+    if (input_has_word(trimmed, "commit") == 1) {
+        var intent = Intent_new(IntentTag.GIT_COMMIT);
+        store64(intent + 8, extract_after(trimmed, "-m "));
+        if (load64(intent + 8) == 0) { store64(intent + 8, extract_after(trimmed, "message ")); }
+        store64(intent + 40, 0);
+        if (input_has_word(trimmed, "-a") == 1 || input_has_word(trimmed, "all") == 1) { store64(intent + 40, 1); }
+        return intent;
     }
-
-    // --- Firewall ---
+    if (input_has_word(trimmed, "diff") == 1) {
+        var intent = Intent_new(IntentTag.GIT_DIFF);
+        store64(intent + 40, 0);
+        if (input_has_word(trimmed, "staged") == 1) { store64(intent + 40, 1); }
+        return intent;
+    }
+    if (input_has_word(trimmed, "branch") == 1) {
+        var intent = Intent_new(IntentTag.GIT_BRANCH);
+        store64(intent + 8, extract_after(trimmed, "branch "));
+        store64(intent + 40, 0);
+        if (input_has_word(trimmed, "delete") == 1) { store64(intent + 40, 1); }
+        return intent;
+    }
+    if (input_has_word(trimmed, "status") == 1) { return Intent_new(IntentTag.GIT_STATUS); }
+    if (input_has_word(trimmed, "log") == 1) { return Intent_new(IntentTag.GIT_LOG); }
+    if (input_has_word(trimmed, "push") == 1) {
+        var intent = Intent_new(IntentTag.GIT_PUSH);
+        store64(intent + 8, extract_after(trimmed, "push "));
+        return intent;
+    }
+    if (input_has_word(trimmed, "pull") == 1) { return Intent_new(IntentTag.GIT_PULL); }
+    if (input_has_word(trimmed, "checkout") == 1) {
+        var intent = Intent_new(IntentTag.GIT_CHECKOUT);
+        store64(intent + 8, extract_after(trimmed, "checkout "));
+        return intent;
+    }
+    if (input_has_word(trimmed, "merge") == 1) {
+        var intent = Intent_new(IntentTag.GIT_MERGE);
+        store64(intent + 8, extract_after(trimmed, "merge "));
+        return intent;
+    }
+    if (input_has_word(trimmed, "stash") == 1) {
+        var intent = Intent_new(IntentTag.GIT_STASH);
+        if (input_has_word(trimmed, "pop") == 1) { store64(intent + 8, "pop"); }
+        elif (input_has_word(trimmed, "list") == 1) { store64(intent + 8, "list"); }
+        elif (input_has_word(trimmed, "apply") == 1) { store64(intent + 8, "apply"); }
+        else { store64(intent + 8, "push"); }
+        return intent;
+    }
+    return 0;
+}
+fn parse_admin_ops(trimmed) {
     if (input_has_word(trimmed, "firewall") == 1 || input_has_word(trimmed, "ufw") == 1) {
         if (input_has_word(trimmed, "allow") == 1) {
             var intent = Intent_new(IntentTag.FIREWALL_ALLOW);
-            intent.field1 = extract_last_arg(trimmed); // port
+            store64(intent + 8, extract_last_arg(trimmed));
             return intent;
         }
         if (input_has_word(trimmed, "deny") == 1) {
             var intent = Intent_new(IntentTag.FIREWALL_DENY);
-            intent.field1 = extract_last_arg(trimmed);
+            store64(intent + 8, extract_last_arg(trimmed));
             return intent;
         }
         if (input_has_word(trimmed, "list") == 1 || input_has_word(trimmed, "rules") == 1) {
@@ -360,61 +254,80 @@ fn Interpreter_parse(self, input) {
         if (input_has_word(trimmed, "disable") == 1) { return Intent_new(IntentTag.FIREWALL_DISABLE); }
         if (input_has_word(trimmed, "delete") == 1) {
             var intent = Intent_new(IntentTag.FIREWALL_DELETE);
-            intent.field1 = extract_after(trimmed, "delete ");
+            store64(intent + 8, extract_after(trimmed, "delete "));
             return intent;
         }
     }
-
-    // --- User/group management ---
     if (input_has_word(trimmed, "useradd") == 1 || input_has_word(trimmed, "add user") == 1 || input_has_word(trimmed, "create user") == 1) {
         var intent = Intent_new(IntentTag.USER_ADD);
-        intent.field1 = extract_last_arg(trimmed);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
     if (input_has_word(trimmed, "userdel") == 1 || input_has_word(trimmed, "delete user") == 1 || input_has_word(trimmed, "remove user") == 1) {
         var intent = Intent_new(IntentTag.USER_DELETE);
-        intent.field1 = extract_last_arg(trimmed);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
     if (input_has_word(trimmed, "passwd") == 1 || input_has_word(trimmed, "change password") == 1) {
         var intent = Intent_new(IntentTag.PASSWD);
-        intent.field1 = extract_last_arg(trimmed);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
     if (input_has_word(trimmed, "groupadd") == 1 || input_has_word(trimmed, "add group") == 1 || input_has_word(trimmed, "create group") == 1) {
         var intent = Intent_new(IntentTag.GROUP_ADD);
-        intent.field1 = extract_last_arg(trimmed);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
     if (input_has_word(trimmed, "groups") == 1) {
-        var intent = Intent_new(IntentTag.GROUP_LIST);
+        return Intent_new(IntentTag.GROUP_LIST);
+    }
+    return 0;
+}
+fn Interpreter_parse(self, input) {
+    var trimmed = str_trim(input);
+    var len = strlen(trimmed);
+    if (len == 0) { return Intent_new(IntentTag.UNKNOWN); }
+    if (str_contains(trimmed, " | ") == 1 || str_contains_ci(trimmed, " then ") == 1) {
+        var intent = Intent_new(IntentTag.PIPELINE);
+        var parts = vec_new();
+        if (str_contains(trimmed, " | ") == 1) {
+            parts = str_split(trimmed, " | ");
+        } else {
+            parts = str_split_ci(trimmed, " then ");
+        }
+        store64(intent + 56, parts);
         return intent;
     }
-
-    // --- Question (starts with question words) ---
+    if (input_has_word(trimmed, "show") == 1 || input_has_word(trimmed, "list") == 1 || input_has_word(trimmed, "display") == 1) {
+        var r = parse_show_commands(trimmed);
+        if (r != 0) { return r; }
+    }
+    var r2 = parse_file_ops(trimmed);
+    if (r2 != 0) { return r2; }
+    var r3 = parse_system_ops(trimmed);
+    if (r3 != 0) { return r3; }
+    if (input_has_word(trimmed, "git") == 1 || input_has_word(trimmed, "commit") == 1) {
+        var r4 = parse_git_ops(trimmed);
+        if (r4 != 0) { return r4; }
+    }
+    var r5 = parse_admin_ops(trimmed);
+    if (r5 != 0) { return r5; }
     if (input_has_word(trimmed, "what") == 1 || input_has_word(trimmed, "how") == 1 || input_has_word(trimmed, "why") == 1 || input_has_word(trimmed, "when") == 1 || input_has_word(trimmed, "explain") == 1) {
-        // Only if not already matched above
         var intent = Intent_new(IntentTag.QUESTION);
-        intent.field1 = trimmed;
+        store64(intent + 8, trimmed);
         return intent;
     }
-
-    // --- Fallback: treat as shell command ---
     var intent = Intent_new(IntentTag.SHELL_COMMAND);
-    // Split into command + args
     var cmd_out[1];
     var args_out = vec_new();
     var argc = split_command_line(trimmed, &cmd_out, args_out);
-    intent.field1 = load64(&cmd_out);
-    intent.vec1 = args_out;
-    intent.int1 = argc;
+    store64(intent + 8, load64(&cmd_out));
+    store64(intent + 56, args_out);
+    store64(intent + 40, argc);
     return intent;
 }
-
-// --- Translate: Intent -> Translation ---
-
-fn Interpreter_translate(self, intent) {
-    match intent.tag {
+fn translate_core(tag, intent) {
+    match tag {
         0 => { return translate_list_files(intent); }
         1 => { return translate_show_file(intent); }
         2 => { return translate_find_files(intent); }
@@ -431,43 +344,51 @@ fn Interpreter_translate(self, intent) {
         13 => { return translate_disk_usage(intent); }
         14 => { return translate_install_package(intent); }
         15 => { return translate_shell_command(intent); }
-        // C5 FIX: Handle all parsed intent tags that were missing
         16 => { return translate_audit_view(intent); }
         17 => { return translate_agent_info(intent); }
         18 => { return translate_service_control(intent); }
-        13 => { return translate_disk_usage(intent); }
-        9 => { return translate_show_processes(intent); }
-        11 => { return translate_system_info(intent); }
-        12 => { return translate_network_info(intent); }
-        14 => { return translate_install_package(intent); }
-        // Git
-        184 => { return translate_git_commit(intent); }
-        185 => { return translate_git_diff(intent); }
-        186 => { return translate_git_branch(intent); }
-        187 => { return translate_git_status(intent); }
-        188 => { return translate_git_log(intent); }
-        189 => { return translate_git_push(intent); }
-        190 => { return translate_git_pull(intent); }
-        191 => { return translate_git_checkout(intent); }
-        192 => { return translate_git_merge(intent); }
-        193 => { return translate_git_stash(intent); }
-        // Firewall
-        201 => { return translate_firewall_allow(intent); }
-        202 => { return translate_firewall_deny(intent); }
-        203 => { return translate_firewall_list(intent); }
-        204 => { return translate_firewall_status(intent); }
-        205 => { return translate_firewall_enable(intent); }
-        206 => { return translate_firewall_disable(intent); }
-        207 => { return translate_firewall_delete(intent); }
-        // User/group
-        194 => { return translate_user_add(intent); }
-        195 => { return translate_user_delete(intent); }
-        197 => { return translate_passwd(intent); }
-        198 => { return translate_group_add(intent); }
-        200 => { return translate_group_list(intent); }
-        // Question
-        209 => { return translate_question(intent); }
-        // Unknown
-        _ => { return translate_unknown(intent); }
+        _ => { return 0; }
     }
+    return 0;
+}
+fn translate_extended(tag, intent) {
+    match tag {
+        19 => { return translate_git_commit(intent); }
+        20 => { return translate_git_diff(intent); }
+        21 => { return translate_git_branch(intent); }
+        22 => { return translate_git_status(intent); }
+        23 => { return translate_git_log(intent); }
+        24 => { return translate_git_push(intent); }
+        25 => { return translate_git_pull(intent); }
+        26 => { return translate_git_checkout(intent); }
+        27 => { return translate_git_merge(intent); }
+        28 => { return translate_git_stash(intent); }
+        29 => { return translate_user_add(intent); }
+        30 => { return translate_user_delete(intent); }
+        31 => { return translate_passwd(intent); }
+        32 => { return translate_group_add(intent); }
+        33 => { return translate_group_list(intent); }
+        34 => { return translate_firewall_allow(intent); }
+        35 => { return translate_firewall_deny(intent); }
+        36 => { return translate_firewall_list(intent); }
+        37 => { return translate_firewall_status(intent); }
+        38 => { return translate_firewall_enable(intent); }
+        39 => { return translate_firewall_disable(intent); }
+        40 => { return translate_firewall_delete(intent); }
+        42 => { return translate_question(intent); }
+        _ => { return 0; }
+    }
+    return 0;
+}
+fn Interpreter_translate(self, intent) {
+    var tag = load64(intent);
+    if (tag <= 18) {
+        var r = translate_core(tag, intent);
+        if (r != 0) { return r; }
+    }
+    if (tag >= 19 && tag <= 42) {
+        var r = translate_extended(tag, intent);
+        if (r != 0) { return r; }
+    }
+    return translate_unknown(intent);
 }

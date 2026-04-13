@@ -1,27 +1,92 @@
-// sanitize.cyr — Input validation and sanitization
-//
-// Shared validation functions for security-critical paths.
-// Every user-controlled string must pass through validation
-// before reaching syscalls, exec, or file operations.
-
-// --- Dangerous character detection ---
-
-// Shell metacharacters that can cause command injection
-fn is_shell_metachar(ch) {
-    if (ch == 59) { return 1; }   // ;
-    if (ch == 124) { return 1; }  // |
-    if (ch == 38) { return 1; }   // &
-    if (ch == 36) { return 1; }   // $
-    if (ch == 40) { return 1; }   // (
-    if (ch == 41) { return 1; }   // )
-    if (ch == 60) { return 1; }   // <
-    if (ch == 62) { return 1; }   // >
-    if (ch == 96) { return 1; }   // `
-    if (ch == 10) { return 1; }   // newline
+var _sanitize_loaded = 1;
+fn str_byte_at(s, i) {
+    return load8(s + i);
+}
+fn eprint_str(s) {
+    syscall(SYS_WRITE, 2, str_data(s), str_len(s));
+}
+fn eprint_line(s) {
+    eprint_str(s);
+    syscall(SYS_WRITE, 2, "\n", 1);
+}
+fn str_contains_ci(haystack, needle) {
+    var hlen = strlen(haystack);
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 1; }
+    if (nlen > hlen) { return 0; }
+    for (var i = 0; i <= hlen - nlen; i = i + 1) {
+        var found = 1;
+        for (var j = 0; j < nlen; j = j + 1) {
+            var hc = load8(haystack + i + j);
+            var nc = load8(needle + j);
+            if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
+            if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
+            if (hc != nc) { found = 0; }
+        }
+        if (found == 1) { return 1; }
+    }
     return 0;
 }
-
-// Check if a string contains any shell metacharacters
+fn str_find_ci(haystack, needle) {
+    var hlen = strlen(haystack);
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 0; }
+    if (nlen > hlen) { return 0 - 1; }
+    for (var i = 0; i <= hlen - nlen; i = i + 1) {
+        var found = 1;
+        for (var j = 0; j < nlen; j = j + 1) {
+            var hc = load8(haystack + i + j);
+            var nc = load8(needle + j);
+            if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
+            if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
+            if (hc != nc) { found = 0; }
+        }
+        if (found == 1) { return i; }
+    }
+    return 0 - 1;
+}
+fn str_find_ci_from(haystack, needle, from) {
+    var hlen = strlen(haystack);
+    var nlen = strlen(needle);
+    if (nlen == 0) { return from; }
+    if (from + nlen > hlen) { return 0 - 1; }
+    for (var i = from; i <= hlen - nlen; i = i + 1) {
+        var found = 1;
+        for (var j = 0; j < nlen; j = j + 1) {
+            var hc = load8(haystack + i + j);
+            var nc = load8(needle + j);
+            if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
+            if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
+            if (hc != nc) { found = 0; }
+        }
+        if (found == 1) { return i; }
+    }
+    return 0 - 1;
+}
+fn str_split_ci(input, sep) {
+    var result = vec_new();
+    var idx = str_find_ci(input, sep);
+    if (idx < 0) {
+        vec_push(result, input);
+        return result;
+    }
+    vec_push(result, str_sub(input, 0, idx));
+    vec_push(result, str_sub(input, idx + str_len(sep), str_len(input)));
+    return result;
+}
+fn is_shell_metachar(ch) {
+    if (ch == 59) { return 1; }
+    if (ch == 124) { return 1; }
+    if (ch == 38) { return 1; }
+    if (ch == 36) { return 1; }
+    if (ch == 40) { return 1; }
+    if (ch == 41) { return 1; }
+    if (ch == 60) { return 1; }
+    if (ch == 62) { return 1; }
+    if (ch == 96) { return 1; }
+    if (ch == 10) { return 1; }
+    return 0;
+}
 fn has_shell_metachars(s) {
     var len = str_len(s);
     for (var i = 0; i < len; i = i + 1) {
@@ -31,189 +96,135 @@ fn has_shell_metachars(s) {
     }
     return 0;
 }
-
-// Validate that a string is safe for use as a command argument
-// Returns 1 if safe, 0 if dangerous
 fn is_safe_arg(s) {
     if (s == 0) { return 0; }
     var len = str_len(s);
     if (len == 0) { return 0; }
-    if (len > 4096) { return 0; } // arg length limit
+    if (len > 4096) { return 0; }
     return (has_shell_metachars(s) == 0);
 }
-
-// --- Path validation ---
-
-// Check for path traversal sequences
 fn has_path_traversal(path) {
     if (path == 0) { return 0; }
     return str_contains(path, "..");
 }
-
-// Validate a filesystem path is safe
 fn is_safe_path(path) {
     if (path == 0) { return 0; }
     if (has_path_traversal(path) == 1) { return 0; }
     if (has_shell_metachars(path) == 1) { return 0; }
     return 1;
 }
-
-// --- Command basename extraction ---
-
-// Extract basename from a possibly absolute/relative path
-// "/usr/bin/dd" -> "dd", "./rm" -> "rm", "ls" -> "ls"
 fn get_command_basename(cmd) {
     if (cmd == 0) { return cmd; }
     var len = str_len(cmd);
     if (len == 0) { return cmd; }
-
-    // Find last '/'
     var last_slash = 0 - 1;
     for (var i = 0; i < len; i = i + 1) {
-        if (str_byte_at(cmd, i) == 47) { // '/'
+        if (str_byte_at(cmd, i) == 47) {
             last_slash = i;
         }
     }
-
     if (last_slash >= 0) {
         if (last_slash + 1 >= len) { return ""; }
         return str_sub(cmd, last_slash + 1, len);
     }
     return cmd;
 }
-
-// --- Username validation ---
-
-// Validate username contains only safe characters: [a-zA-Z0-9_-]
 fn is_safe_username(name) {
     if (name == 0) { return 0; }
     var len = str_len(name);
     if (len == 0) { return 0; }
     if (len > 256) { return 0; }
-
     for (var i = 0; i < len; i = i + 1) {
         var ch = str_byte_at(name, i);
-        if (ch >= 97 && ch <= 122) { continue; } // a-z
-        if (ch >= 65 && ch <= 90) { continue; }  // A-Z
-        if (ch >= 48 && ch <= 57) { continue; }  // 0-9
-        if (ch == 95) { continue; }               // _
-        if (ch == 45) { continue; }               // -
-        return 0; // invalid character
+        if (ch >= 97 && ch <= 122) { continue; }
+        if (ch >= 65 && ch <= 90) { continue; }
+        if (ch >= 48 && ch <= 57) { continue; }
+        if (ch == 95) { continue; }
+        if (ch == 45) { continue; }
+        return 0;
     }
     return 1;
 }
-
-// --- Terminal escape stripping ---
-
-// Strip control characters from string for safe terminal display
-// Removes anything < 0x20 (except space) and 0x7F (DEL)
 fn strip_control_chars(s) {
     if (s == 0) { return s; }
     var len = str_len(s);
     var builder = str_builder_new();
     for (var i = 0; i < len; i = i + 1) {
         var ch = str_byte_at(s, i);
-        if (ch == 9) { str_builder_append(builder, " "); }     // tab -> space
-        elif (ch == 10) { str_builder_append(builder, " "); }  // newline -> space
-        elif (ch < 32) { /* skip control chars */ }
-        elif (ch == 127) { /* skip DEL */ }
-        else { str_builder_append_byte(builder, ch); }
+        if (ch == 9) { str_builder_add(builder, " "); }
+        elif (ch == 10) { str_builder_add(builder, " "); }
+        elif (ch < 32) { }
+        elif (ch == 127) { }
+        else { str_builder_add_byte(builder, ch); }
     }
-    return str_builder_finish(builder);
+    return str_builder_build(builder);
 }
-
-// Print a string with control characters stripped (safe for terminal)
 fn print_str_safe(s) {
     var safe = strip_control_chars(s);
-    print_str(safe);
+    str_print(safe);
 }
-
-// --- JSON string escaping ---
-
-// Escape a string for safe embedding in JSON
 fn json_escape(s) {
     if (s == 0) { return "\"\""; }
     var len = str_len(s);
     var builder = str_builder_new();
     for (var i = 0; i < len; i = i + 1) {
         var ch = str_byte_at(s, i);
-        if (ch == 34) { str_builder_append(builder, "\\\""); }     // "
-        elif (ch == 92) { str_builder_append(builder, "\\\\"); }   // backslash
-        elif (ch == 10) { str_builder_append(builder, "\\n"); }    // newline
-        elif (ch == 13) { str_builder_append(builder, "\\r"); }    // CR
-        elif (ch == 9) { str_builder_append(builder, "\\t"); }     // tab
-        elif (ch == 8) { str_builder_append(builder, "\\b"); }     // backspace
-        elif (ch == 12) { str_builder_append(builder, "\\f"); }    // form feed
-        elif (ch < 32) { /* skip other control chars */ }
-        else { str_builder_append_byte(builder, ch); }
+        if (ch == 34) { str_builder_add(builder, "\\\""); }
+        elif (ch == 92) { str_builder_add(builder, "\\\\"); }
+        elif (ch == 10) { str_builder_add(builder, "\\n"); }
+        elif (ch == 13) { str_builder_add(builder, "\\r"); }
+        elif (ch == 9) { str_builder_add(builder, "\\t"); }
+        elif (ch == 8) { str_builder_add(builder, "\\b"); }
+        elif (ch == 12) { str_builder_add(builder, "\\f"); }
+        elif (ch < 32) { }
+        else { str_builder_add_byte(builder, ch); }
     }
-    return str_builder_finish(builder);
+    return str_builder_build(builder);
 }
-
-// --- Clean environment for child processes ---
-
-// Build a safe environment string array for execve
-// Only whitelisted variables are included
 fn build_safe_env() {
     var env = vec_new();
     vec_push(env, "PATH=/usr/bin:/bin:/usr/sbin:/sbin");
-
     var home = getenv("HOME");
     if (home != 0) {
         vec_push(env, str_cat("HOME=", home));
     }
-
     var lang = getenv("LANG");
     if (lang != 0) {
         vec_push(env, str_cat("LANG=", lang));
     }
-
     var term = getenv("TERM");
     if (term != 0) {
         vec_push(env, str_cat("TERM=", term));
     }
-
-    // Explicitly exclude: LD_PRELOAD, LD_LIBRARY_PATH, SUDO_*, IFS, PS1
     return env;
 }
-
-// --- PID validation ---
-
 fn is_valid_pid(pid) {
     if (pid <= 0) { return 0; }
-    if (pid > 4194304) { return 0; } // Linux max PID
+    if (pid > 4194304) { return 0; }
     return 1;
 }
-
-// --- Git branch name validation ---
-
 fn is_safe_branch_name(name) {
     if (name == 0) { return 0; }
     var len = str_len(name);
     if (len == 0) { return 0; }
     if (len > 256) { return 0; }
-
     for (var i = 0; i < len; i = i + 1) {
         var ch = str_byte_at(name, i);
-        if (ch >= 97 && ch <= 122) { continue; } // a-z
-        if (ch >= 65 && ch <= 90) { continue; }  // A-Z
-        if (ch >= 48 && ch <= 57) { continue; }  // 0-9
-        if (ch == 45) { continue; }               // -
-        if (ch == 95) { continue; }               // _
-        if (ch == 47) { continue; }               // /
-        if (ch == 46) { continue; }               // .
-        return 0; // unsafe character
+        if (ch >= 97 && ch <= 122) { continue; }
+        if (ch >= 65 && ch <= 90) { continue; }
+        if (ch >= 48 && ch <= 57) { continue; }
+        if (ch == 45) { continue; }
+        if (ch == 95) { continue; }
+        if (ch == 47) { continue; }
+        if (ch == 46) { continue; }
+        return 0;
     }
     return 1;
 }
-
-// --- Commit message validation ---
-
 fn is_safe_commit_message(msg) {
     if (msg == 0) { return 0; }
     var len = str_len(msg);
     if (len == 0) { return 0; }
-    // Must not start with '-' (git flag injection)
     if (str_byte_at(msg, 0) == 45) { return 0; }
     return 1;
 }
