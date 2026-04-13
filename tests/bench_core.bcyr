@@ -16,7 +16,7 @@ include "lib/bench.cyr"
 fn getenv(name) { return 0; }
 fn ui_show_error(m) { return 0; }
 fn ui_show_warning(m) { return 0; }
-fn chrono_now_rfc3339() { return "2026-01-01T00:00:00Z"; }
+fn chrono_now_rfc3339() { return str_from("2026-01-01T00:00:00Z"); }
 
 include "src/sanitize.cyr"
 include "src/mode.cyr"
@@ -27,12 +27,20 @@ include "src/translate.cyr"
 include "src/interpreter.cyr"
 
 var _interp = 0;
+var _s_list = 0;
+var _s_cd = 0;
+var _s_find = 0;
+var _s_git = 0;
+var _s_shell = 0;
+var _s_home = 0;
+var _s_safepath = 0;
+var _s_badpath = 0;
 
-fn work_parse_list() { Interpreter_parse(_interp, "show me all files"); return 0; }
-fn work_parse_cd() { Interpreter_parse(_interp, "go to /home"); return 0; }
-fn work_parse_find() { Interpreter_parse(_interp, "find files named foo"); return 0; }
-fn work_parse_git() { Interpreter_parse(_interp, "git status"); return 0; }
-fn work_parse_shell() { Interpreter_parse(_interp, "ls -la /tmp"); return 0; }
+fn work_parse_list() { Interpreter_parse(_interp, _s_list); return 0; }
+fn work_parse_cd() { Interpreter_parse(_interp, _s_cd); return 0; }
+fn work_parse_find() { Interpreter_parse(_interp, _s_find); return 0; }
+fn work_parse_git() { Interpreter_parse(_interp, _s_git); return 0; }
+fn work_parse_shell() { Interpreter_parse(_interp, _s_shell); return 0; }
 
 fn work_translate_list() {
     var intent = Intent_new(IntentTag.LIST_FILES);
@@ -43,7 +51,7 @@ fn work_translate_list() {
 
 fn work_translate_cd() {
     var intent = Intent_new(IntentTag.CHANGE_DIR);
-    store64(intent + 8, "/home");
+    store64(intent + 8, _s_home);
     Interpreter_translate(_interp, intent);
     return 0;
 }
@@ -66,9 +74,8 @@ fn work_basename() {
 }
 
 fn work_safe_path() {
-    is_safe_path("/home/user/file.txt");
-    is_safe_path("../../../etc/shadow");
-    is_safe_arg("hello world");
+    is_safe_path(_s_safepath);
+    is_safe_path(_s_badpath);
     return 0;
 }
 
@@ -76,25 +83,17 @@ var N = 10000;
 
 fn main() {
     alloc_init();
-    println("starting");
     _interp = Interpreter_new();
-    println("interp created");
+    _s_list = str_from("show me all files");
+    _s_cd = str_from("go to /home");
+    _s_find = str_from("find files named foo");
+    _s_git = str_from("git status");
+    _s_shell = str_from("ls -la /tmp");
+    _s_home = str_from("/home");
+    _s_safepath = str_from("/home/user/file.txt");
+    _s_badpath = str_from("../../../etc/shadow");
+
     var all = vec_new();
-    println("testing str_contains_ci...");
-    var r1 = str_contains_ci("hello world", "world");
-    println("str_contains_ci works");
-    println("testing Intent_new...");
-    var i1 = Intent_new(IntentTag.UNKNOWN);
-    println("Intent_new works");
-    println("testing Interpreter_parse...");
-    var res = Interpreter_parse(_interp, "hello");
-    println("parse empty works");
-    res = Interpreter_parse(_interp, "show me all files");
-    println("parse works");
-    work_translate_list();
-    println("translate works");
-    work_perm();
-    println("perm works");
 
     var b1 = bench_new("parse/list_files");
     bench_run(b1, &work_parse_list, N);

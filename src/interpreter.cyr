@@ -8,7 +8,7 @@ fn input_has_word(input, word) {
     return str_contains_ci(input, word);
 }
 fn extract_last_arg(input) {
-    var len = strlen(input);
+    var len = str_len(input);
     var pos = len - 1;
     while (pos >= 0) {
         if (str_byte_at(input, pos) != 32) { break; }
@@ -24,8 +24,8 @@ fn extract_last_arg(input) {
 fn extract_after(input, keyword) {
     var idx = str_find_ci(input, keyword);
     if (idx < 0) { return 0; }
-    var start = idx + strlen(keyword);
-    var len = strlen(input);
+    var start = idx + str_len(keyword);
+    var len = str_len(input);
     while (start < len) {
         if (str_byte_at(input, start) != 32) { break; }
         start = start + 1;
@@ -36,8 +36,8 @@ fn extract_after(input, keyword) {
 fn extract_between(input, before_kw, after_kw) {
     var start_idx = str_find_ci(input, before_kw);
     if (start_idx < 0) { return 0; }
-    var start = start_idx + strlen(before_kw);
-    var len = strlen(input);
+    var start = start_idx + str_len(before_kw);
+    var len = str_len(input);
     while (start < len) {
         if (str_byte_at(input, start) != 32) { break; }
         start = start + 1;
@@ -285,7 +285,7 @@ fn parse_admin_ops(trimmed) {
 }
 fn Interpreter_parse(self, input) {
     var trimmed = str_trim(input);
-    var len = strlen(trimmed);
+    var len = str_len(trimmed);
     if (len == 0) { return Intent_new(IntentTag.UNKNOWN); }
     if (str_contains(trimmed, " | ") == 1 || str_contains_ci(trimmed, " then ") == 1) {
         var intent = Intent_new(IntentTag.PIPELINE);

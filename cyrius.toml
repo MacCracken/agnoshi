@@ -4,7 +4,7 @@ version = "0.90.0"
 description = "AI-native natural language shell for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "4.2.5"
+cyrius = "4.3.0"
 
 [build]
 entry = "src/main.cyr"

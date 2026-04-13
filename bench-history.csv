@@ -1,0 +1,11 @@
+timestamp,commit,branch,benchmark,estimate_ns
+2026-04-13T16:30:00Z,cyrius,main,parse/list_files,1000
+2026-04-13T16:30:00Z,cyrius,main,parse/cd,1000
+2026-04-13T16:30:00Z,cyrius,main,parse/find_files,1000
+2026-04-13T16:30:00Z,cyrius,main,parse/git_status,1000
+2026-04-13T16:30:00Z,cyrius,main,parse/shell_cmd,1000
+2026-04-13T16:30:00Z,cyrius,main,translate/list_files,680
+2026-04-13T16:30:00Z,cyrius,main,translate/cd,610
+2026-04-13T16:30:00Z,cyrius,main,perm/classify_5,4000
+2026-04-13T16:30:00Z,cyrius,main,sanitize/basename,553
+2026-04-13T16:30:00Z,cyrius,main,sanitize/safe_path,977

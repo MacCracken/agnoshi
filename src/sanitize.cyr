@@ -1,6 +1,6 @@
 var _sanitize_loaded = 1;
 fn str_byte_at(s, i) {
-    return load8(s + i);
+    return load8(str_data(s) + i);
 }
 fn eprint_str(s) {
     syscall(SYS_WRITE, 2, str_data(s), str_len(s));
@@ -10,15 +10,15 @@ fn eprint_line(s) {
     syscall(SYS_WRITE, 2, "\n", 1);
 }
 fn str_contains_ci(haystack, needle) {
-    var hlen = strlen(haystack);
-    var nlen = strlen(needle);
+    var hlen = str_len(haystack);
+    var nlen = str_len(needle);
     if (nlen == 0) { return 1; }
     if (nlen > hlen) { return 0; }
     for (var i = 0; i <= hlen - nlen; i = i + 1) {
         var found = 1;
         for (var j = 0; j < nlen; j = j + 1) {
-            var hc = load8(haystack + i + j);
-            var nc = load8(needle + j);
+            var hc = load8(str_data(haystack) + i + j);
+            var nc = load8(str_data(needle) + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
             if (hc != nc) { found = 0; }
@@ -28,15 +28,15 @@ fn str_contains_ci(haystack, needle) {
     return 0;
 }
 fn str_find_ci(haystack, needle) {
-    var hlen = strlen(haystack);
-    var nlen = strlen(needle);
+    var hlen = str_len(haystack);
+    var nlen = str_len(needle);
     if (nlen == 0) { return 0; }
     if (nlen > hlen) { return 0 - 1; }
     for (var i = 0; i <= hlen - nlen; i = i + 1) {
         var found = 1;
         for (var j = 0; j < nlen; j = j + 1) {
-            var hc = load8(haystack + i + j);
-            var nc = load8(needle + j);
+            var hc = load8(str_data(haystack) + i + j);
+            var nc = load8(str_data(needle) + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
             if (hc != nc) { found = 0; }
@@ -46,15 +46,15 @@ fn str_find_ci(haystack, needle) {
     return 0 - 1;
 }
 fn str_find_ci_from(haystack, needle, from) {
-    var hlen = strlen(haystack);
-    var nlen = strlen(needle);
+    var hlen = str_len(haystack);
+    var nlen = str_len(needle);
     if (nlen == 0) { return from; }
     if (from + nlen > hlen) { return 0 - 1; }
     for (var i = from; i <= hlen - nlen; i = i + 1) {
         var found = 1;
         for (var j = 0; j < nlen; j = j + 1) {
-            var hc = load8(haystack + i + j);
-            var nc = load8(needle + j);
+            var hc = load8(str_data(haystack) + i + j);
+            var nc = load8(str_data(needle) + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
             if (hc != nc) { found = 0; }
@@ -115,17 +115,16 @@ fn is_safe_path(path) {
 }
 fn get_command_basename(cmd) {
     if (cmd == 0) { return cmd; }
-    var len = str_len(cmd);
+    var len = strlen(cmd);
     if (len == 0) { return cmd; }
     var last_slash = 0 - 1;
     for (var i = 0; i < len; i = i + 1) {
-        if (str_byte_at(cmd, i) == 47) {
+        if (load8(cmd + i) == 47) {
             last_slash = i;
         }
     }
     if (last_slash >= 0) {
-        if (last_slash + 1 >= len) { return ""; }
-        return str_sub(cmd, last_slash + 1, len);
+        return cmd + last_slash + 1;
     }
     return cmd;
 }

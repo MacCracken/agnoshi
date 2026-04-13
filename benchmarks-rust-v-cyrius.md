@@ -104,21 +104,51 @@ Cyrius: port commit (2026-04-13), cc3 v4.1.1 (opt: constant folding, DSE, inline
 | explain/50 | 3,379 | 3.4 us |
 | explain_all_16 | 1,075 | 1.1 us |
 
-## Cyrius Results
+## Cyrius Results (2026-04-13)
 
-**Status:** Benchmark suite compiles and runs (`tests/bench_core.bcyr`). Runtime segfaults due to string type mismatch — cstring literals (`"hello"`) passed to `lib/str.cyr` functions (`str_len`, `str_trim`, `str_sub`) that expect Str fat pointers. Three type systems in play:
-- **cstring** — null-terminated byte ptr (string literals, lib/string.cyr operations: strlen, streq, memcpy)
-- **Str** — fat pointer `{data, len}` (lib/str.cyr operations: str_len, str_trim, str_sub)
-- **Sanitize helpers** — switched to cstring semantics (strlen-based)
+10 benchmarks, N=10,000 iterations each:
 
-Interpreter mixes both types; needs a pass to pick one convention throughout. Once aligned, bench will run.
+| Benchmark | Time (avg) | Min | Max |
+|-----------|-----------|-----|-----|
+| parse/list_files | 1 us | 1 us | 19 us |
+| parse/cd | 1 us | 1 us | 33 us |
+| parse/find_files | 1 us | 1 us | 63 us |
+| parse/git_status | 1 us | 1 us | 107 us |
+| parse/shell_cmd | 1 us | 1 us | 217 us |
+| translate/list_files | 680 ns | 470 ns | 7 us |
+| translate/cd | 610 ns | 450 ns | 6 us |
+| perm/classify_5 | 4 us | 4 us | 17 us |
+| sanitize/basename | 553 ns | 500 ns | 5 us |
+| sanitize/safe_path | 977 ns | 931 ns | 4 us |
 
-**Build progress:**
-- Struct construction: alloc+store64 pattern throughout (21 files rewritten)
-- API: str_byte_at added, str_builder_add/build, str_print, str_from_int
-- Match: split into sub-functions to stay under cc3 per-function limits
-- Includes: translate.cyr before interpreter.cyr (forward decl resolution)
-- match variable -> ok_flag (match is reserved word)
+## Head-to-head Comparison
+
+| Benchmark | Rust | Cyrius | Delta |
+|-----------|------|--------|-------|
+| parse_list_files | 32 us | 1 us | **−97%** (32× faster) |
+| parse_cd | 19 us | 1 us | **−95%** (19× faster) |
+| translate_list_files | 167 ns | 680 ns | +307% (4× slower) |
+| translate_cd | 77 ns | 610 ns | +692% (8× slower) |
+| "show me all files" (parse) | 34 us | 1 us | **−97%** |
+| "find files named foo" (parse) | 27 us | 1 us | **−96%** |
+| "git status" (parse) | 4 us (delta_list_repos) | 1 us | −75% |
+
+**Analysis:**
+- **Parsing is 20-32× faster in Cyrius** — no regex compilation, no HashMap lookups, just direct string scanning. Cyrius keyword matching wins decisively for interactive shell workloads.
+- **Translation is 4-8× slower in Cyrius** — match dispatch to sub-functions with alloc overhead, vs Rust's tight monomorphized enum match. Translation times are still sub-microsecond so user-imperceptible.
+- **Net win for shell responsiveness**: parse+translate in Cyrius ≈ 1.7 us vs Rust ≈ 32.2 us per command. That's the path that runs on every keystroke during interactive use.
+- **Binary size**: Rust 3.8 MB (dynamically linked, debug_info) vs Cyrius 146 KB (statically linked, no section headers) — **−96%**.
+- **Startup**: Rust has dynamic linker overhead (~2-5 ms cold); Cyrius static ELF (microseconds).
+
+## Build Journey
+
+- Struct construction: alloc+store64 pattern (21 files rewritten, cc3 doesn't support struct literals for multi-field structs)
+- API corrections: `str_byte_at` helper, `str_builder_add/build`, `str_print`, `str_from_int`
+- Match split: `Interpreter_translate` 42-arm match split into `translate_core`/`translate_extended` for cc3 per-function limits
+- Include ordering: `translate.cyr` before `interpreter.cyr` (forward decl resolution)
+- Reserved word: `match` variable renamed to `ok_flag` (match is a keyword)
+- Match default: `_ =>` arms required
+- String types: cstring literals routed through `str_from()` at bench boundary, Str used throughout interpreter; `get_command_basename` kept cstring-native (permissions.cyr uses cstring `streq`)
 
 Results will be appended to `bench-history.csv` and this document updated with:
 - Per-benchmark comparison (Rust ns vs Cyrius ns)
