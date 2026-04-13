@@ -1,0 +1,167 @@
+// completion.cyr — Tab completion engine
+//
+// Provides prefix-based completion for builtins, intent keywords,
+// network tools, agents, and services.
+
+struct CompletionEngine {
+    builtins;       // vec of Str
+    keywords;       // vec of Str
+    network_tools;  // vec of Str
+    agents;         // vec of Str
+    services;       // vec of Str
+}
+
+fn CompletionEngine_new() {
+    // Builtins
+    var builtins = vec_new();
+    vec_push(builtins, "help");
+    vec_push(builtins, "clear");
+    vec_push(builtins, "exit");
+    vec_push(builtins, "quit");
+    vec_push(builtins, "history");
+    vec_push(builtins, "mode");
+    vec_push(builtins, "undo");
+
+    // Intent keywords
+    var keywords = vec_new();
+    vec_push(keywords, "show");
+    vec_push(keywords, "list");
+    vec_push(keywords, "find");
+    vec_push(keywords, "search");
+    vec_push(keywords, "install");
+    vec_push(keywords, "remove");
+    vec_push(keywords, "start");
+    vec_push(keywords, "stop");
+    vec_push(keywords, "restart");
+    vec_push(keywords, "status");
+    vec_push(keywords, "create");
+    vec_push(keywords, "delete");
+    vec_push(keywords, "update");
+    vec_push(keywords, "deploy");
+    vec_push(keywords, "scan");
+    vec_push(keywords, "monitor");
+    vec_push(keywords, "audit");
+    vec_push(keywords, "agent");
+    vec_push(keywords, "service");
+    vec_push(keywords, "network");
+    vec_push(keywords, "disk");
+
+    // Network tools
+    var network_tools = vec_new();
+    vec_push(network_tools, "ping");
+    vec_push(network_tools, "traceroute");
+    vec_push(network_tools, "nmap");
+    vec_push(network_tools, "dig");
+    vec_push(network_tools, "nslookup");
+    vec_push(network_tools, "curl");
+    vec_push(network_tools, "wget");
+    vec_push(network_tools, "netstat");
+    vec_push(network_tools, "ss");
+    vec_push(network_tools, "ifconfig");
+    vec_push(network_tools, "ip");
+    vec_push(network_tools, "tcpdump");
+    vec_push(network_tools, "wireshark");
+
+    return CompletionEngine { builtins, keywords, network_tools, vec_new(), vec_new() };
+}
+
+// Register a dynamic agent name
+fn CompletionEngine_register_agent(self, name) {
+    vec_push(self.agents, name);
+}
+
+// Register a service name
+fn CompletionEngine_register_service(self, name) {
+    vec_push(self.services, name);
+}
+
+// Find all completions matching a prefix
+// Returns vec of matching strings, max 20
+fn CompletionEngine_complete(self, partial) {
+    var results = vec_new();
+    var partial_len = str_len(partial);
+    if (partial_len == 0) { return results; }
+
+    // Search all sources
+    completion_search_vec(self.builtins, partial, partial_len, results);
+    completion_search_vec(self.keywords, partial, partial_len, results);
+    completion_search_vec(self.network_tools, partial, partial_len, results);
+    completion_search_vec(self.agents, partial, partial_len, results);
+    completion_search_vec(self.services, partial, partial_len, results);
+
+    // Cap at 20 results
+    if (vec_len(results) > 20) {
+        var trimmed = vec_new();
+        for (var i = 0; i < 20; i = i + 1) {
+            vec_push(trimmed, vec_get(results, i));
+        }
+        return trimmed;
+    }
+
+    return results;
+}
+
+// Helper: search a vec for prefix matches
+fn completion_search_vec(source, prefix, prefix_len, results) {
+    var n = vec_len(source);
+    for (var i = 0; i < n; i = i + 1) {
+        var item = vec_get(source, i);
+        if (str_starts_with(item, prefix) == 1) {
+            // Check for duplicates
+            var dup = 0;
+            var nr = vec_len(results);
+            for (var j = 0; j < nr; j = j + 1) {
+                if (streq(vec_get(results, j), item) == 1) {
+                    dup = 1;
+                    break;
+                }
+            }
+            if (dup == 0) {
+                vec_push(results, item);
+            }
+        }
+    }
+}
+
+// Context-aware completion based on preceding words
+fn CompletionEngine_complete_contextual(self, words, nwords) {
+    if (nwords < 2) {
+        // Complete the first word normally
+        if (nwords == 1) {
+            return CompletionEngine_complete(self, vec_get(words, 0));
+        }
+        return vec_new();
+    }
+
+    var prev = vec_get(words, nwords - 2);
+    var partial = vec_get(words, nwords - 1);
+
+    // After start/stop/restart: suggest services
+    if (streq(prev, "start") == 1 || streq(prev, "stop") == 1 || streq(prev, "restart") == 1) {
+        var results = vec_new();
+        completion_search_vec(self.services, partial, str_len(partial), results);
+        return results;
+    }
+
+    // After agent/show: suggest agents
+    if (streq(prev, "agent") == 1 || streq(prev, "show") == 1) {
+        var results = vec_new();
+        completion_search_vec(self.agents, partial, str_len(partial), results);
+        return results;
+    }
+
+    // After mode: suggest mode names
+    if (streq(prev, "mode") == 1) {
+        var results = vec_new();
+        var modes = vec_new();
+        vec_push(modes, "human");
+        vec_push(modes, "assist");
+        vec_push(modes, "auto");
+        vec_push(modes, "strict");
+        completion_search_vec(modes, partial, str_len(partial), results);
+        return results;
+    }
+
+    // Default: complete normally
+    return CompletionEngine_complete(self, partial);
+}

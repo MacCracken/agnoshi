@@ -1,0 +1,119 @@
+// history.cyr — Command history management
+//
+// Stores command history in a ring buffer backed by a file.
+// File permissions restricted to owner-only (0600).
+
+include "lib/io.cyr"
+include "lib/fs.cyr"
+
+// CommandHistory: ring buffer of command strings
+struct CommandHistory {
+    entries;    // vec of Str
+    count;      // current entry count
+    max_size;   // maximum entries
+    file_path;  // Str: path to history file
+}
+
+fn CommandHistory_new(file_path, max_size) {
+    var entries = vec_new();
+
+    // Load existing history if file exists
+    if (fs_exists(file_path) == 1) {
+        var content = file_read_all(file_path);
+        if (content != 0) {
+            // Split by newlines and add each line
+            var lines = str_split(content, "\n");
+            var nlines = vec_len(lines);
+            for (var i = 0; i < nlines; i = i + 1) {
+                var line = vec_get(lines, i);
+                if (str_len(line) > 0) {
+                    vec_push(entries, line);
+                }
+            }
+        }
+    }
+
+    return CommandHistory { entries, vec_len(entries), max_size, file_path };
+}
+
+// Add a command to history (dedup last entry)
+fn CommandHistory_add(self, command) {
+    // Skip if same as last entry
+    if (self.count > 0) {
+        var last = vec_get(self.entries, self.count - 1);
+        if (streq(last, command) == 1) {
+            return 0;
+        }
+    }
+
+    vec_push(self.entries, command);
+    self.count = self.count + 1;
+
+    // Trim if too large — remove from front
+    while (self.count > self.max_size) {
+        // Shift entries left (expensive but simple)
+        var new_entries = vec_new();
+        for (var i = 1; i < self.count; i = i + 1) {
+            vec_push(new_entries, vec_get(self.entries, i));
+        }
+        self.entries = new_entries;
+        self.count = self.count - 1;
+    }
+
+    return 0;
+}
+
+// Get the N most recent entries (returns vec)
+fn CommandHistory_get_recent(self, n) {
+    var result = vec_new();
+    var start = self.count - n;
+    if (start < 0) { start = 0; }
+    for (var i = start; i < self.count; i = i + 1) {
+        vec_push(result, vec_get(self.entries, i));
+    }
+    return result;
+}
+
+// Search history for entries containing query
+fn CommandHistory_search(self, query) {
+    var result = vec_new();
+    for (var i = 0; i < self.count; i = i + 1) {
+        var entry = vec_get(self.entries, i);
+        if (str_contains(entry, query) == 1) {
+            vec_push(result, entry);
+        }
+    }
+    return result;
+}
+
+// Save history to file (owner-only permissions: 0600)
+fn CommandHistory_save(self) {
+    // Build content string
+    var builder = str_builder_new();
+    for (var i = 0; i < self.count; i = i + 1) {
+        str_builder_append(builder, vec_get(self.entries, i));
+        str_builder_append(builder, "\n");
+    }
+    var content = str_builder_finish(builder);
+
+    // Ensure parent directory exists
+    var parent = fs_parent(self.file_path);
+    if (fs_exists(parent) == 0) {
+        fs_mkdir_p(parent);
+        // Set directory to 0700
+        syscall(SYS_CHMOD, parent, 448); // 0700 octal = 448 decimal
+    }
+
+    // Write file
+    file_write_all(self.file_path, content);
+
+    // Set file permissions to 0600
+    syscall(SYS_CHMOD, self.file_path, 384); // 0600 octal = 384 decimal
+
+    return 0;
+}
+
+// Get entry count
+fn CommandHistory_len(self) {
+    return self.count;
+}

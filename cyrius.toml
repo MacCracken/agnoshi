@@ -1,6 +1,12 @@
+[package]
 name = "agnoshi"
 version = "0.1.0"
 license = "GPL-3.0-only"
-entry = "src/main.cyr"
-output = "agnoshi"
-description = "agnoshi — Cyrius port"
+description = "AI-native natural language shell for AGNOS"
+
+[build]
+src = "src/main.cyr"
+output = "build/agnoshi"
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "fs", "json", "chrono", "hashmap", "args", "process"]

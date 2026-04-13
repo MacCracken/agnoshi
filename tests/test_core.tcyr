@@ -1,0 +1,279 @@
+// test_core.tcyr — Core module unit tests
+//
+// Tests for mode, permissions, config, aliases, history,
+// intent parsing, and translation.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/json.cyr"
+include "lib/chrono.cyr"
+include "lib/hashmap.cyr"
+include "lib/assert.cyr"
+
+// Pull in modules under test
+include "src/mode.cyr"
+include "src/permissions.cyr"
+include "src/config.cyr"
+include "src/aliases.cyr"
+include "src/commands.cyr"
+include "src/intent.cyr"
+include "src/output.cyr"
+
+// Stubs for helpers used by interpreter but not needed here
+fn getenv(name) { return 0; }
+fn str_contains_ci(h, n) { return 0; }
+fn str_find_ci(h, n) { return 0 - 1; }
+fn str_find_ci_from(h, n, f) { return 0 - 1; }
+fn str_split_ci(i, s) { return vec_new(); }
+fn str_to_int(s) { return 0; }
+
+var pass_count = 0;
+var fail_count = 0;
+
+fn check(name, condition) {
+    if (condition == 1) {
+        pass_count = pass_count + 1;
+    } else {
+        fail_count = fail_count + 1;
+        print_str("FAIL: ");
+        println(name);
+    }
+}
+
+fn main() {
+    alloc_init();
+    println("=== agnoshi core tests ===");
+
+    // --- Mode tests ---
+    check("mode_display AI_AUTO", streq(mode_display(Mode.AI_AUTONOMOUS), "AI-AUTO"));
+    check("mode_display AI_ASSIST", streq(mode_display(Mode.AI_ASSISTED), "AI-ASSIST"));
+    check("mode_display HUMAN", streq(mode_display(Mode.HUMAN), "HUMAN"));
+    check("mode_display STRICT", streq(mode_display(Mode.STRICT), "STRICT"));
+
+    check("mode_ai_autonomous true", mode_ai_autonomous(Mode.AI_AUTONOMOUS) == 1);
+    check("mode_ai_autonomous false", mode_ai_autonomous(Mode.HUMAN) == 0);
+    check("mode_ai_autonomous assist", mode_ai_autonomous(Mode.AI_ASSISTED) == 0);
+
+    check("mode_ai_available auto", mode_ai_available(Mode.AI_AUTONOMOUS) == 1);
+    check("mode_ai_available assist", mode_ai_available(Mode.AI_ASSISTED) == 1);
+    check("mode_ai_available human", mode_ai_available(Mode.HUMAN) == 0);
+    check("mode_ai_available strict", mode_ai_available(Mode.STRICT) == 1);
+
+    check("mode_strict_approval strict", mode_strict_approval(Mode.STRICT) == 1);
+    check("mode_strict_approval human", mode_strict_approval(Mode.HUMAN) == 0);
+
+    // ModeManager tests
+    var mgr = ModeManager_new(Mode.HUMAN, 1);
+    check("mgr initial", ModeManager_current(&mgr) == Mode.HUMAN);
+
+    var r = ModeManager_switch(&mgr, Mode.AI_ASSISTED);
+    check("mgr switch ok", r == 0);
+    check("mgr switched", ModeManager_current(&mgr) == Mode.AI_ASSISTED);
+
+    r = ModeManager_revert(&mgr);
+    check("mgr revert ok", r == 0);
+    check("mgr reverted", ModeManager_current(&mgr) == Mode.HUMAN);
+
+    r = ModeManager_revert(&mgr);
+    check("mgr revert no prev", r == (0 - 1));
+
+    r = ModeManager_toggle(&mgr);
+    check("mgr toggle human->assist", ModeManager_current(&mgr) == Mode.AI_ASSISTED);
+
+    r = ModeManager_toggle(&mgr);
+    check("mgr toggle assist->human", ModeManager_current(&mgr) == Mode.HUMAN);
+
+    // Disabled switching
+    var mgr2 = ModeManager_new(Mode.HUMAN, 0);
+    r = ModeManager_switch(&mgr2, Mode.AI_ASSISTED);
+    check("mgr disabled switch", r == (0 - 1));
+    check("mgr disabled unchanged", ModeManager_current(&mgr2) == Mode.HUMAN);
+
+    r = ModeManager_switch(&mgr2, Mode.HUMAN);
+    check("mgr disabled same ok", r == 0);
+
+    r = ModeManager_toggle(&mgr2);
+    check("mgr disabled toggle", r == (0 - 1));
+
+    // --- Permission tests ---
+    check("perm_requires_approval safe", perm_requires_approval(PermissionLevel.SAFE) == 0);
+    check("perm_requires_approval read", perm_requires_approval(PermissionLevel.READ_ONLY) == 0);
+    check("perm_requires_approval write", perm_requires_approval(PermissionLevel.USER_WRITE) == 0);
+    check("perm_requires_approval sys", perm_requires_approval(PermissionLevel.SYSTEM_WRITE) == 1);
+    check("perm_requires_approval admin", perm_requires_approval(PermissionLevel.ADMIN) == 1);
+    check("perm_requires_approval blocked", perm_requires_approval(PermissionLevel.BLOCKED) == 1);
+
+    check("perm_ai_allowed safe", perm_ai_allowed(PermissionLevel.SAFE) == 1);
+    check("perm_ai_allowed blocked", perm_ai_allowed(PermissionLevel.BLOCKED) == 0);
+
+    check("check_perm root safe", check_permission("root", PermissionLevel.SAFE) == 1);
+    check("check_perm root admin", check_permission("root", PermissionLevel.ADMIN) == 1);
+    check("check_perm root blocked", check_permission("root", PermissionLevel.BLOCKED) == 1);
+    check("check_perm user safe", check_permission("user", PermissionLevel.SAFE) == 1);
+    check("check_perm user read", check_permission("user", PermissionLevel.READ_ONLY) == 1);
+    check("check_perm user write", check_permission("user", PermissionLevel.USER_WRITE) == 1);
+    check("check_perm user sys", check_permission("user", PermissionLevel.SYSTEM_WRITE) == 0);
+    check("check_perm user admin", check_permission("user", PermissionLevel.ADMIN) == 0);
+    check("check_perm user blocked", check_permission("user", PermissionLevel.BLOCKED) == 0);
+
+    // Command classification
+    var empty_args = vec_new();
+    check("classify ls", analyze_command_permission("ls", empty_args, 0) == PermissionLevel.READ_ONLY);
+    check("classify cat", analyze_command_permission("cat", empty_args, 0) == PermissionLevel.READ_ONLY);
+    check("classify cd", analyze_command_permission("cd", empty_args, 0) == PermissionLevel.SAFE);
+    check("classify cp", analyze_command_permission("cp", empty_args, 0) == PermissionLevel.USER_WRITE);
+    check("classify apt", analyze_command_permission("apt", empty_args, 0) == PermissionLevel.ADMIN);
+    check("classify kill", analyze_command_permission("kill", empty_args, 0) == PermissionLevel.ADMIN);
+    check("classify dd", analyze_command_permission("dd", empty_args, 0) == PermissionLevel.BLOCKED);
+    check("classify chmod", analyze_command_permission("chmod", empty_args, 0) == PermissionLevel.BLOCKED);
+
+    // rm with flags
+    var rf_args = vec_new();
+    vec_push(rf_args, "-rf");
+    check("classify rm -rf", analyze_command_permission("rm", rf_args, 1) == PermissionLevel.BLOCKED);
+
+    var safe_rm_args = vec_new();
+    vec_push(safe_rm_args, "file.txt");
+    check("classify rm file", analyze_command_permission("rm", safe_rm_args, 1) == PermissionLevel.ADMIN);
+
+    // Write commands targeting system paths
+    var sys_args = vec_new();
+    vec_push(sys_args, "/etc/config");
+    check("classify cp /etc", analyze_command_permission("cp", sys_args, 1) == PermissionLevel.SYSTEM_WRITE);
+
+    var user_args = vec_new();
+    vec_push(user_args, "/home/user/file");
+    check("classify cp home", analyze_command_permission("cp", user_args, 1) == PermissionLevel.USER_WRITE);
+
+    // --- Config tests ---
+    var config = ShellConfig_default();
+    check("config default mode", config.default_mode == Mode.AI_ASSISTED);
+    check("config default history", config.history_size == 10000);
+    check("config default ai", config.ai_enabled == 1);
+    check("config default auto_approve", config.auto_approve_low == 0);
+    check("config default timeout", config.approval_timeout == 300);
+    check("config default explain", config.show_explanations == 1);
+
+    // --- Alias tests ---
+    var alias = AliasManager_new();
+    check("alias empty count", AliasManager_count(&alias) == 0);
+    check("alias empty contains", AliasManager_contains(&alias, "ll") == 0);
+
+    AliasManager_set(&alias, "ll", "ls -la");
+    check("alias set count", AliasManager_count(&alias) == 1);
+    check("alias set contains", AliasManager_contains(&alias, "ll") == 1);
+
+    var expanded = AliasManager_expand(&alias, "ll");
+    check("alias expand simple", streq(expanded, "ls -la"));
+
+    expanded = AliasManager_expand(&alias, "ll /tmp");
+    check("alias expand args", streq(expanded, "ls -la /tmp"));
+
+    expanded = AliasManager_expand(&alias, "cat foo");
+    check("alias no match", streq(expanded, "cat foo"));
+
+    expanded = AliasManager_expand(&alias, "llama");
+    check("alias partial no match", streq(expanded, "llama"));
+
+    AliasManager_set(&alias, "ll", "ls -lah");
+    check("alias overwrite", AliasManager_count(&alias) == 1);
+    expanded = AliasManager_expand(&alias, "ll");
+    check("alias overwrite value", streq(expanded, "ls -lah"));
+
+    var removed = AliasManager_remove(&alias, "ll");
+    check("alias remove exists", removed == 1);
+    check("alias remove count", AliasManager_count(&alias) == 0);
+
+    removed = AliasManager_remove(&alias, "nope");
+    check("alias remove nonexist", removed == 0);
+
+    // --- Builtin tests ---
+    check("builtin cd", is_builtin("cd") == 1);
+    check("builtin exit", is_builtin("exit") == 1);
+    check("builtin help", is_builtin("help") == 1);
+    check("builtin clear", is_builtin("clear") == 1);
+    check("builtin history", is_builtin("history") == 1);
+    check("builtin mode", is_builtin("mode") == 1);
+    check("builtin undo", is_builtin("undo") == 1);
+    check("not builtin ls", is_builtin("ls") == 0);
+    check("not builtin git", is_builtin("git") == 0);
+
+    // --- Command parsing ---
+    var cmd_out[1];
+    var args_out = vec_new();
+    var argc = split_command_line("ls -la /tmp", &cmd_out, args_out);
+    check("split argc", argc == 2);
+    check("split cmd", streq(load64(&cmd_out), "ls"));
+    check("split arg0", streq(vec_get(args_out, 0), "-la"));
+    check("split arg1", streq(vec_get(args_out, 1), "/tmp"));
+
+    // Quoted strings
+    args_out = vec_new();
+    argc = split_command_line("echo \"hello world\"", &cmd_out, args_out);
+    check("split quoted argc", argc == 1);
+    check("split quoted arg", streq(vec_get(args_out, 0), "hello world"));
+
+    // --- Intent tests ---
+    var intent = Intent_new(IntentTag.LIST_FILES);
+    check("intent tag", intent.tag == IntentTag.LIST_FILES);
+    check("intent field1 null", intent.field1 == 0);
+
+    // ListOptions packing
+    var opts = list_options_pack(1, 1, 0, 0, 1);
+    check("opts all", list_options_all(opts) == 1);
+    check("opts long", list_options_long(opts) == 1);
+    check("opts human", list_options_human(opts) == 0);
+    check("opts time", list_options_time(opts) == 0);
+    check("opts recursive", list_options_recursive(opts) == 1);
+
+    // Translation
+    var targs = vec_new();
+    vec_push(targs, "-la");
+    var t = Translation_new("ls", targs, "List files", PermissionLevel.READ_ONLY, "ls shows files");
+    check("translation cmd", streq(t.command, "ls"));
+    check("translation perm", t.permission == PermissionLevel.READ_ONLY);
+    check("translation no mcp", t.mcp_tool == 0);
+
+    // --- Approval tests ---
+    check("risk from safe", risk_from_permission(PermissionLevel.SAFE) == RiskLevel.LOW);
+    check("risk from read", risk_from_permission(PermissionLevel.READ_ONLY) == RiskLevel.LOW);
+    check("risk from write", risk_from_permission(PermissionLevel.USER_WRITE) == RiskLevel.MEDIUM);
+    check("risk from admin", risk_from_permission(PermissionLevel.ADMIN) == RiskLevel.HIGH);
+    check("risk from blocked", risk_from_permission(PermissionLevel.BLOCKED) == RiskLevel.CRITICAL);
+
+    // --- Output format tests ---
+    var fmt = OutputFormatter_default();
+    check("output default auto", fmt.format == OutputFormat.AUTO);
+
+    var json_fmt = OutputFormatter_new(OutputFormat.JSON);
+    var json_out = OutputFormatter_format(&json_fmt, "hello");
+    check("output json wrap", str_contains(json_out, "output") == 1);
+    check("output json hello", str_contains(json_out, "hello") == 1);
+
+    // --- Summary ---
+    println("");
+    print_str("Passed: ");
+    print_num(pass_count);
+    print_str(" / ");
+    print_num(pass_count + fail_count);
+    println("");
+
+    if (fail_count > 0) {
+        print_str("FAILED: ");
+        print_num(fail_count);
+        println(" tests");
+        return 1;
+    }
+
+    println("All tests passed.");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

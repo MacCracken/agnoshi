@@ -1,0 +1,291 @@
+// intent.cyr — Parsed intent from natural language
+//
+// The Intent is a tagged union representing what the user wants to do.
+// In Cyrius, we use integer tags + payload structs.
+
+// Intent tag constants — every NL parse result is one of these
+enum IntentTag {
+    LIST_FILES = 0;
+    SHOW_FILE = 1;
+    FIND_FILES = 2;
+    SEARCH_CONTENT = 3;
+    CHANGE_DIR = 4;
+    CREATE_DIR = 5;
+    COPY = 6;
+    MOVE = 7;
+    REMOVE = 8;
+    SHOW_PROCESSES = 9;
+    KILL_PROCESS = 10;
+    SYSTEM_INFO = 11;
+    NETWORK_INFO = 12;
+    DISK_USAGE = 13;
+    INSTALL_PACKAGE = 14;
+    SHELL_COMMAND = 15;
+    AUDIT_VIEW = 16;
+    AGENT_INFO = 17;
+    SERVICE_CONTROL = 18;
+    NETWORK_SCAN = 19;
+    JOURNAL_VIEW = 20;
+    DEVICE_INFO = 21;
+    MOUNT_CONTROL = 22;
+    BOOT_CONFIG = 23;
+    SYSTEM_UPDATE = 24;
+    KNOWLEDGE_SEARCH = 25;
+    RAG_QUERY = 26;
+    ARK_INSTALL = 27;
+    ARK_REMOVE = 28;
+    ARK_SEARCH = 29;
+    ARK_INFO = 30;
+    ARK_UPDATE = 31;
+    ARK_UPGRADE = 32;
+    ARK_STATUS = 33;
+    MARKETPLACE_INSTALL = 34;
+    MARKETPLACE_UNINSTALL = 35;
+    MARKETPLACE_SEARCH = 36;
+    MARKETPLACE_LIST = 37;
+    MARKETPLACE_UPDATE = 38;
+    // Aequi (finance)
+    AEQUI_TAX = 39;
+    AEQUI_SCHEDULE_C = 40;
+    AEQUI_IMPORT = 41;
+    AEQUI_BALANCE = 42;
+    AEQUI_RECEIPTS = 43;
+    AEQUI_INVOICES = 44;
+    AEQUI_REPORTS = 45;
+    // Photis (tasks)
+    TASK_LIST = 46;
+    TASK_CREATE = 47;
+    TASK_UPDATE = 48;
+    RITUAL_CHECK = 49;
+    PRODUCTIVITY_STATS = 50;
+    PHOTIS_BOARDS = 51;
+    PHOTIS_NOTES = 52;
+    // Agnostic (QA)
+    AGNOSTIC_SUBMIT = 53;
+    AGNOSTIC_STATUS = 54;
+    AGNOSTIC_RESULTS = 55;
+    AGNOSTIC_PRESETS = 56;
+    AGNOSTIC_AGENT_STATUS = 57;
+    AGNOSTIC_RUN_CREW = 58;
+    AGNOSTIC_CREW_STATUS = 59;
+    AGNOSTIC_LIST_CREWS = 60;
+    AGNOSTIC_CANCEL_CREW = 61;
+    AGNOSTIC_LIST_DEFS = 62;
+    AGNOSTIC_CREATE_AGENT = 63;
+    AGNOSTIC_GPU_STATUS = 64;
+    AGNOSTIC_GPU_MEMORY = 65;
+    AGNOSTIC_DASHBOARD = 66;
+    AGNOSTIC_TRENDS = 67;
+    AGNOSTIC_COMPARE = 68;
+    // Delta (git hosting)
+    DELTA_CREATE_REPO = 69;
+    DELTA_LIST_REPOS = 70;
+    DELTA_PR = 71;
+    DELTA_PUSH = 72;
+    DELTA_CI_STATUS = 73;
+    DELTA_BRANCHES = 74;
+    DELTA_REVIEW = 75;
+    // Edge (fleet)
+    EDGE_LIST_NODES = 76;
+    EDGE_DEPLOY = 77;
+    EDGE_UPDATE = 78;
+    EDGE_HEALTH = 79;
+    EDGE_DECOMMISSION = 80;
+    EDGE_LOGS = 81;
+    EDGE_CONFIG = 82;
+    // Creative (Shruti, Tazama, Rasa, Mneme)
+    SHRUTI_SESSION = 83;
+    SHRUTI_TRACK = 84;
+    SHRUTI_MIXER = 85;
+    SHRUTI_TRANSPORT = 86;
+    SHRUTI_PLUGINS = 87;
+    SHRUTI_AI = 88;
+    SHRUTI_EXPORT = 89;
+    TAZAMA_PROJECT = 90;
+    TAZAMA_TIMELINE = 91;
+    TAZAMA_EFFECTS = 92;
+    TAZAMA_AI = 93;
+    TAZAMA_MEDIA = 94;
+    TAZAMA_SUBTITLES = 95;
+    TAZAMA_EXPORT = 96;
+    RASA_CANVAS = 97;
+    RASA_LAYERS = 98;
+    RASA_TOOLS = 99;
+    RASA_AI = 100;
+    RASA_BATCH = 101;
+    RASA_TEMPLATES = 102;
+    RASA_ADJUSTMENTS = 103;
+    RASA_EXPORT = 104;
+    MNEME_NOTEBOOK = 105;
+    MNEME_NOTES = 106;
+    MNEME_SEARCH = 107;
+    MNEME_AI = 108;
+    MNEME_IMPORT = 109;
+    MNEME_TAGS = 110;
+    MNEME_GRAPH = 111;
+    // Synapse (AI/ML)
+    SYNAPSE_MODELS = 112;
+    SYNAPSE_SERVE = 113;
+    SYNAPSE_FINETUNE = 114;
+    SYNAPSE_CHAT = 115;
+    SYNAPSE_STATUS = 116;
+    SYNAPSE_BENCHMARK = 117;
+    SYNAPSE_QUANTIZE = 118;
+    // BullShift (trading)
+    BULLSHIFT_PORTFOLIO = 119;
+    BULLSHIFT_ORDERS = 120;
+    BULLSHIFT_MARKET = 121;
+    BULLSHIFT_ALERTS = 122;
+    BULLSHIFT_STRATEGY = 123;
+    BULLSHIFT_ACCOUNTS = 124;
+    BULLSHIFT_HISTORY = 125;
+    // Yeoman (agent orchestration)
+    YEOMAN_AGENTS = 126;
+    YEOMAN_TASKS = 127;
+    YEOMAN_TOOLS = 128;
+    YEOMAN_INTEGRATIONS = 129;
+    YEOMAN_STATUS = 130;
+    YEOMAN_LOGS = 131;
+    YEOMAN_WORKFLOWS = 132;
+    YEOMAN_REGISTER_TOOLS = 133;
+    YEOMAN_TOOL_EXECUTE = 134;
+    YEOMAN_BRAIN_QUERY = 135;
+    YEOMAN_BRAIN_SYNC = 136;
+    YEOMAN_TOKEN_BUDGET = 137;
+    YEOMAN_EVENTS = 138;
+    YEOMAN_SWARM = 139;
+    // Security (Phylax, T-Ron)
+    PHYLAX_SCAN = 140;
+    PHYLAX_FINDINGS = 141;
+    PHYLAX_HISTORY = 142;
+    PHYLAX_STATUS = 143;
+    PHYLAX_RULES = 144;
+    TRON_STATUS = 145;
+    TRON_RISK = 146;
+    TRON_AUDIT = 147;
+    TRON_POLICY = 148;
+    // Tarang (media analysis)
+    TARANG_PROBE = 149;
+    TARANG_ANALYZE = 150;
+    TARANG_CODECS = 151;
+    TARANG_TRANSCRIBE = 152;
+    TARANG_FORMATS = 153;
+    TARANG_FINGERPRINT = 154;
+    TARANG_SIMILAR = 155;
+    TARANG_DESCRIBE = 156;
+    // Jalwa (media player)
+    JALWA_PLAY = 157;
+    JALWA_PAUSE = 158;
+    JALWA_STATUS = 159;
+    JALWA_SEARCH = 160;
+    JALWA_RECOMMEND = 161;
+    JALWA_QUEUE = 162;
+    JALWA_LIBRARY = 163;
+    JALWA_PLAYLIST = 164;
+    // Stiva (containers)
+    STIVA_RUN = 165;
+    STIVA_STOP = 166;
+    STIVA_PS = 167;
+    STIVA_RM = 168;
+    STIVA_PULL = 169;
+    STIVA_IMAGES = 170;
+    STIVA_RMI = 171;
+    STIVA_BUILD = 172;
+    STIVA_LOGS = 173;
+    STIVA_EXEC = 174;
+    STIVA_INSPECT = 175;
+    STIVA_ANSAMBLU = 176;
+    // File operations
+    CHMOD = 177;
+    CHOWN = 178;
+    SYMLINK = 179;
+    ARCHIVE = 180;
+    CRON = 181;
+    SERVICE_ENABLE = 182;
+    ENV_VAR = 183;
+    // Git operations
+    GIT_COMMIT = 184;
+    GIT_DIFF = 185;
+    GIT_BRANCH = 186;
+    GIT_STATUS = 187;
+    GIT_LOG = 188;
+    GIT_PUSH = 189;
+    GIT_PULL = 190;
+    GIT_CHECKOUT = 191;
+    GIT_MERGE = 192;
+    GIT_STASH = 193;
+    // User/group management
+    USER_ADD = 194;
+    USER_DELETE = 195;
+    USER_MOD = 196;
+    PASSWD = 197;
+    GROUP_ADD = 198;
+    GROUP_DELETE = 199;
+    GROUP_LIST = 200;
+    // Firewall
+    FIREWALL_ALLOW = 201;
+    FIREWALL_DENY = 202;
+    FIREWALL_LIST = 203;
+    FIREWALL_STATUS = 204;
+    FIREWALL_ENABLE = 205;
+    FIREWALL_DISABLE = 206;
+    FIREWALL_DELETE = 207;
+    // Meta
+    PIPELINE = 208;
+    QUESTION = 209;
+    AMBIGUOUS = 210;
+    UNKNOWN = 211;
+}
+
+// Intent struct: tagged union with flexible payload fields
+// Fields hold Str values (or 0 for absent), integers, or vec pointers
+struct Intent {
+    tag;        // IntentTag value
+    field1;     // primary string field (path, name, query, action, cmd)
+    field2;     // secondary field (pattern, destination, service_name)
+    field3;     // tertiary field (source, kind, format)
+    field4;     // quaternary field
+    int1;       // integer field (recursive, all, count, pid, force)
+    int2;       // second integer field
+    vec1;       // vec field (packages, commands, args, alternatives)
+}
+
+fn Intent_new(tag) {
+    return Intent { tag, 0, 0, 0, 0, 0, 0, 0 };
+}
+
+// ListOptions flags (packed into int1)
+// bit 0: all (-a)
+// bit 1: long format
+// bit 2: human_readable (-h)
+// bit 3: sort_by_time
+// bit 4: recursive (-R)
+
+fn list_options_all(opts) { return opts & 1; }
+fn list_options_long(opts) { return (opts >> 1) & 1; }
+fn list_options_human(opts) { return (opts >> 2) & 1; }
+fn list_options_time(opts) { return (opts >> 3) & 1; }
+fn list_options_recursive(opts) { return (opts >> 4) & 1; }
+
+fn list_options_pack(all, long, human, time_sort, recursive) {
+    return all | (long << 1) | (human << 2) | (time_sort << 3) | (recursive << 4);
+}
+
+// Translation: the output of translating an Intent to a shell command
+struct Translation {
+    command;        // Str: executable name
+    args;           // vec of Str
+    description;    // Str: human-readable description
+    permission;     // PermissionLevel
+    explanation;    // Str: detailed explanation
+    mcp_tool;       // Str or 0: MCP tool name
+    mcp_args;       // Str or 0: JSON arguments for MCP call
+}
+
+fn Translation_new(command, args, description, permission, explanation) {
+    return Translation { command, args, description, permission, explanation, 0, 0 };
+}
+
+fn Translation_with_mcp(command, args, description, permission, explanation, mcp_tool, mcp_args) {
+    return Translation { command, args, description, permission, explanation, mcp_tool, mcp_args };
+}

@@ -1,0 +1,144 @@
+// security.cyr — Security context and privilege management
+//
+// Ensures AI never has root access and all privileged operations
+// require human approval through secure privilege escalation.
+
+// SecurityContext: tracks user identity and privilege state
+struct SecurityContext {
+    uid;
+    gid;
+    euid;
+    username;       // Str
+    is_root;        // 1/0
+    restricted;     // 1/0
+    sudo_available; // 1/0
+}
+
+fn SecurityContext_new(restricted) {
+    var uid = syscall(SYS_GETUID);
+    var gid = syscall(SYS_GETGID);
+    var euid = syscall(SYS_GETEUID);
+    var is_root = 0;
+    if (uid == 0) { is_root = 1; }
+
+    // Get username from /etc/passwd lookup
+    var username = security_get_username(uid);
+
+    // Check if sudo is available
+    var sudo_available = security_check_sudo();
+
+    // If root, force restricted mode
+    var actual_restricted = restricted;
+    if (is_root == 1) {
+        actual_restricted = 1;
+        // Log warning: shell running as root
+        syscall(SYS_WRITE, 2, "WARNING: Shell running as root - AI features disabled for safety\n", 64);
+    }
+
+    return SecurityContext { uid, gid, euid, username, is_root, actual_restricted, sudo_available };
+}
+
+// Look up username by UID from /etc/passwd
+fn security_get_username(uid) {
+    var content = file_read_all("/etc/passwd");
+    if (content == 0) {
+        return str_from("unknown");
+    }
+
+    var lines = str_split(content, "\n");
+    var nlines = vec_len(lines);
+    var uid_str = fmt_int(uid);
+
+    for (var i = 0; i < nlines; i = i + 1) {
+        var line = vec_get(lines, i);
+        if (str_len(line) == 0) { continue; }
+
+        // passwd format: name:x:uid:gid:...
+        var fields = str_split(line, ":");
+        if (vec_len(fields) >= 3) {
+            var field_uid = vec_get(fields, 2);
+            if (streq(field_uid, uid_str) == 1) {
+                return vec_get(fields, 0); // username
+            }
+        }
+    }
+
+    // Fallback to uid_N
+    return str_cat("uid_", uid_str);
+}
+
+// Check if sudo is available
+fn security_check_sudo() {
+    // Try to find sudo in PATH
+    // Simple check: does /usr/bin/sudo exist?
+    if (fs_exists("/usr/bin/sudo") == 1) { return 1; }
+    if (fs_exists("/bin/sudo") == 1) { return 1; }
+    return 0;
+}
+
+fn SecurityContext_is_root(self) {
+    return self.is_root;
+}
+
+fn SecurityContext_is_restricted(self) {
+    return self.restricted;
+}
+
+fn SecurityContext_username(self) {
+    return self.username;
+}
+
+fn SecurityContext_can_escalate(self) {
+    if (self.restricted == 1) { return 0; }
+    if (self.sudo_available == 0) { return 0; }
+    if (self.is_root == 1) { return 0; }
+    return 1;
+}
+
+// Execute a command as a subprocess
+// Returns exit code (0 = success)
+fn execute_command(cmd, args, argc) {
+    // Fork and exec
+    var pid = syscall(SYS_FORK);
+    if (pid == 0) {
+        // Child: exec the command
+        // Build argv array
+        var argv = vec_new();
+        vec_push(argv, cmd);
+        for (var i = 0; i < argc; i = i + 1) {
+            vec_push(argv, vec_get(args, i));
+        }
+        // execve
+        process_exec(cmd, argv);
+        syscall(SYS_EXIT, 127); // exec failed
+    }
+
+    // Parent: wait for child
+    var status_buf[1];
+    syscall(SYS_WAIT4, pid, &status_buf, 0, 0);
+    var status = load64(&status_buf);
+
+    // Extract exit code from wait status
+    var exit_code = (status >> 8) & 255;
+    return exit_code;
+}
+
+// Execute with sudo (non-interactive)
+fn execute_with_privileges(self, cmd, args, argc) {
+    if (self.restricted == 1) {
+        return 0 - 1; // error: restricted mode
+    }
+    if (self.sudo_available == 0) {
+        return 0 - 2; // error: no sudo
+    }
+
+    // Prepend sudo -n
+    var sudo_args = vec_new();
+    vec_push(sudo_args, "-n");
+    vec_push(sudo_args, cmd);
+    for (var i = 0; i < argc; i = i + 1) {
+        vec_push(sudo_args, vec_get(args, i));
+    }
+
+    return execute_command("/usr/bin/sudo", sudo_args, argc + 2);
+}

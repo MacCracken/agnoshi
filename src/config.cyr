@@ -1,0 +1,50 @@
+// config.cyr — Shell configuration
+//
+// ShellConfig holds all tunable parameters for the shell session.
+
+include "lib/str.cyr"
+
+// Default MCP gateway base URL
+var MCP_BASE_URL_DATA = "http://127.0.0.1:8090";
+var DEFAULT_MCP_BASE_URL: Str = str_from(MCP_BASE_URL_DATA);
+
+// Default LLM gateway URL
+var LLM_BASE_URL_DATA = "http://127.0.0.1:8088";
+var DEFAULT_LLM_BASE_URL: Str = str_from(LLM_BASE_URL_DATA);
+
+// ShellConfig struct
+// Fields:
+//   default_mode     — Mode enum value (0-3)
+//   history_size     — max history entries
+//   ai_enabled       — 1/0
+//   auto_approve_low — auto-approve low-risk commands (1/0)
+//   approval_timeout — seconds before approval times out
+//   show_explanations — show command explanations (1/0)
+//   show_ai_mode     — show AI mode in prompt (1/0)
+//   show_git         — show git branch in prompt (1/0)
+//   show_exit_status — show exit code in prompt (1/0)
+struct ShellConfig {
+    default_mode;
+    history_size;
+    ai_enabled;
+    auto_approve_low;
+    approval_timeout;
+    show_explanations;
+    show_ai_mode;
+    show_git;
+    show_exit_status;
+}
+
+fn ShellConfig_default() {
+    return ShellConfig {
+        Mode.AI_ASSISTED,
+        10000,
+        1,
+        0,
+        300,
+        1,
+        1,
+        1,
+        1
+    };
+}

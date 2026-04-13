@@ -1,0 +1,206 @@
+// audit.cyr — Structured audit logging
+//
+// Every shell action is logged as a JSON line for forensic review.
+// All operations are traceable, measurable, auditable.
+
+include "lib/json.cyr"
+include "lib/chrono.cyr"
+
+// AuditEntry: one logged action
+struct AuditEntry {
+    timestamp;  // Str: RFC3339
+    user;       // Str
+    mode;       // Str
+    input;      // Str
+    action;     // Str
+    approved;   // 1/0
+    result;     // Str
+}
+
+fn AuditEntry_new(user, mode, input, action, approved, result) {
+    var ts = chrono_now_rfc3339();
+    return AuditEntry { ts, user, mode, input, action, approved, result };
+}
+
+// Serialize an audit entry to JSON string
+fn AuditEntry_to_json(self) {
+    var j = json_new();
+    json_set_str(j, "timestamp", self.timestamp);
+    json_set_str(j, "user", self.user);
+    json_set_str(j, "mode", self.mode);
+    json_set_str(j, "input", self.input);
+    json_set_str(j, "action", self.action);
+    json_set_int(j, "approved", self.approved);
+    json_set_str(j, "result", self.result);
+    return json_encode(j);
+}
+
+// AuditLogger: appends JSON lines to a file
+struct AuditLogger { file_path; }
+
+fn AuditLogger_new(file_path) {
+    return AuditLogger { file_path };
+}
+
+fn AuditLogger_log(self, entry) {
+    var line = AuditEntry_to_json(entry);
+
+    // Open file for append
+    var fd = syscall(SYS_OPEN, self.file_path, 1089, 384);
+    // 1089 = O_WRONLY|O_CREAT|O_APPEND, 384 = 0600
+    if (fd < 0) { return 0 - 1; }
+
+    // Write JSON line + newline
+    var len = str_len(line);
+    syscall(SYS_WRITE, fd, str_data(line), len);
+    syscall(SYS_WRITE, fd, "\n", 1);
+    syscall(SYS_CLOSE, fd);
+    return 0;
+}
+
+// AuditFilter for queries
+struct AuditFilter {
+    agent;          // Str or 0 (no filter)
+    action;         // Str or 0
+    approved;       // 0/1 or -1 (no filter)
+    limit;          // max entries or 0 (unlimited)
+    since_seconds;  // time window or 0 (no filter)
+}
+
+fn AuditFilter_default() {
+    return AuditFilter { 0, 0, 0 - 1, 0, 0 };
+}
+
+// AuditViewer for reading and filtering log entries
+struct AuditViewer { file_path; }
+
+fn AuditViewer_new(file_path) {
+    return AuditViewer { file_path };
+}
+
+// Query audit log with filters, returns vec of AuditEntry
+fn AuditViewer_query(self, filter) {
+    var results = vec_new();
+
+    if (fs_exists(self.file_path) == 0) {
+        return results;
+    }
+
+    var content = file_read_all(self.file_path);
+    if (content == 0) { return results; }
+
+    var lines = str_split(content, "\n");
+    var nlines = vec_len(lines);
+
+    for (var i = 0; i < nlines; i = i + 1) {
+        var line = vec_get(lines, i);
+        if (str_len(line) == 0) { continue; }
+
+        // Parse JSON line
+        var j = json_parse(line);
+        if (j == 0) { continue; }
+
+        var user = json_get_str(j, "user");
+        var action_val = json_get_str(j, "action");
+        var approved_val = json_get_int(j, "approved");
+
+        // Apply agent filter
+        if (filter.agent != 0) {
+            if (str_contains(user, filter.agent) == 0) {
+                continue;
+            }
+        }
+
+        // Apply action filter
+        if (filter.action != 0) {
+            if (streq(action_val, filter.action) == 0) {
+                continue;
+            }
+        }
+
+        // Apply approval filter
+        if (filter.approved != (0 - 1)) {
+            if (approved_val != filter.approved) {
+                continue;
+            }
+        }
+
+        // Build entry
+        var entry = AuditEntry {
+            json_get_str(j, "timestamp"),
+            user,
+            json_get_str(j, "mode"),
+            json_get_str(j, "input"),
+            action_val,
+            approved_val,
+            json_get_str(j, "result")
+        };
+        vec_push(results, entry);
+    }
+
+    // Reverse for most-recent-first
+    var reversed = vec_new();
+    var rcount = vec_len(results);
+    for (var i = rcount - 1; i >= 0; i = i - 1) {
+        vec_push(reversed, vec_get(results, i));
+    }
+
+    // Apply limit
+    if (filter.limit > 0) {
+        if (vec_len(reversed) > filter.limit) {
+            var trimmed = vec_new();
+            for (var i = 0; i < filter.limit; i = i + 1) {
+                vec_push(trimmed, vec_get(reversed, i));
+            }
+            return trimmed;
+        }
+    }
+
+    return reversed;
+}
+
+// Format audit entries as a table string
+fn audit_format_table(entries) {
+    var count = vec_len(entries);
+    if (count == 0) {
+        return "No audit entries found.";
+    }
+
+    var builder = str_builder_new();
+
+    // Header
+    str_builder_append(builder, "TIMESTAMP                USER         ACTION     OK?      INPUT\n");
+    // Separator (90 dashes)
+    for (var i = 0; i < 90; i = i + 1) {
+        str_builder_append(builder, "-");
+    }
+    str_builder_append(builder, "\n");
+
+    // Entries
+    for (var i = 0; i < count; i = i + 1) {
+        var e = vec_get(entries, i);
+        // Truncate timestamp to 24 chars
+        var ts = str_sub(e.timestamp, 0, 24);
+        var approved_str = "NO";
+        if (e.approved == 1) { approved_str = "yes"; }
+
+        // Truncate input to 30 chars
+        var input_display = e.input;
+        if (str_len(e.input) > 30) {
+            input_display = str_cat(str_sub(e.input, 0, 27), "...");
+        }
+
+        str_builder_append(builder, ts);
+        str_builder_append(builder, " ");
+        str_builder_append(builder, e.user);
+        str_builder_append(builder, " ");
+        str_builder_append(builder, e.action);
+        str_builder_append(builder, " ");
+        str_builder_append(builder, approved_str);
+        str_builder_append(builder, " ");
+        str_builder_append(builder, input_display);
+        str_builder_append(builder, "\n");
+    }
+
+    return str_builder_finish(builder);
+}

@@ -1,0 +1,219 @@
+// permissions.cyr — Permission levels and command classification
+//
+// Every command is classified into a permission level before execution.
+// AI never gets Blocked; humans approve SystemWrite and Admin.
+
+// Permission level constants
+enum PermissionLevel {
+    SAFE = 0;
+    READ_ONLY = 1;
+    USER_WRITE = 2;
+    SYSTEM_WRITE = 3;
+    ADMIN = 4;
+    BLOCKED = 5;
+}
+
+// Check if this level requires human approval
+fn perm_requires_approval(level) {
+    return (level == PermissionLevel.SYSTEM_WRITE) || (level == PermissionLevel.ADMIN) || (level == PermissionLevel.BLOCKED);
+}
+
+// Check if AI is allowed to execute at this level
+fn perm_ai_allowed(level) {
+    return (level != PermissionLevel.BLOCKED);
+}
+
+// Check if user has permission for an action
+fn check_permission(user, required) {
+    // Root can do anything
+    if (streq(user, "root") == 1) {
+        return 1;
+    }
+    // Check based on level
+    if (required == PermissionLevel.SAFE) { return 1; }
+    if (required == PermissionLevel.READ_ONLY) { return 1; }
+    if (required == PermissionLevel.USER_WRITE) { return 1; }
+    if (required == PermissionLevel.SYSTEM_WRITE) { return 0; }
+    if (required == PermissionLevel.ADMIN) { return 0; }
+    if (required == PermissionLevel.BLOCKED) { return 0; }
+    return 0; // future variants default to denied
+}
+
+// --- Command classification ---
+
+// Check if a command string matches any in a list
+// Returns 1 if cmd matches, 0 otherwise
+fn is_blocked_command(cmd) {
+    if (streq(cmd, "dd") == 1) { return 1; }
+    if (streq(cmd, "mkfs") == 1) { return 1; }
+    if (streq(cmd, "fdisk") == 1) { return 1; }
+    if (streq(cmd, "parted") == 1) { return 1; }
+    if (streq(cmd, "chmod") == 1) { return 1; }
+    if (streq(cmd, "chown") == 1) { return 1; }
+    if (streq(cmd, "chgrp") == 1) { return 1; }
+    if (streq(cmd, "shred") == 1) { return 1; }
+    return 0;
+}
+
+fn is_admin_command(cmd) {
+    if (streq(cmd, "apt") == 1) { return 1; }
+    if (streq(cmd, "yum") == 1) { return 1; }
+    if (streq(cmd, "dnf") == 1) { return 1; }
+    if (streq(cmd, "pacman") == 1) { return 1; }
+    if (streq(cmd, "systemctl") == 1) { return 1; }
+    if (streq(cmd, "service") == 1) { return 1; }
+    if (streq(cmd, "useradd") == 1) { return 1; }
+    if (streq(cmd, "userdel") == 1) { return 1; }
+    if (streq(cmd, "usermod") == 1) { return 1; }
+    if (streq(cmd, "groupadd") == 1) { return 1; }
+    if (streq(cmd, "mount") == 1) { return 1; }
+    if (streq(cmd, "umount") == 1) { return 1; }
+    if (streq(cmd, "modprobe") == 1) { return 1; }
+    if (streq(cmd, "insmod") == 1) { return 1; }
+    if (streq(cmd, "rmmod") == 1) { return 1; }
+    if (streq(cmd, "kill") == 1) { return 1; }
+    if (streq(cmd, "killall") == 1) { return 1; }
+    if (streq(cmd, "pkill") == 1) { return 1; }
+    if (streq(cmd, "reboot") == 1) { return 1; }
+    if (streq(cmd, "shutdown") == 1) { return 1; }
+    if (streq(cmd, "poweroff") == 1) { return 1; }
+    if (streq(cmd, "halt") == 1) { return 1; }
+    if (streq(cmd, "iptables") == 1) { return 1; }
+    if (streq(cmd, "ip6tables") == 1) { return 1; }
+    if (streq(cmd, "nft") == 1) { return 1; }
+    if (streq(cmd, "ufw") == 1) { return 1; }
+    if (streq(cmd, "crontab") == 1) { return 1; }
+    if (streq(cmd, "visudo") == 1) { return 1; }
+    if (streq(cmd, "su") == 1) { return 1; }
+    if (streq(cmd, "swapoff") == 1) { return 1; }
+    if (streq(cmd, "swapon") == 1) { return 1; }
+    if (streq(cmd, "mknod") == 1) { return 1; }
+    return 0;
+}
+
+fn is_write_command(cmd) {
+    if (streq(cmd, "cp") == 1) { return 1; }
+    if (streq(cmd, "mv") == 1) { return 1; }
+    if (streq(cmd, "ln") == 1) { return 1; }
+    if (streq(cmd, "touch") == 1) { return 1; }
+    if (streq(cmd, "mkdir") == 1) { return 1; }
+    if (streq(cmd, "rmdir") == 1) { return 1; }
+    if (streq(cmd, "tee") == 1) { return 1; }
+    if (streq(cmd, "sed") == 1) { return 1; }
+    if (streq(cmd, "awk") == 1) { return 1; }
+    return 0;
+}
+
+fn is_readonly_command(cmd) {
+    if (streq(cmd, "ls") == 1) { return 1; }
+    if (streq(cmd, "cat") == 1) { return 1; }
+    if (streq(cmd, "head") == 1) { return 1; }
+    if (streq(cmd, "tail") == 1) { return 1; }
+    if (streq(cmd, "less") == 1) { return 1; }
+    if (streq(cmd, "more") == 1) { return 1; }
+    if (streq(cmd, "grep") == 1) { return 1; }
+    if (streq(cmd, "find") == 1) { return 1; }
+    if (streq(cmd, "ps") == 1) { return 1; }
+    if (streq(cmd, "top") == 1) { return 1; }
+    if (streq(cmd, "htop") == 1) { return 1; }
+    if (streq(cmd, "df") == 1) { return 1; }
+    if (streq(cmd, "du") == 1) { return 1; }
+    if (streq(cmd, "free") == 1) { return 1; }
+    if (streq(cmd, "uptime") == 1) { return 1; }
+    if (streq(cmd, "uname") == 1) { return 1; }
+    if (streq(cmd, "ifconfig") == 1) { return 1; }
+    if (streq(cmd, "ip") == 1) { return 1; }
+    if (streq(cmd, "netstat") == 1) { return 1; }
+    if (streq(cmd, "ss") == 1) { return 1; }
+    if (streq(cmd, "pwd") == 1) { return 1; }
+    if (streq(cmd, "echo") == 1) { return 1; }
+    if (streq(cmd, "date") == 1) { return 1; }
+    if (streq(cmd, "whoami") == 1) { return 1; }
+    if (streq(cmd, "id") == 1) { return 1; }
+    return 0;
+}
+
+fn is_safe_command(cmd) {
+    if (streq(cmd, "cd") == 1) { return 1; }
+    if (streq(cmd, "pwd") == 1) { return 1; }
+    if (streq(cmd, "clear") == 1) { return 1; }
+    if (streq(cmd, "exit") == 1) { return 1; }
+    if (streq(cmd, "history") == 1) { return 1; }
+    if (streq(cmd, "help") == 1) { return 1; }
+    if (streq(cmd, "agnsh") == 1) { return 1; }
+    return 0;
+}
+
+// Check if any arg targets a system path
+fn has_system_path_arg(args, argc) {
+    for (var i = 0; i < argc; i = i + 1) {
+        var arg = vec_get(args, i);
+        // Check prefixes: /etc/, /usr/, /bin/, /sbin/, /lib
+        if (str_starts_with(arg, "/etc/") == 1) { return 1; }
+        if (str_starts_with(arg, "/usr/") == 1) { return 1; }
+        if (str_starts_with(arg, "/bin/") == 1) { return 1; }
+        if (str_starts_with(arg, "/sbin/") == 1) { return 1; }
+        if (str_starts_with(arg, "/lib") == 1) { return 1; }
+    }
+    return 0;
+}
+
+// Check if rm has dangerous flags
+fn rm_has_dangerous_flags(args, argc) {
+    for (var i = 0; i < argc; i = i + 1) {
+        var arg = vec_get(args, i);
+        if (streq(arg, "-r") == 1) { return 1; }
+        if (streq(arg, "-f") == 1) { return 1; }
+        if (streq(arg, "-rf") == 1) { return 1; }
+        if (streq(arg, "-fr") == 1) { return 1; }
+        if (streq(arg, "--recursive") == 1) { return 1; }
+        if (streq(arg, "--force") == 1) { return 1; }
+        if (streq(arg, "--no-preserve-root") == 1) { return 1; }
+    }
+    return 0;
+}
+
+// Main command permission analysis
+// cmd: command name string
+// args: vec of argument strings
+// argc: number of arguments
+fn analyze_command_permission(cmd, args, argc) {
+    // Special handling for rm
+    if (streq(cmd, "rm") == 1) {
+        if (rm_has_dangerous_flags(args, argc) == 1) {
+            return PermissionLevel.BLOCKED;
+        }
+        return PermissionLevel.ADMIN;
+    }
+
+    // Blocked commands
+    if (is_blocked_command(cmd) == 1) {
+        return PermissionLevel.BLOCKED;
+    }
+
+    // Admin commands
+    if (is_admin_command(cmd) == 1) {
+        return PermissionLevel.ADMIN;
+    }
+
+    // Write commands — check if targeting system paths
+    if (is_write_command(cmd) == 1) {
+        if (has_system_path_arg(args, argc) == 1) {
+            return PermissionLevel.SYSTEM_WRITE;
+        }
+        return PermissionLevel.USER_WRITE;
+    }
+
+    // Read-only commands
+    if (is_readonly_command(cmd) == 1) {
+        return PermissionLevel.READ_ONLY;
+    }
+
+    // Safe builtins
+    if (is_safe_command(cmd) == 1) {
+        return PermissionLevel.SAFE;
+    }
+
+    // Default: user write
+    return PermissionLevel.USER_WRITE;
+}

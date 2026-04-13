@@ -1,0 +1,191 @@
+// ui.cyr — Terminal UI components
+//
+// Handles all user-facing output: welcome, help, errors, prompts.
+
+// Print a string to stdout
+fn print_str(s) {
+    var len = str_len(s);
+    if (len > 0) {
+        syscall(SYS_WRITE, 1, str_data(s), len);
+    }
+}
+
+// Print a string followed by newline
+fn print_line(s) {
+    print_str(s);
+    syscall(SYS_WRITE, 1, "\n", 1);
+}
+
+// Print to stderr
+fn eprint_str(s) {
+    var len = str_len(s);
+    if (len > 0) {
+        syscall(SYS_WRITE, 2, str_data(s), len);
+    }
+}
+
+fn eprint_line(s) {
+    eprint_str(s);
+    syscall(SYS_WRITE, 2, "\n", 1);
+}
+
+// Read a line of input from stdin
+// Returns Str, or 0 on EOF
+fn read_input_line(prompt) {
+    // Write prompt
+    print_str(prompt);
+
+    // Read from stdin
+    var buf[4096];
+    var n = syscall(SYS_READ, 0, &buf, 4095);
+
+    if (n <= 0) { return 0; } // EOF
+
+    // Strip trailing newline
+    if (n > 0) {
+        if (load8(&buf + n - 1) == 10) {
+            n = n - 1;
+        }
+    }
+
+    if (n == 0) { return str_from(""); }
+
+    // Copy to string
+    store8(&buf + n, 0); // null terminate
+    return str_from_cstr(&buf);
+}
+
+// Display welcome banner
+fn ui_show_welcome() {
+    print_line("");
+    print_line("  +-----------------------------------+");
+    print_line("  |  AGNOS AI Shell (agnsh)            |");
+    print_line("  |  Natural language + human oversight |");
+    print_line("  +-----------------------------------+");
+    print_line("  Type 'help' for commands, 'exit' to quit.");
+    print_line("");
+}
+
+// Display goodbye
+fn ui_show_goodbye() {
+    print_line("");
+    print_line("  Goodbye.");
+    print_line("");
+}
+
+// Display help
+fn ui_show_help() {
+    print_line("");
+    print_line("  Built-in commands:");
+    print_line("    help     — Show this help");
+    print_line("    clear    — Clear screen");
+    print_line("    exit     — Exit shell");
+    print_line("    quit     — Exit shell");
+    print_line("    history  — Show command history");
+    print_line("    mode     — Show/change operating mode");
+    print_line("    undo     — Undo last destructive operation");
+    print_line("");
+    print_line("  Modes:");
+    print_line("    mode human    — Human control, no AI");
+    print_line("    mode assist   — AI assists with suggestions");
+    print_line("    mode auto     — AI acts autonomously");
+    print_line("    mode strict   — All actions require approval");
+    print_line("");
+    print_line("  Natural language:");
+    print_line("    Just type what you want to do!");
+    print_line("    Example: 'show me all files in /tmp'");
+    print_line("    Example: 'find large files over 100MB'");
+    print_line("");
+}
+
+// Show current mode
+fn ui_show_mode(mode) {
+    print_str("  Mode: ");
+    print_str(mode_display(mode));
+    print_str(" — ");
+    print_line(mode_description(mode));
+}
+
+// Show history (last 20 entries)
+fn ui_show_history(history) {
+    var recent = CommandHistory_get_recent(history, 20);
+    var count = vec_len(recent);
+    if (count == 0) {
+        print_line("  No history.");
+        return 0;
+    }
+    print_line("");
+    for (var i = 0; i < count; i = i + 1) {
+        print_str("  ");
+        print_str(fmt_int(i + 1));
+        print_str(". ");
+        print_line(vec_get(recent, i));
+    }
+    print_line("");
+    return 0;
+}
+
+// Show AI thinking indicator
+fn ui_show_thinking(message) {
+    print_str("  ... ");
+    print_line(message);
+}
+
+// Show proposed action
+fn ui_show_proposed_action(cmd, args, argc, description) {
+    print_line("");
+    print_str("  Command: ");
+    print_str(cmd);
+    for (var i = 0; i < argc; i = i + 1) {
+        print_str(" ");
+        print_str(vec_get(args, i));
+    }
+    print_line("");
+    if (str_len(description) > 0) {
+        print_str("  Description: ");
+        print_line(description);
+    }
+    print_line("");
+}
+
+// Show command output
+fn ui_show_output(output) {
+    if (str_len(output) > 0) {
+        print_str(output);
+        // Ensure trailing newline
+        var len = str_len(output);
+        if (str_byte_at(output, len - 1) != 10) {
+            print_line("");
+        }
+    }
+}
+
+// Show info message
+fn ui_show_info(message) {
+    print_str("  [i] ");
+    print_line(message);
+}
+
+// Show warning
+fn ui_show_warning(message) {
+    print_str("  [!] ");
+    print_line(message);
+}
+
+// Show error (to stderr)
+fn ui_show_error(message) {
+    eprint_str("  [x] ");
+    eprint_line(message);
+}
+
+// Show suggestion
+fn ui_show_suggestion(suggestion) {
+    print_str("  [?] ");
+    print_line(suggestion);
+}
+
+// Clear screen
+fn ui_clear_screen() {
+    // ANSI escape: ESC[2J ESC[H
+    syscall(SYS_WRITE, 1, "\x1b[2J\x1b[H", 10);
+}

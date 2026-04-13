@@ -1,16 +1,282 @@
-# agnoshi — Cyrius port
-# Ported from 27251 lines of Rust
+// agnoshi — AI-native natural language shell for AGNOS
+//
+// Translates natural language into system commands with human oversight,
+// security approval workflows, and full audit logging.
+//
+// Ported from 27,251 lines of Rust to Cyrius.
+// Original Rust implementation preserved in rust-old/ for reference.
 
+// --- Standard library ---
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/json.cyr"
+include "lib/chrono.cyr"
+include "lib/hashmap.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+
+// --- Application modules ---
+include "src/mode.cyr"
+include "src/permissions.cyr"
+include "src/config.cyr"
+include "src/aliases.cyr"
+include "src/history.cyr"
+include "src/audit.cyr"
+include "src/security.cyr"
+include "src/approval.cyr"
+include "src/checkpoint.cyr"
+include "src/output.cyr"
+include "src/prompt.cyr"
+include "src/ui.cyr"
+include "src/completion.cyr"
+include "src/commands.cyr"
+include "src/intent.cyr"
+include "src/interpreter.cyr"
+include "src/translate.cyr"
+include "src/session.cyr"
+
+// --- Helper: get environment variable ---
+fn getenv(name) {
+    // Read from /proc/self/environ
+    var buf[8192];
+    var fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+    var n = syscall(SYS_READ, fd, &buf, 8191);
+    syscall(SYS_CLOSE, fd);
+    if (n <= 0) { return 0; }
+
+    // Environ is null-separated key=value pairs
+    var pos = 0;
+    var name_len = strlen(name);
+    while (pos < n) {
+        // Find end of this entry (null byte)
+        var end = pos;
+        while (end < n) {
+            if (load8(&buf + end) == 0) { break; }
+            end = end + 1;
+        }
+
+        // Check if this entry starts with name=
+        var match = 1;
+        if (end - pos <= name_len) { match = 0; }
+        if (match == 1) {
+            for (var i = 0; i < name_len; i = i + 1) {
+                if (load8(&buf + pos + i) != load8(name + i)) {
+                    match = 0;
+                    break;
+                }
+            }
+        }
+        if (match == 1) {
+            if (load8(&buf + pos + name_len) == 61) { // '='
+                // Found it — copy value
+                var val_start = pos + name_len + 1;
+                var val_len = end - val_start;
+                var result = alloc(val_len + 1);
+                memcpy(result, &buf + val_start, val_len);
+                store8(result + val_len, 0);
+                return result;
+            }
+        }
+
+        pos = end + 1;
+    }
+    return 0;
+}
+
+// --- String helpers used across modules ---
+
+// Case-insensitive contains
+fn str_contains_ci(haystack, needle) {
+    var hlen = str_len(haystack);
+    var nlen = str_len(needle);
+    if (nlen == 0) { return 1; }
+    if (nlen > hlen) { return 0; }
+
+    for (var i = 0; i <= hlen - nlen; i = i + 1) {
+        var match = 1;
+        for (var j = 0; j < nlen; j = j + 1) {
+            var hc = str_byte_at(haystack, i + j);
+            var nc = str_byte_at(needle, j);
+            // Lowercase both
+            if (hc >= 65 && hc <= 90) { hc = hc + 32; }
+            if (nc >= 65 && nc <= 90) { nc = nc + 32; }
+            if (hc != nc) { match = 0; break; }
+        }
+        if (match == 1) { return 1; }
+    }
+    return 0;
+}
+
+// Case-insensitive find (returns index or -1)
+fn str_find_ci(haystack, needle) {
+    var hlen = str_len(haystack);
+    var nlen = str_len(needle);
+    if (nlen == 0) { return 0; }
+    if (nlen > hlen) { return 0 - 1; }
+
+    for (var i = 0; i <= hlen - nlen; i = i + 1) {
+        var match = 1;
+        for (var j = 0; j < nlen; j = j + 1) {
+            var hc = str_byte_at(haystack, i + j);
+            var nc = str_byte_at(needle, j);
+            if (hc >= 65 && hc <= 90) { hc = hc + 32; }
+            if (nc >= 65 && nc <= 90) { nc = nc + 32; }
+            if (hc != nc) { match = 0; break; }
+        }
+        if (match == 1) { return i; }
+    }
+    return 0 - 1;
+}
+
+// Case-insensitive find from offset
+fn str_find_ci_from(haystack, needle, from) {
+    var hlen = str_len(haystack);
+    var nlen = str_len(needle);
+    if (nlen == 0) { return from; }
+    if (from + nlen > hlen) { return 0 - 1; }
+
+    for (var i = from; i <= hlen - nlen; i = i + 1) {
+        var match = 1;
+        for (var j = 0; j < nlen; j = j + 1) {
+            var hc = str_byte_at(haystack, i + j);
+            var nc = str_byte_at(needle, j);
+            if (hc >= 65 && hc <= 90) { hc = hc + 32; }
+            if (nc >= 65 && nc <= 90) { nc = nc + 32; }
+            if (hc != nc) { match = 0; break; }
+        }
+        if (match == 1) { return i; }
+    }
+    return 0 - 1;
+}
+
+// Case-insensitive split
+fn str_split_ci(input, sep) {
+    // Simple: just use the first occurrence
+    var result = vec_new();
+    var idx = str_find_ci(input, sep);
+    if (idx < 0) {
+        vec_push(result, input);
+        return result;
+    }
+    vec_push(result, str_sub(input, 0, idx));
+    vec_push(result, str_sub(input, idx + str_len(sep), str_len(input)));
+    return result;
+}
+
+// String to integer
+fn str_to_int(s) {
+    var len = str_len(s);
+    var result = 0;
+    var neg = 0;
+    var i = 0;
+    if (len > 0 && str_byte_at(s, 0) == 45) { // '-'
+        neg = 1;
+        i = 1;
+    }
+    while (i < len) {
+        var ch = str_byte_at(s, i);
+        if (ch >= 48 && ch <= 57) {
+            result = result * 10 + (ch - 48);
+        }
+        i = i + 1;
+    }
+    if (neg == 1) { result = 0 - result; }
+    return result;
+}
+
+// --- CLI argument parsing ---
+
+fn parse_cli_args() {
+    var argc = args_count();
+    var mode = Mode.AI_ASSISTED;
+    var command = 0;
+    var restricted = 0;
+
+    for (var i = 1; i < argc; i = i + 1) {
+        var arg = args_get(i);
+        if (streq(arg, "--ai") == 1 || streq(arg, "-a") == 1) {
+            mode = Mode.AI_AUTONOMOUS;
+        }
+        elif (streq(arg, "--human") == 1 || streq(arg, "-h") == 1) {
+            mode = Mode.HUMAN;
+        }
+        elif (streq(arg, "--strict") == 1) {
+            mode = Mode.STRICT;
+        }
+        elif (streq(arg, "--restricted") == 1) {
+            restricted = 1;
+        }
+        elif (streq(arg, "--no-ai") == 1) {
+            mode = Mode.HUMAN;
+        }
+        elif (streq(arg, "-c") == 1 || streq(arg, "--command") == 1) {
+            if (i + 1 < argc) {
+                i = i + 1;
+                command = args_get(i);
+            }
+        }
+        elif (streq(arg, "--version") == 1) {
+            println("agnoshi 0.1.0");
+            syscall(SYS_EXIT, 0);
+        }
+        elif (streq(arg, "--help") == 1) {
+            println("Usage: agnoshi [OPTIONS]");
+            println("  -a, --ai         Start in AI autonomous mode");
+            println("  -h, --human      Start in human mode");
+            println("  --strict         Start in strict mode");
+            println("  --restricted     Disable privilege escalation");
+            println("  --no-ai          Disable AI assistance");
+            println("  -c, --command    Execute command and exit");
+            println("  --version        Show version");
+            println("  --help           Show this help");
+            syscall(SYS_EXIT, 0);
+        }
+    }
+
+    // Return packed: mode in bits 0-7, restricted in bit 8, command as pointer
+    // We use globals for simplicity
+    store64(&cli_mode, mode);
+    store64(&cli_restricted, restricted);
+    store64(&cli_command, command);
+}
+
+// CLI globals
+var cli_mode = 1;       // default: AI_ASSISTED
+var cli_restricted = 0;
+var cli_command = 0;
+
+// --- Entry point ---
 
 fn main() {
     alloc_init();
-    println("agnoshi ready");
+
+    // Parse CLI arguments
+    parse_cli_args();
+
+    // Create config
+    var config = ShellConfig_default();
+    config.default_mode = cli_mode;
+
+    // Create security context
+    var security = SecurityContext_new(cli_restricted);
+
+    // Create session
+    var session = Session_new(config, security, cli_mode);
+
+    // One-shot or interactive
+    if (cli_command != 0) {
+        Session_execute_one_shot(&session, cli_command);
+        return 0;
+    }
+
+    Session_run_interactive(&session);
     return 0;
 }
 

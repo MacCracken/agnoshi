@@ -1,0 +1,126 @@
+// approval.cyr — Human-in-the-loop approval workflows
+//
+// Every privileged or risky operation must pass through approval.
+// Risk assessment determines the approval UI.
+
+// ApprovalResponse constants
+enum ApprovalResponse {
+    APPROVED = 0;
+    APPROVED_ONCE = 1;
+    DENIED = 2;
+    DENY_AND_BLOCK = 3;
+    NEED_INFO = 4;
+    MODIFY = 5;
+    TIMED_OUT = 6;
+}
+
+// RiskLevel constants
+enum RiskLevel {
+    LOW = 0;
+    MEDIUM = 1;
+    HIGH = 2;
+    CRITICAL = 3;
+}
+
+fn risk_from_permission(perm) {
+    if (perm == PermissionLevel.SAFE) { return RiskLevel.LOW; }
+    if (perm == PermissionLevel.READ_ONLY) { return RiskLevel.LOW; }
+    if (perm == PermissionLevel.USER_WRITE) { return RiskLevel.MEDIUM; }
+    if (perm == PermissionLevel.SYSTEM_WRITE) { return RiskLevel.HIGH; }
+    if (perm == PermissionLevel.ADMIN) { return RiskLevel.HIGH; }
+    if (perm == PermissionLevel.BLOCKED) { return RiskLevel.CRITICAL; }
+    return RiskLevel.HIGH;
+}
+
+fn risk_icon(level) {
+    match level {
+        0 => { return "[LOW]"; }
+        1 => { return "[MED]"; }
+        2 => { return "[HIGH]"; }
+        3 => { return "[CRIT]"; }
+        _ => { return "[???]"; }
+    }
+}
+
+// ApprovalManager
+struct ApprovalManager {
+    timeout_seconds;
+    auto_approve_low_risk;
+    blocked_patterns;   // vec of Str
+}
+
+fn ApprovalManager_new() {
+    return ApprovalManager { 300, 0, vec_new() };
+}
+
+fn ApprovalManager_set_auto_approve(self, enabled) {
+    self.auto_approve_low_risk = enabled;
+}
+
+// Assess risk of a command
+fn ApprovalManager_assess_risk(self, cmd, args, argc) {
+    var perm = analyze_command_permission(cmd, args, argc);
+    return risk_from_permission(perm);
+}
+
+// Check if command is blocked by user patterns
+fn ApprovalManager_is_blocked(self, cmd) {
+    var nblocked = vec_len(self.blocked_patterns);
+    for (var i = 0; i < nblocked; i = i + 1) {
+        var pattern = vec_get(self.blocked_patterns, i);
+        if (str_contains(cmd, pattern) == 1) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Add a blocked pattern
+fn ApprovalManager_block_pattern(self, pattern) {
+    vec_push(self.blocked_patterns, pattern);
+}
+
+// Request approval for a command
+// Returns ApprovalResponse
+fn ApprovalManager_request(self, cmd, args, argc, risk) {
+    // Check blocked patterns
+    if (ApprovalManager_is_blocked(self, cmd) == 1) {
+        return ApprovalResponse.DENIED;
+    }
+
+    // Auto-approve low risk if enabled
+    if (self.auto_approve_low_risk == 1) {
+        if (risk == RiskLevel.LOW) {
+            return ApprovalResponse.APPROVED;
+        }
+    }
+
+    // Display request to user
+    syscall(SYS_WRITE, 1, "\n", 1);
+    syscall(SYS_WRITE, 1, risk_icon(risk), strlen(risk_icon(risk)));
+    syscall(SYS_WRITE, 1, " Approval required: ", 20);
+    print_str(cmd);
+    for (var i = 0; i < argc; i = i + 1) {
+        syscall(SYS_WRITE, 1, " ", 1);
+        print_str(vec_get(args, i));
+    }
+    syscall(SYS_WRITE, 1, "\n", 1);
+
+    // Prompt user: [a]pprove / [d]eny / [m]odify
+    syscall(SYS_WRITE, 1, "  [a]pprove  [d]eny  [m]odify: ", 31);
+
+    var buf[64];
+    var n = syscall(SYS_READ, 0, &buf, 63);
+    if (n <= 0) { return ApprovalResponse.TIMED_OUT; }
+
+    var ch = load8(&buf);
+    if (ch == 97) { return ApprovalResponse.APPROVED; }      // 'a'
+    if (ch == 65) { return ApprovalResponse.APPROVED; }      // 'A'
+    if (ch == 100) { return ApprovalResponse.DENIED; }       // 'd'
+    if (ch == 68) { return ApprovalResponse.DENIED; }        // 'D'
+    if (ch == 109) { return ApprovalResponse.MODIFY; }       // 'm'
+    if (ch == 77) { return ApprovalResponse.MODIFY; }        // 'M'
+    if (ch == 10) { return ApprovalResponse.DENIED; }        // Enter = deny by default
+
+    return ApprovalResponse.DENIED;
+}

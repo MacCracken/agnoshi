@@ -1,0 +1,97 @@
+// commands.cyr — Built-in shell commands
+//
+// Parsing and identification of builtin commands.
+
+// Check if a command is a shell builtin
+fn is_builtin(cmd) {
+    if (streq(cmd, "cd") == 1) { return 1; }
+    if (streq(cmd, "exit") == 1) { return 1; }
+    if (streq(cmd, "quit") == 1) { return 1; }
+    if (streq(cmd, "help") == 1) { return 1; }
+    if (streq(cmd, "clear") == 1) { return 1; }
+    if (streq(cmd, "mode") == 1) { return 1; }
+    if (streq(cmd, "history") == 1) { return 1; }
+    if (streq(cmd, "undo") == 1) { return 1; }
+    return 0;
+}
+
+// Get description for a builtin command
+fn builtin_description(cmd) {
+    if (streq(cmd, "cd") == 1) { return "Change directory"; }
+    if (streq(cmd, "exit") == 1) { return "Exit the shell"; }
+    if (streq(cmd, "quit") == 1) { return "Exit the shell"; }
+    if (streq(cmd, "help") == 1) { return "Show help information"; }
+    if (streq(cmd, "clear") == 1) { return "Clear the screen"; }
+    if (streq(cmd, "mode") == 1) { return "Show or change operating mode"; }
+    if (streq(cmd, "history") == 1) { return "Show command history"; }
+    if (streq(cmd, "undo") == 1) { return "Undo last destructive operation"; }
+    return "";
+}
+
+// Split a command line into command + args
+// Returns: cmd in first_word, args in args_vec, argc
+// Caller provides output buffers
+fn split_command_line(input, first_word_out, args_out) {
+    var len = str_len(input);
+    if (len == 0) { return 0; }
+
+    // Skip leading whitespace
+    var pos = 0;
+    while (pos < len) {
+        if (str_byte_at(input, pos) != 32) { break; }
+        pos = pos + 1;
+    }
+
+    // Extract first word
+    var wstart = pos;
+    while (pos < len) {
+        var ch = str_byte_at(input, pos);
+        if (ch == 32 || ch == 9) { break; } // space or tab
+        pos = pos + 1;
+    }
+
+    var cmd = str_sub(input, wstart, pos);
+    // Store command in output (as pointer value)
+    store64(first_word_out, cmd);
+
+    // Parse remaining args
+    var argc = 0;
+    while (pos < len) {
+        // Skip whitespace
+        while (pos < len) {
+            var ch = str_byte_at(input, pos);
+            if (ch != 32 && ch != 9) { break; }
+            pos = pos + 1;
+        }
+        if (pos >= len) { break; }
+
+        // Handle quoted strings
+        var ch = str_byte_at(input, pos);
+        if (ch == 34 || ch == 39) { // " or '
+            var quote = ch;
+            pos = pos + 1;
+            var astart = pos;
+            while (pos < len) {
+                if (str_byte_at(input, pos) == quote) { break; }
+                pos = pos + 1;
+            }
+            var arg = str_sub(input, astart, pos);
+            if (pos < len) { pos = pos + 1; } // skip closing quote
+            vec_push(args_out, arg);
+            argc = argc + 1;
+        } else {
+            // Unquoted arg
+            var astart = pos;
+            while (pos < len) {
+                var ch2 = str_byte_at(input, pos);
+                if (ch2 == 32 || ch2 == 9) { break; }
+                pos = pos + 1;
+            }
+            var arg = str_sub(input, astart, pos);
+            vec_push(args_out, arg);
+            argc = argc + 1;
+        }
+    }
+
+    return argc;
+}
