@@ -49,6 +49,14 @@ agnoshi
 cargo build --release
 ```
 
+## Rust Legacy Notes
+
+The original Rust implementation is preserved in `rust-old/` for porting reference.
+
+- **Rust binary (agnsh)**: 3.8MB ELF x86-64, dynamically linked, debug_info, not stripped
+- **Rust source**: 27,251 lines, 62 modules, 1,241 unit tests, 30 criterion benchmarks
+- **Rust version**: 0.90.0 (pre-v1.0.0)
+
 ## License
 
 GPL-3.0-only
