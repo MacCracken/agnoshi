@@ -136,12 +136,33 @@ fn execute_command(cmd, args, argc) {
 }
 
 // Execute with sudo (non-interactive)
+// M9 FIX: Re-verify sudo at escalation time, not just init
 fn execute_with_privileges(self, cmd, args, argc) {
     if (self.restricted == 1) {
         return 0 - 1; // error: restricted mode
     }
     if (self.sudo_available == 0) {
         return 0 - 2; // error: no sudo
+    }
+
+    // Re-verify sudo exists and is owned by root at escalation time
+    var sudo_path = "/usr/bin/sudo";
+    if (fs_exists(sudo_path) == 0) {
+        sudo_path = "/bin/sudo";
+        if (fs_exists(sudo_path) == 0) {
+            return 0 - 2; // sudo disappeared
+        }
+    }
+    // Verify sudo is owned by root (uid 0) via stat
+    // stat struct: st_dev(8) st_ino(8) st_nlink(8) st_mode(4) st_uid(4)
+    var stat_buf[18]; // 144 bytes / 8 = 18 i64s
+    var stat_result = syscall(SYS_STAT, str_data(sudo_path), &stat_buf);
+    if (stat_result != 0) { return 0 - 2; }
+    // st_uid is at offset 28 bytes (3.5 i64s) — load as i32 at byte offset 28
+    var st_uid = load32(&stat_buf + 28);
+    if (st_uid != 0) {
+        // sudo not owned by root — refuse escalation
+        return 0 - 3;
     }
 
     // Prepend sudo -n
@@ -152,5 +173,5 @@ fn execute_with_privileges(self, cmd, args, argc) {
         vec_push(sudo_args, vec_get(args, i));
     }
 
-    return execute_command("/usr/bin/sudo", sudo_args, argc + 2);
+    return execute_command(sudo_path, sudo_args, argc + 2);
 }

@@ -66,16 +66,30 @@ fn split_command_line(input, first_word_out, args_out) {
         if (pos >= len) { break; }
 
         // Handle quoted strings
+        // M5 FIX: Handle backslash escapes inside quoted strings
         var ch = str_byte_at(input, pos);
         if (ch == 34 || ch == 39) { // " or '
             var quote = ch;
             pos = pos + 1;
-            var astart = pos;
+            var qbuilder = str_builder_new();
             while (pos < len) {
-                if (str_byte_at(input, pos) == quote) { break; }
+                var qch = str_byte_at(input, pos);
+                if (qch == 92 && pos + 1 < len) { // backslash escape
+                    pos = pos + 1;
+                    var ech = str_byte_at(input, pos);
+                    if (ech == quote) { str_builder_append_byte(qbuilder, quote); }
+                    elif (ech == 92) { str_builder_append_byte(qbuilder, 92); }
+                    elif (ech == 110) { str_builder_append_byte(qbuilder, 10); } // \n
+                    elif (ech == 116) { str_builder_append_byte(qbuilder, 9); }  // \t
+                    else { str_builder_append_byte(qbuilder, ech); }
+                    pos = pos + 1;
+                    continue;
+                }
+                if (qch == quote) { break; }
+                str_builder_append_byte(qbuilder, qch);
                 pos = pos + 1;
             }
-            var arg = str_sub(input, astart, pos);
+            var arg = str_builder_finish(qbuilder);
             if (pos < len) { pos = pos + 1; } // skip closing quote
             vec_push(args_out, arg);
             argc = argc + 1;

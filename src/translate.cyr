@@ -28,12 +28,14 @@ fn translate_show_file(intent) {
 fn translate_find_files(intent) {
     var args = vec_new();
     if (intent.field2 != 0) {
+        if (is_safe_path(intent.field2) == 0) { return translate_unknown(intent); }
         vec_push(args, intent.field2);
     } else {
         vec_push(args, ".");
     }
     vec_push(args, "-name");
     if (intent.field1 != 0) {
+        if (is_safe_arg(intent.field1) == 0) { return translate_unknown(intent); }
         vec_push(args, intent.field1);
     } else {
         vec_push(args, "*");
@@ -44,8 +46,14 @@ fn translate_find_files(intent) {
 fn translate_search_content(intent) {
     var args = vec_new();
     vec_push(args, "-r");
-    if (intent.field1 != 0) { vec_push(args, intent.field1); }
-    if (intent.field2 != 0) { vec_push(args, intent.field2); }
+    if (intent.field1 != 0) {
+        if (is_safe_arg(intent.field1) == 0) { return translate_unknown(intent); }
+        vec_push(args, intent.field1);
+    }
+    if (intent.field2 != 0) {
+        if (is_safe_path(intent.field2) == 0) { return translate_unknown(intent); }
+        vec_push(args, intent.field2);
+    }
     return Translation_new("grep", args, "Search file contents", PermissionLevel.READ_ONLY, "grep searches for text patterns in files");
 }
 
@@ -66,16 +74,22 @@ fn translate_create_dir(intent) {
 }
 
 fn translate_copy(intent) {
+    if (intent.field1 == 0 || intent.field2 == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field1) == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field2) == 0) { return translate_unknown(intent); }
     var args = vec_new();
-    if (intent.field1 != 0) { vec_push(args, intent.field1); }
-    if (intent.field2 != 0) { vec_push(args, intent.field2); }
+    vec_push(args, intent.field1);
+    vec_push(args, intent.field2);
     return Translation_new("cp", args, "Copy files", PermissionLevel.USER_WRITE, "cp copies files and directories");
 }
 
 fn translate_move(intent) {
+    if (intent.field1 == 0 || intent.field2 == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field1) == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field2) == 0) { return translate_unknown(intent); }
     var args = vec_new();
-    if (intent.field1 != 0) { vec_push(args, intent.field1); }
-    if (intent.field2 != 0) { vec_push(args, intent.field2); }
+    vec_push(args, intent.field1);
+    vec_push(args, intent.field2);
     return Translation_new("mv", args, "Move/rename files", PermissionLevel.USER_WRITE, "mv moves or renames files and directories");
 }
 

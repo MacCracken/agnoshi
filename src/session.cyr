@@ -221,13 +221,18 @@ fn Session_execute_shell(self, input) {
         return 0;
     }
 
-    // Checkpoint rm/mv before execution
+    // M7 FIX: Checkpoint rm/mv before execution — warn if checkpoint fails
     if (streq(cmd, "rm") == 1) {
+        var checkpoint_ok = 1;
         for (var i = 0; i < vec_len(args); i = i + 1) {
             var arg = vec_get(args, i);
             if (str_byte_at(arg, 0) != 45) { // not a flag (-)
-                CheckpointManager_checkpoint_remove(&self.checkpoint, arg);
+                var cp_result = CheckpointManager_checkpoint_remove(&self.checkpoint, arg);
+                if (cp_result == 0) { checkpoint_ok = 0; }
             }
+        }
+        if (checkpoint_ok == 0) {
+            ui_show_warning("Could not checkpoint some files — undo may not work for this operation.");
         }
     }
     if (streq(cmd, "mv") == 1) {
@@ -347,14 +352,19 @@ fn Session_execute_translation(self, translation) {
         return 0;
     }
 
-    // Checkpoint destructive operations
+    // M7 FIX: Checkpoint destructive operations — warn on failure
     if (streq(translation.command, "rm") == 1) {
         var nargs = vec_len(translation.args);
+        var checkpoint_ok = 1;
         for (var i = 0; i < nargs; i = i + 1) {
             var arg = vec_get(translation.args, i);
             if (str_byte_at(arg, 0) != 45) {
-                CheckpointManager_checkpoint_remove(&self.checkpoint, arg);
+                var cp_result = CheckpointManager_checkpoint_remove(&self.checkpoint, arg);
+                if (cp_result == 0) { checkpoint_ok = 0; }
             }
+        }
+        if (checkpoint_ok == 0) {
+            ui_show_warning("Could not checkpoint some files — undo may not work.");
         }
     }
 

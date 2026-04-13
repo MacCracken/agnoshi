@@ -158,17 +158,29 @@ fn has_system_path_arg(args, argc) {
     return 0;
 }
 
-// Check if rm has dangerous flags
+// M3 FIX: Parse rm flags thoroughly — handle combined flags, --, flags after args
 fn rm_has_dangerous_flags(args, argc) {
     for (var i = 0; i < argc; i = i + 1) {
         var arg = vec_get(args, i);
-        if (streq(arg, "-r") == 1) { return 1; }
-        if (streq(arg, "-f") == 1) { return 1; }
-        if (streq(arg, "-rf") == 1) { return 1; }
-        if (streq(arg, "-fr") == 1) { return 1; }
-        if (streq(arg, "--recursive") == 1) { return 1; }
-        if (streq(arg, "--force") == 1) { return 1; }
-        if (streq(arg, "--no-preserve-root") == 1) { return 1; }
+        var len = str_len(arg);
+
+        // "--" stops flag processing — dangerous because it hides intent
+        if (streq(arg, "--") == 1) { return 1; }
+
+        // Long flags
+        if (str_starts_with(arg, "--recursive") == 1) { return 1; }
+        if (str_starts_with(arg, "--force") == 1) { return 1; }
+        if (str_starts_with(arg, "--no-preserve-root") == 1) { return 1; }
+
+        // Short flags: check each character in combined flags like -rfv, -fir, etc.
+        if (len >= 2 && str_byte_at(arg, 0) == 45 && str_byte_at(arg, 1) != 45) {
+            for (var j = 1; j < len; j = j + 1) {
+                var ch = str_byte_at(arg, j);
+                if (ch == 114) { return 1; } // 'r' — recursive
+                if (ch == 102) { return 1; } // 'f' — force
+                if (ch == 82) { return 1; }  // 'R' — also recursive
+            }
+        }
     }
     return 0;
 }

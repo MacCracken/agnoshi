@@ -1,0 +1,285 @@
+// test_security.tcyr — Security audit regression tests
+//
+// Tests for each finding from the 2026-04-13 security audit.
+// These must never regress.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/hashmap.cyr"
+include "lib/assert.cyr"
+
+// Pull in modules under test
+include "src/sanitize.cyr"
+include "src/mode.cyr"
+include "src/permissions.cyr"
+include "src/config.cyr"
+include "src/intent.cyr"
+include "src/output.cyr"
+include "src/commands.cyr"
+
+// Stub dependencies
+fn getenv(name) { return 0; }
+fn ui_show_error(m) { return 0; }
+fn str_contains_ci(h, n) { return 0; }
+fn str_find_ci(h, n) { return 0 - 1; }
+fn str_find_ci_from(h, n, f) { return 0 - 1; }
+fn str_split_ci(i, s) { return vec_new(); }
+fn str_to_int(s) { return 0; }
+
+var pass_count = 0;
+var fail_count = 0;
+
+fn check(name, condition) {
+    if (condition == 1) {
+        pass_count = pass_count + 1;
+    } else {
+        fail_count = fail_count + 1;
+        print_str("FAIL: ");
+        println(name);
+    }
+}
+
+fn main() {
+    alloc_init();
+    println("=== agnoshi security regression tests ===");
+    println("");
+
+    // ============================
+    // C1: Command bypass via paths
+    // ============================
+    println("--- C1: basename extraction ---");
+
+    check("basename simple", streq(get_command_basename("ls"), "ls"));
+    check("basename absolute", streq(get_command_basename("/usr/bin/dd"), "dd"));
+    check("basename relative", streq(get_command_basename("./rm"), "rm"));
+    check("basename deep", streq(get_command_basename("../../../bin/chmod"), "chmod"));
+    check("basename empty", streq(get_command_basename(""), ""));
+
+    // Blocked commands should be caught regardless of path
+    var empty = vec_new();
+    check("C1 /usr/bin/dd blocked", analyze_command_permission("/usr/bin/dd", empty, 0) == PermissionLevel.BLOCKED);
+    check("C1 ./chmod blocked", analyze_command_permission("./chmod", empty, 0) == PermissionLevel.BLOCKED);
+    check("C1 ../bin/shred blocked", analyze_command_permission("../bin/shred", empty, 0) == PermissionLevel.BLOCKED);
+    check("C1 /bin/mkfs blocked", analyze_command_permission("/bin/mkfs", empty, 0) == PermissionLevel.BLOCKED);
+
+    // Admin via path
+    check("C1 /usr/bin/apt admin", analyze_command_permission("/usr/bin/apt", empty, 0) == PermissionLevel.ADMIN);
+    check("C1 ./kill admin", analyze_command_permission("./kill", empty, 0) == PermissionLevel.ADMIN);
+
+    // Safe via path
+    check("C1 /bin/ls readonly", analyze_command_permission("/bin/ls", empty, 0) == PermissionLevel.READ_ONLY);
+
+    // ============================
+    // C2: Arg sanitization
+    // ============================
+    println("--- C2: argument sanitization ---");
+
+    check("safe arg normal", is_safe_arg("hello") == 1);
+    check("safe arg path", is_safe_arg("/tmp/file.txt") == 1);
+    check("safe arg dash", is_safe_arg("-la") == 1);
+    check("unsafe arg semicolon", is_safe_arg("file; rm -rf /") == 0);
+    check("unsafe arg pipe", is_safe_arg("file | cat") == 0);
+    check("unsafe arg ampersand", is_safe_arg("file && evil") == 0);
+    check("unsafe arg dollar", is_safe_arg("$(evil)") == 0);
+    check("unsafe arg backtick", is_safe_arg("`evil`") == 0);
+    check("unsafe arg paren", is_safe_arg("(evil)") == 0);
+    check("unsafe arg redirect", is_safe_arg("file > /etc/passwd") == 0);
+    check("unsafe arg null", is_safe_arg(0) == 0);
+    check("unsafe arg empty", is_safe_arg("") == 0);
+
+    // ============================
+    // C4: JSON escape
+    // ============================
+    println("--- C4: JSON escape ---");
+
+    var escaped = json_escape("hello");
+    check("json escape plain", streq(escaped, "hello"));
+
+    escaped = json_escape("he said \"hi\"");
+    check("json escape quotes", str_contains(escaped, "\\\"") == 1);
+
+    escaped = json_escape("line1\nline2");
+    check("json escape newline", str_contains(escaped, "\\n") == 1);
+
+    escaped = json_escape("back\\slash");
+    check("json escape backslash", str_contains(escaped, "\\\\") == 1);
+
+    escaped = json_escape(0);
+    check("json escape null", streq(escaped, "\"\""));
+
+    // ============================
+    // M3: rm flag parsing
+    // ============================
+    println("--- M3: rm flag parsing ---");
+
+    var args_rf = vec_new();
+    vec_push(args_rf, "-rf");
+    check("M3 -rf", rm_has_dangerous_flags(args_rf, 1) == 1);
+
+    var args_fr = vec_new();
+    vec_push(args_fr, "-fr");
+    check("M3 -fr", rm_has_dangerous_flags(args_fr, 1) == 1);
+
+    var args_fir = vec_new();
+    vec_push(args_fir, "-fir");
+    check("M3 -fir combined", rm_has_dangerous_flags(args_fir, 1) == 1);
+
+    var args_rv = vec_new();
+    vec_push(args_rv, "-rv");
+    check("M3 -rv", rm_has_dangerous_flags(args_rv, 1) == 1);
+
+    var args_dd = vec_new();
+    vec_push(args_dd, "--");
+    check("M3 -- stop flags", rm_has_dangerous_flags(args_dd, 1) == 1);
+
+    var args_recursive = vec_new();
+    vec_push(args_recursive, "--recursive");
+    check("M3 --recursive", rm_has_dangerous_flags(args_recursive, 1) == 1);
+
+    var args_i = vec_new();
+    vec_push(args_i, "-i");
+    check("M3 -i safe", rm_has_dangerous_flags(args_i, 1) == 0);
+
+    var args_v = vec_new();
+    vec_push(args_v, "-v");
+    check("M3 -v safe", rm_has_dangerous_flags(args_v, 1) == 0);
+
+    var args_file = vec_new();
+    vec_push(args_file, "file.txt");
+    check("M3 file only safe", rm_has_dangerous_flags(args_file, 1) == 0);
+
+    // ============================
+    // M4: Path traversal
+    // ============================
+    println("--- M4: path traversal ---");
+
+    check("M4 safe path", is_safe_path("/home/user/file") == 1);
+    check("M4 safe relative", is_safe_path("file.txt") == 1);
+    check("M4 traversal ..", is_safe_path("../../../etc/shadow") == 0);
+    check("M4 traversal mid", is_safe_path("/home/../etc/passwd") == 0);
+    check("M4 null", is_safe_path(0) == 0);
+    check("M4 metachar path", is_safe_path("/tmp/$(evil)") == 0);
+
+    // ============================
+    // M5: Quote escapes
+    // ============================
+    println("--- M5: quote escape handling ---");
+
+    var cmd_out[1];
+    var args_out = vec_new();
+
+    // Escaped quote inside double quotes
+    args_out = vec_new();
+    var argc = split_command_line("echo \"hello \\\"world\\\"\"", &cmd_out, args_out);
+    check("M5 escaped quote argc", argc == 1);
+    check("M5 escaped quote val", str_contains(vec_get(args_out, 0), "\"world\"") == 1);
+
+    // Escaped backslash
+    args_out = vec_new();
+    argc = split_command_line("echo \"back\\\\slash\"", &cmd_out, args_out);
+    check("M5 escaped backslash", str_contains(vec_get(args_out, 0), "\\") == 1);
+
+    // ============================
+    // M8: Username validation
+    // ============================
+    println("--- M8: username validation ---");
+
+    check("M8 valid user", is_safe_username("alice") == 1);
+    check("M8 valid underscore", is_safe_username("test_user") == 1);
+    check("M8 valid dash", is_safe_username("test-user") == 1);
+    check("M8 valid digits", is_safe_username("user123") == 1);
+    check("M8 invalid space", is_safe_username("test user") == 0);
+    check("M8 invalid semicolon", is_safe_username("user;evil") == 0);
+    check("M8 invalid null", is_safe_username(0) == 0);
+    check("M8 invalid empty", is_safe_username("") == 0);
+
+    // ============================
+    // H4: Git branch validation
+    // ============================
+    println("--- H4: git branch sanitization ---");
+
+    check("H4 valid branch", is_safe_branch_name("main") == 1);
+    check("H4 valid feature", is_safe_branch_name("feature/new-thing") == 1);
+    check("H4 valid dots", is_safe_branch_name("v1.0.0") == 1);
+    check("H4 invalid escape", is_safe_branch_name("main\x1b[2J") == 0);
+    check("H4 invalid null", is_safe_branch_name(0) == 0);
+    check("H4 invalid space", is_safe_branch_name("my branch") == 0);
+
+    // ============================
+    // Terminal escape stripping
+    // ============================
+    println("--- H5: terminal escape stripping ---");
+
+    var clean = strip_control_chars("hello");
+    check("H5 clean passthrough", streq(clean, "hello"));
+
+    clean = strip_control_chars("tab\there");
+    check("H5 tab to space", str_contains(clean, " ") == 1);
+    check("H5 no tab in output", str_contains(clean, "\t") == 0);
+
+    // ============================
+    // Commit message validation
+    // ============================
+    println("--- H7: commit message validation ---");
+
+    check("H7 valid message", is_safe_commit_message("fix bug") == 1);
+    check("H7 flag inject", is_safe_commit_message("-m evil") == 0);
+    check("H7 null", is_safe_commit_message(0) == 0);
+    check("H7 empty", is_safe_commit_message("") == 0);
+
+    // ============================
+    // PID validation
+    // ============================
+    println("--- M2: PID validation ---");
+
+    check("M2 valid pid", is_valid_pid(1234) == 1);
+    check("M2 pid 1", is_valid_pid(1) == 1);
+    check("M2 pid 0 invalid", is_valid_pid(0) == 0);
+    check("M2 negative invalid", is_valid_pid(0 - 1) == 0);
+    check("M2 huge invalid", is_valid_pid(99999999) == 0);
+
+    // ============================
+    // Clean environment
+    // ============================
+    println("--- H2: clean environment ---");
+
+    var env = build_safe_env();
+    var nenv = vec_len(env);
+    check("H2 has PATH", nenv >= 1);
+    check("H2 PATH safe", str_starts_with(vec_get(env, 0), "PATH=/usr/bin") == 1);
+    // Verify no LD_PRELOAD
+    var has_ld = 0;
+    for (var i = 0; i < nenv; i = i + 1) {
+        if (str_starts_with(vec_get(env, i), "LD_") == 1) { has_ld = 1; }
+    }
+    check("H2 no LD_*", has_ld == 0);
+
+    // ============================
+    // Summary
+    // ============================
+    println("");
+    print_str("Passed: ");
+    print_num(pass_count);
+    print_str(" / ");
+    print_num(pass_count + fail_count);
+    println("");
+
+    if (fail_count > 0) {
+        print_str("FAILED: ");
+        print_num(fail_count);
+        println(" tests");
+        return 1;
+    }
+
+    println("All security tests passed.");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

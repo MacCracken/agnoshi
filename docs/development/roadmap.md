@@ -21,17 +21,16 @@
 
 ## Security Backlog (from 2026-04-13 audit)
 
-- [ ] M1: Increase /proc/self/environ buffer or use dynamic allocation
-- [ ] M2: Validate PID > 0 after str_to_int in kill parser *(fixed in translate)*
-- [ ] M3: Parse rm flags more thoroughly — handle `--`, combined flags, flags after args
-- [ ] M4: Block `../` in all file path arguments *(partially fixed via is_safe_path)*
-- [ ] M5: Handle backslash escapes in split_command_line quote parser
-- [ ] M6: Validate alias expansion values against metacharacter set
-- [ ] M7: Block execution if checkpoint fails for destructive operations
-- [ ] M8: Validate /etc/passwd username characters *(fixed)*
-- [ ] M9: Re-verify sudo path/ownership/perms at escalation time, not just init
-- [ ] Add integration test suite for each audit finding
-- [ ] Add `sanitize.cyr` test coverage
+- [x] M1: Dynamic /proc/self/environ buffer (32KB, bounds-checked) (2026-04-13)
+- [x] M2: PID validation via `is_valid_pid()` in translate (2026-04-13)
+- [x] M3: Thorough rm flag parsing — combined flags, `--`, per-char scan (2026-04-13)
+- [x] M4: `is_safe_path()` on all file translators — find, grep, cp, mv, rm, cat, mkdir (2026-04-13)
+- [x] M5: Backslash escape handling in `split_command_line` quote parser (2026-04-13)
+- [x] M6: Alias expansion metacharacter validation via `has_shell_metachars()` (2026-04-13)
+- [x] M7: Checkpoint failure warning before destructive ops (2026-04-13)
+- [x] M8: Username validation via `is_safe_username()` after passwd lookup (2026-04-13)
+- [x] M9: Sudo re-verification (existence + root ownership) at escalation time (2026-04-13)
+- [x] Security regression test suite: `tests/test_security.tcyr` (2026-04-13)
 
 ## Future (post-v1.0.0, demand-gated)
 

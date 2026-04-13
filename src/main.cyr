@@ -43,46 +43,60 @@ include "src/translate.cyr"
 include "src/session.cyr"
 
 // --- Helper: get environment variable ---
+// M1 FIX: Use dynamic read loop instead of fixed 8KB buffer.
+// /proc/self/environ can exceed 8KB on systems with large env.
 fn getenv(name) {
-    // Read from /proc/self/environ
-    var buf[8192];
     var fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0);
     if (fd < 0) { return 0; }
-    var n = syscall(SYS_READ, fd, &buf, 8191);
-    syscall(SYS_CLOSE, fd);
-    if (n <= 0) { return 0; }
 
-    // Environ is null-separated key=value pairs
+    // Read in chunks — accumulate into a dynamic buffer
+    var capacity = 32768; // 32KB initial — covers most environments
+    var buf = alloc(capacity);
+    var total = 0;
+
+    while (1 == 1) {
+        var remaining = capacity - total;
+        if (remaining <= 0) { break; } // buffer full — stop reading
+        var chunk = syscall(SYS_READ, fd, buf + total, remaining);
+        if (chunk <= 0) { break; }
+        total = total + chunk;
+    }
+    syscall(SYS_CLOSE, fd);
+
+    if (total <= 0) { return 0; }
+
+    // Parse null-separated key=value pairs
     var pos = 0;
     var name_len = strlen(name);
-    while (pos < n) {
+    while (pos < total) {
         // Find end of this entry (null byte)
         var end = pos;
-        while (end < n) {
-            if (load8(&buf + end) == 0) { break; }
+        while (end < total) {
+            if (load8(buf + end) == 0) { break; }
             end = end + 1;
         }
 
         // Check if this entry starts with name=
-        var match = 1;
-        if (end - pos <= name_len) { match = 0; }
-        if (match == 1) {
+        var entry_len = end - pos;
+        if (entry_len > name_len) {
+            var match = 1;
             for (var i = 0; i < name_len; i = i + 1) {
-                if (load8(&buf + pos + i) != load8(name + i)) {
+                if (load8(buf + pos + i) != load8(name + i)) {
                     match = 0;
                     break;
                 }
             }
-        }
-        if (match == 1) {
-            if (load8(&buf + pos + name_len) == 61) { // '='
-                // Found it — copy value
-                var val_start = pos + name_len + 1;
-                var val_len = end - val_start;
-                var result = alloc(val_len + 1);
-                memcpy(result, &buf + val_start, val_len);
-                store8(result + val_len, 0);
-                return result;
+            if (match == 1) {
+                if (load8(buf + pos + name_len) == 61) { // '='
+                    var val_start = pos + name_len + 1;
+                    var val_len = end - val_start;
+                    // Bounds check
+                    if (val_len < 0 || val_len > 65536) { return 0; }
+                    var result = alloc(val_len + 1);
+                    memcpy(result, buf + val_start, val_len);
+                    store8(result + val_len, 0);
+                    return result;
+                }
             }
         }
 

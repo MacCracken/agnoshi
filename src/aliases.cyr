@@ -14,11 +14,18 @@ fn AliasManager_new() {
 }
 
 // Set or update an alias
+// M6 FIX: Validate expansion doesn't contain shell metacharacters
 fn AliasManager_set(self, name, expansion) {
+    if (has_shell_metachars(expansion) == 1) {
+        // Reject — alias expansion contains dangerous characters
+        ui_show_error("Alias expansion contains dangerous characters (;|&$`). Rejected.");
+        return 0 - 1;
+    }
     if (map_has(self.map, name) == 0) {
         self.count = self.count + 1;
     }
     map_set(self.map, name, expansion);
+    return 0;
 }
 
 // Remove an alias, returns 1 if existed
