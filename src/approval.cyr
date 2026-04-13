@@ -96,13 +96,14 @@ fn ApprovalManager_request(self, cmd, args, argc, risk) {
     }
 
     // Display request to user
+    // H5 FIX: Use print_str_safe to strip terminal escape sequences
     syscall(SYS_WRITE, 1, "\n", 1);
     syscall(SYS_WRITE, 1, risk_icon(risk), strlen(risk_icon(risk)));
     syscall(SYS_WRITE, 1, " Approval required: ", 20);
-    print_str(cmd);
+    print_str_safe(cmd);
     for (var i = 0; i < argc; i = i + 1) {
         syscall(SYS_WRITE, 1, " ", 1);
-        print_str(vec_get(args, i));
+        print_str_safe(vec_get(args, i));
     }
     syscall(SYS_WRITE, 1, "\n", 1);
 

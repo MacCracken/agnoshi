@@ -22,6 +22,7 @@ include "lib/args.cyr"
 include "lib/process.cyr"
 
 // --- Application modules ---
+include "src/sanitize.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/config.cyr"

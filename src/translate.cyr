@@ -18,6 +18,8 @@ fn translate_list_files(intent) {
 }
 
 fn translate_show_file(intent) {
+    if (intent.field1 == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field1) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, intent.field1);
     return Translation_new("cat", args, "Display file contents", PermissionLevel.READ_ONLY, "cat outputs file contents to stdout");
@@ -48,12 +50,15 @@ fn translate_search_content(intent) {
 }
 
 fn translate_change_dir(intent) {
+    if (intent.field1 == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, intent.field1);
     return Translation_new("cd", args, "Change directory", PermissionLevel.SAFE, "cd changes the current working directory");
 }
 
 fn translate_create_dir(intent) {
+    if (intent.field1 == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field1) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, "-p");
     vec_push(args, intent.field1);
@@ -75,6 +80,8 @@ fn translate_move(intent) {
 }
 
 fn translate_remove(intent) {
+    if (intent.field1 == 0) { return translate_unknown(intent); }
+    if (is_safe_path(intent.field1) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     if (intent.int1 == 1) { vec_push(args, "-r"); }
     vec_push(args, intent.field1);
@@ -88,6 +95,8 @@ fn translate_show_processes(intent) {
 }
 
 fn translate_kill_process(intent) {
+    // M2 FIX: Validate PID — kill 0 sends to entire process group
+    if (is_valid_pid(intent.int1) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, fmt_int(intent.int1));
     return Translation_new("kill", args, "Terminate a process", PermissionLevel.ADMIN, "kill sends a signal to terminate a process");
@@ -144,6 +153,10 @@ fn translate_git_commit(intent) {
     vec_push(args, "commit");
     if (intent.int1 == 1) { vec_push(args, "-a"); }
     if (intent.field1 != 0) {
+        // H7 FIX: Validate commit message — reject leading dash (flag injection)
+        if (is_safe_commit_message(intent.field1) == 0) {
+            return translate_unknown(intent);
+        }
         vec_push(args, "-m");
         vec_push(args, intent.field1);
     }
@@ -290,6 +303,34 @@ fn translate_group_add(intent) {
 fn translate_group_list(intent) {
     var args = vec_new();
     return Translation_new("groups", args, "List groups", PermissionLevel.READ_ONLY, "groups shows group memberships");
+}
+
+// --- C5 FIX: Previously unhandled intent translators ---
+
+fn translate_audit_view(intent) {
+    // MCP-native: audit queries go through the MCP gateway
+    var args = vec_new();
+    return Translation_with_mcp("echo", args, "View audit log", PermissionLevel.ADMIN,
+        "Query the audit trail for shell actions",
+        "agnos_audit_query",
+        str_cat("{\"agent\":\"", json_escape(intent.field1 != 0 ? intent.field1 : ""), "\"}"));
+}
+
+fn translate_agent_info(intent) {
+    var args = vec_new();
+    return Translation_with_mcp("echo", args, "View agent info", PermissionLevel.READ_ONLY,
+        "Query agent status and information",
+        "agnos_agent_info",
+        str_cat("{\"agent_id\":\"", json_escape(intent.field1 != 0 ? intent.field1 : ""), "\"}"));
+}
+
+fn translate_service_control(intent) {
+    if (intent.field1 == 0) { return translate_unknown(intent); }
+    var args = vec_new();
+    vec_push(args, intent.field1); // action: start/stop/restart/status/list
+    if (intent.field2 != 0) { vec_push(args, intent.field2); }
+    return Translation_new("systemctl", args, "Manage system services", PermissionLevel.ADMIN,
+        "systemctl controls systemd services");
 }
 
 // --- Fallback translators ---

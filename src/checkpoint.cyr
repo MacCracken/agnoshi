@@ -24,9 +24,15 @@ struct CheckpointManager {
 }
 
 fn CheckpointManager_new() {
-    // Create checkpoint dir in /tmp
+    // H3 FIX: Use $HOME/.agnoshi/checkpoints instead of world-readable /tmp
+    var home = getenv("HOME");
     var dir = str_from("/tmp/agnoshi-checkpoints");
+    if (home != 0) {
+        dir = str_cat(home, "/.agnoshi/checkpoints");
+    }
     fs_mkdir_p(dir);
+    // Set dir to 0700 (owner-only)
+    syscall(SYS_CHMOD, str_data(dir), 448);
     return CheckpointManager { vec_new(), dir, 0 };
 }
 

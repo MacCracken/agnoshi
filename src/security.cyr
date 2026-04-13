@@ -18,11 +18,13 @@ fn SecurityContext_new(restricted) {
     var uid = syscall(SYS_GETUID);
     var gid = syscall(SYS_GETGID);
     var euid = syscall(SYS_GETEUID);
+    // H1 FIX: Check effective UID too — catches setuid binaries
     var is_root = 0;
     if (uid == 0) { is_root = 1; }
+    if (euid == 0) { is_root = 1; }
 
-    // Get username from /etc/passwd lookup
-    var username = security_get_username(uid);
+    // Get username from /etc/passwd lookup (validated)
+    var username = security_get_username_safe(uid);
 
     // Check if sudo is available
     var sudo_available = security_check_sudo();
@@ -65,6 +67,16 @@ fn security_get_username(uid) {
 
     // Fallback to uid_N
     return str_cat("uid_", uid_str);
+}
+
+// M8 FIX: Validate username after lookup
+fn security_get_username_safe(uid) {
+    var name = security_get_username(uid);
+    if (is_safe_username(name) == 1) {
+        return name;
+    }
+    // Unsafe characters in username — fallback
+    return str_cat("uid_", fmt_int(uid));
 }
 
 // Check if sudo is available

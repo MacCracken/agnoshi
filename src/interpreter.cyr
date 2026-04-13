@@ -431,6 +431,15 @@ fn Interpreter_translate(self, intent) {
         13 => { return translate_disk_usage(intent); }
         14 => { return translate_install_package(intent); }
         15 => { return translate_shell_command(intent); }
+        // C5 FIX: Handle all parsed intent tags that were missing
+        16 => { return translate_audit_view(intent); }
+        17 => { return translate_agent_info(intent); }
+        18 => { return translate_service_control(intent); }
+        13 => { return translate_disk_usage(intent); }
+        9 => { return translate_show_processes(intent); }
+        11 => { return translate_system_info(intent); }
+        12 => { return translate_network_info(intent); }
+        14 => { return translate_install_package(intent); }
         // Git
         184 => { return translate_git_commit(intent); }
         185 => { return translate_git_diff(intent); }

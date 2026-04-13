@@ -23,16 +23,25 @@ fn AuditEntry_new(user, mode, input, action, approved, result) {
 }
 
 // Serialize an audit entry to JSON string
+// C4 FIX: Escape all user-controlled fields to prevent JSON injection
 fn AuditEntry_to_json(self) {
-    var j = json_new();
-    json_set_str(j, "timestamp", self.timestamp);
-    json_set_str(j, "user", self.user);
-    json_set_str(j, "mode", self.mode);
-    json_set_str(j, "input", self.input);
-    json_set_str(j, "action", self.action);
-    json_set_int(j, "approved", self.approved);
-    json_set_str(j, "result", self.result);
-    return json_encode(j);
+    var builder = str_builder_new();
+    str_builder_append(builder, "{\"timestamp\":\"");
+    str_builder_append(builder, json_escape(self.timestamp));
+    str_builder_append(builder, "\",\"user\":\"");
+    str_builder_append(builder, json_escape(self.user));
+    str_builder_append(builder, "\",\"mode\":\"");
+    str_builder_append(builder, json_escape(self.mode));
+    str_builder_append(builder, "\",\"input\":\"");
+    str_builder_append(builder, json_escape(self.input));
+    str_builder_append(builder, "\",\"action\":\"");
+    str_builder_append(builder, json_escape(self.action));
+    str_builder_append(builder, "\",\"approved\":");
+    str_builder_append(builder, fmt_int(self.approved));
+    str_builder_append(builder, ",\"result\":\"");
+    str_builder_append(builder, json_escape(self.result));
+    str_builder_append(builder, "\"}");
+    return str_builder_finish(builder);
 }
 
 // AuditLogger: appends JSON lines to a file

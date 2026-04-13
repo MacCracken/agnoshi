@@ -104,6 +104,11 @@ fn prompt_render_git(cwd) {
     var branch = prompt_detect_git_branch(cwd);
     if (branch == 0) { return str_from(""); }
 
+    // H4 FIX: Validate branch name — strip control chars to prevent terminal injection
+    if (is_safe_branch_name(branch) == 0) {
+        branch = strip_control_chars(branch);
+    }
+
     var builder = str_builder_new();
     str_builder_append(builder, "(");
     str_builder_append(builder, branch);

@@ -178,8 +178,12 @@ fn rm_has_dangerous_flags(args, argc) {
 // args: vec of argument strings
 // argc: number of arguments
 fn analyze_command_permission(cmd, args, argc) {
+    // C1 FIX: Extract basename to prevent bypass via absolute/relative paths
+    // e.g., /usr/bin/dd, ./rm, ../bin/chmod
+    var base = get_command_basename(cmd);
+
     // Special handling for rm
-    if (streq(cmd, "rm") == 1) {
+    if (streq(base, "rm") == 1) {
         if (rm_has_dangerous_flags(args, argc) == 1) {
             return PermissionLevel.BLOCKED;
         }
@@ -187,17 +191,17 @@ fn analyze_command_permission(cmd, args, argc) {
     }
 
     // Blocked commands
-    if (is_blocked_command(cmd) == 1) {
+    if (is_blocked_command(base) == 1) {
         return PermissionLevel.BLOCKED;
     }
 
     // Admin commands
-    if (is_admin_command(cmd) == 1) {
+    if (is_admin_command(base) == 1) {
         return PermissionLevel.ADMIN;
     }
 
     // Write commands — check if targeting system paths
-    if (is_write_command(cmd) == 1) {
+    if (is_write_command(base) == 1) {
         if (has_system_path_arg(args, argc) == 1) {
             return PermissionLevel.SYSTEM_WRITE;
         }
@@ -205,12 +209,12 @@ fn analyze_command_permission(cmd, args, argc) {
     }
 
     // Read-only commands
-    if (is_readonly_command(cmd) == 1) {
+    if (is_readonly_command(base) == 1) {
         return PermissionLevel.READ_ONLY;
     }
 
     // Safe builtins
-    if (is_safe_command(cmd) == 1) {
+    if (is_safe_command(base) == 1) {
         return PermissionLevel.SAFE;
     }
 
