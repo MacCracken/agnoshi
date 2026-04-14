@@ -1,0 +1,93 @@
+.TH AGNSH 1 "April 2026" "agnoshi 1.0.0" "User Commands"
+.SH NAME
+agnsh \- AI-native natural language shell for AGNOS
+.SH SYNOPSIS
+.B agnsh
+.RI [ OPTIONS ]
+.RI [ -c
+.IR COMMAND ]
+.SH DESCRIPTION
+.B agnsh
+translates natural language into system commands with human oversight,
+security approval workflows, and full audit logging.
+.PP
+Without arguments, starts an interactive shell. Type natural language to
+see the proposed shell command and its permission level before execution.
+.SH OPTIONS
+.TP
+.B -c, --command \fICMD\fR
+Execute one command and exit.
+.TP
+.B -v, --version
+Show version and exit.
+.TP
+.B -h, --help
+Show usage and exit.
+.SH MODES
+.TP
+.B human
+Direct shell execution, no AI assistance.
+.TP
+.B assist
+AI parses intent, shows proposed command, requires approval for risky ops.
+.TP
+.B auto
+AI executes safe commands autonomously; escalated ops fall back to assist.
+.TP
+.B strict
+Every command requires explicit human approval.
+.SH BUILTINS
+.TP
+.B help
+Show built-in commands.
+.TP
+.B clear
+Clear screen.
+.TP
+.B exit, quit
+Exit shell.
+.TP
+.B history
+Show command history.
+.TP
+.B mode [NAME]
+Show or change operating mode (human, assist, auto, strict).
+.TP
+.B undo
+Undo last destructive operation (via checkpoint).
+.SH PERMISSIONS
+Every command is classified into one of six levels:
+.TP
+.B SAFE
+No state change (cd, echo, help).
+.TP
+.B READ_ONLY
+System queries (ls, cat, ps).
+.TP
+.B USER_WRITE
+Modifies user files (cp, mv, touch).
+.TP
+.B SYSTEM_WRITE
+Modifies system paths (requires approval).
+.TP
+.B ADMIN
+Requires sudo (requires approval).
+.TP
+.B BLOCKED
+Never allowed for AI (rm -rf, dd, mkfs, chmod, chown).
+.SH FILES
+.TP
+.I ~/.agnsh_history
+Command history (mode 0600).
+.TP
+.I ~/.agnsh_audit.log
+Structured JSON audit log.
+.TP
+.I ~/.agnoshi/checkpoints/
+Backup files for undo (mode 0700).
+.SH AUTHOR
+Written for the AGNOS project.
+.SH SEE ALSO
+.BR bash (1),
+.BR sudo (8),
+.BR systemctl (1)

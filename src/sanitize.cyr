@@ -98,19 +98,38 @@ fn has_shell_metachars(s) {
 }
 fn is_safe_arg(s) {
     if (s == 0) { return 0; }
-    var len = str_len(s);
+    var len = strlen(s);
     if (len == 0) { return 0; }
     if (len > 4096) { return 0; }
-    return (has_shell_metachars(s) == 0);
+    return (has_shell_metachars_cstr(s) == 0);
 }
-fn has_path_traversal(path) {
+fn has_path_traversal_cstr(path) {
     if (path == 0) { return 0; }
-    return str_contains(path, "..");
+    var len = strlen(path);
+    if (len < 2) { return 0; }
+    for (var i = 0; i < len - 1; i = i + 1) {
+        if (load8(path + i) == 46) {
+            if (load8(path + i + 1) == 46) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+fn has_shell_metachars_cstr(path) {
+    if (path == 0) { return 0; }
+    var len = strlen(path);
+    for (var i = 0; i < len; i = i + 1) {
+        if (is_shell_metachar(load8(path + i)) == 1) {
+            return 1;
+        }
+    }
+    return 0;
 }
 fn is_safe_path(path) {
     if (path == 0) { return 0; }
-    if (has_path_traversal(path) == 1) { return 0; }
-    if (has_shell_metachars(path) == 1) { return 0; }
+    if (has_path_traversal_cstr(path) == 1) { return 0; }
+    if (has_shell_metachars_cstr(path) == 1) { return 0; }
     return 1;
 }
 fn get_command_basename(cmd) {
@@ -130,11 +149,11 @@ fn get_command_basename(cmd) {
 }
 fn is_safe_username(name) {
     if (name == 0) { return 0; }
-    var len = str_len(name);
+    var len = strlen(name);
     if (len == 0) { return 0; }
     if (len > 256) { return 0; }
     for (var i = 0; i < len; i = i + 1) {
-        var ch = str_byte_at(name, i);
+        var ch = load8(name + i);
         if (ch >= 97 && ch <= 122) { continue; }
         if (ch >= 65 && ch <= 90) { continue; }
         if (ch >= 48 && ch <= 57) { continue; }
@@ -204,11 +223,11 @@ fn is_valid_pid(pid) {
 }
 fn is_safe_branch_name(name) {
     if (name == 0) { return 0; }
-    var len = str_len(name);
+    var len = strlen(name);
     if (len == 0) { return 0; }
     if (len > 256) { return 0; }
     for (var i = 0; i < len; i = i + 1) {
-        var ch = str_byte_at(name, i);
+        var ch = load8(name + i);
         if (ch >= 97 && ch <= 122) { continue; }
         if (ch >= 65 && ch <= 90) { continue; }
         if (ch >= 48 && ch <= 57) { continue; }
@@ -222,8 +241,8 @@ fn is_safe_branch_name(name) {
 }
 fn is_safe_commit_message(msg) {
     if (msg == 0) { return 0; }
-    var len = str_len(msg);
+    var len = strlen(msg);
     if (len == 0) { return 0; }
-    if (str_byte_at(msg, 0) == 45) { return 0; }
+    if (load8(msg) == 45) { return 0; }
     return 1;
 }

@@ -120,31 +120,40 @@ fn is_safe_command(cmd) {
     if (streq(cmd, "agnsh") == 1) { return 1; }
     return 0;
 }
+fn cstr_starts_with(s, prefix) {
+    var slen = strlen(s);
+    var plen = strlen(prefix);
+    if (plen > slen) { return 0; }
+    for (var i = 0; i < plen; i = i + 1) {
+        if (load8(s + i) != load8(prefix + i)) { return 0; }
+    }
+    return 1;
+}
 fn has_system_path_arg(args, argc) {
     for (var i = 0; i < argc; i = i + 1) {
         var arg = vec_get(args, i);
-        if (str_starts_with(arg, "/etc/") == 1) { return 1; }
-        if (str_starts_with(arg, "/usr/") == 1) { return 1; }
-        if (str_starts_with(arg, "/bin/") == 1) { return 1; }
-        if (str_starts_with(arg, "/sbin/") == 1) { return 1; }
-        if (str_starts_with(arg, "/lib") == 1) { return 1; }
+        if (cstr_starts_with(arg, "/etc/") == 1) { return 1; }
+        if (cstr_starts_with(arg, "/usr/") == 1) { return 1; }
+        if (cstr_starts_with(arg, "/bin/") == 1) { return 1; }
+        if (cstr_starts_with(arg, "/sbin/") == 1) { return 1; }
+        if (cstr_starts_with(arg, "/lib") == 1) { return 1; }
     }
     return 0;
 }
 fn rm_has_dangerous_flags(args, argc) {
     for (var i = 0; i < argc; i = i + 1) {
         var arg = vec_get(args, i);
-        var len = str_len(arg);
+        var len = strlen(arg);
         if (streq(arg, "--") == 1) { return 1; }
-        if (str_starts_with(arg, "--recursive") == 1) { return 1; }
-        if (str_starts_with(arg, "--force") == 1) { return 1; }
-        if (str_starts_with(arg, "--no-preserve-root") == 1) { return 1; }
-        if (len >= 2 && str_byte_at(arg, 0) == 45 && str_byte_at(arg, 1) != 45) {
+        if (cstr_starts_with(arg, "--recursive") == 1) { return 1; }
+        if (cstr_starts_with(arg, "--force") == 1) { return 1; }
+        if (cstr_starts_with(arg, "--no-preserve-root") == 1) { return 1; }
+        if (len >= 2 && load8(arg) == 45 && load8(arg + 1) != 45) {
             for (var j = 1; j < len; j = j + 1) {
-                var ch = str_byte_at(arg, j);
-                if (ch == 114) { return 1; } 
-                if (ch == 102) { return 1; } 
-                if (ch == 82) { return 1; }  
+                var ch = load8(arg + j);
+                if (ch == 114) { return 1; }
+                if (ch == 102) { return 1; }
+                if (ch == 82) { return 1; }
             }
         }
     }

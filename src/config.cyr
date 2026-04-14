@@ -1,8 +1,6 @@
 include "lib/str.cyr"
 var MCP_BASE_URL_DATA = "http://127.0.0.1:8090";
-var DEFAULT_MCP_BASE_URL: Str = str_from(MCP_BASE_URL_DATA);
 var LLM_BASE_URL_DATA = "http://127.0.0.1:8088";
-var DEFAULT_LLM_BASE_URL: Str = str_from(LLM_BASE_URL_DATA);
 struct ShellConfig {
     default_mode;
     history_size;

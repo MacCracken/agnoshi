@@ -2,60 +2,94 @@
 
 **AI-native natural language shell for AGNOS.**
 
-Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell interface for AGNOS. It translates natural language into system commands with human oversight, security approval workflows, and full audit logging.
+Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell for AGNOS. It translates natural language into system commands with human oversight, security approval workflows, and full audit logging.
+
+Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
 ## Features
 
-- **Natural language interpretation** — translate intent to shell commands
-- **19-file interpreter** — intent parsing, pattern matching, per-domain translation
-- **30+ domain translators** — filesystem, process, network, packages, marketplace, and all consumer apps
-- **Security model** — approval workflows, permission checking, sandbox execution
-- **Session management** — history, context tracking, mode switching
-- **Completion engine** — fuzzy matching, command suggestions
-- **Dashboard** — system status, agent activity
-- **Aliases** — user-defined command shortcuts
+- **Natural language interpretation** — keyword-based intent parser, 44 intent types
+- **30+ domain translators** — filesystem, process, network, packages, git, firewall, user/group, services
+- **Security-first** — every command classified (SAFE / READ_ONLY / USER_WRITE / SYSTEM_WRITE / ADMIN / BLOCKED)
+- **Approval workflows** — risky operations require explicit human approval
+- **Checkpoint/undo** — destructive ops (rm, mv) backed up before execution
+- **Audit logging** — structured JSON log of every action with timestamp, user, mode, result
+- **Four modes** — human, assist, auto, strict
+- **Static binary** — 146 KB, no dynamic dependencies
+
+## Install
+
+```bash
+# Build from source (requires cyrius compiler)
+cyrius build src/agnsh.cyr build/agnsh
+
+# Install to /usr/local/bin
+sudo sh scripts/install.sh
+```
+
+## Usage
+
+```bash
+agnsh                           # interactive shell
+agnsh -c "show me all files"    # one-shot command
+agnsh --version                 # print version
+agnsh --help                    # show usage
+```
 
 ## Architecture
 
 ```
-agnoshi
-├── interpreter/       — NL→command translation engine
-│   ├── intent.rs      — Intent classification
-│   ├── patterns.rs    — Pattern matching rules
-│   ├── parse/         — Creative, platform, system, tools parsing
-│   ├── translate/     — 30+ per-domain translators
-│   ├── explain.rs     — Command explanation
-│   └── tests.rs       — Interpreter test suite
-├── approval.rs        — Human-in-the-loop approval workflows
-├── security.rs        — Permission checking, sandbox integration
-├── session.rs         — Session lifecycle and context
-├── completion.rs      — Tab completion and fuzzy matching
-├── commands.rs        — Built-in shell commands
-├── dashboard.rs       — System status display
-├── aliases.rs         — User-defined aliases
-├── prompt.rs          — Prompt rendering
-├── output.rs          — Output formatting
-├── ui.rs              — Terminal UI
-├── config.rs          — Shell configuration
-├── history.rs         — Command history
-├── llm.rs             — LLM integration via hoosh
-├── audit.rs           — Audit logging
-└── main.rs            — Binary entrypoint (agnsh)
+src/
+├── agnsh.cyr         — binary entry point (v1.0 minimal)
+├── sanitize.cyr      — input validation, JSON escape, env whitelist
+├── mode.cyr          — operating mode (human/assist/auto/strict)
+├── permissions.cyr   — command classification, permission levels
+├── intent.cyr        — Intent + Translation types, 44 intent tags
+├── interpreter.cyr   — NL parse + translate pipeline
+├── translate.cyr     — 40+ per-intent translators
+├── commands.cyr      — command-line parsing, builtin detection
+├── approval.cyr      — risk assessment, human approval UI
+├── security.cyr      — SecurityContext, privilege escalation
+├── session.cyr       — shell session lifecycle
+├── checkpoint.cyr    — destructive op rollback
+├── audit.cyr         — JSON audit log
+├── history.cyr       — command history (persistent, 0600 perms)
+├── aliases.cyr       — user-defined aliases
+├── completion.cyr    — tab completion engine
+├── config.cyr        — shell configuration
+├── output.cyr        — output formatting (auto/json/table)
+├── prompt.cyr        — prompt rendering
+└── ui.cyr            — terminal UI helpers
 ```
 
-## Building
+## Security
 
-```bash
-cargo build --release
-```
+See `docs/audit/` for the security audit report. All 21 findings resolved as of v1.0.0.
 
-## Rust Legacy Notes
+**Key protections:**
+- Command basename extraction (prevents `/usr/bin/dd` bypass of blocked list)
+- Path traversal blocked (`../` rejected)
+- Terminal escape sanitization (approval UI, git branch display)
+- Environment whitelist for privileged subprocesses (no LD_PRELOAD inheritance)
+- JSON-escaped audit log (no injection)
+- Sudo re-verified at escalation time (path + root ownership check)
 
-The original Rust implementation is preserved in `rust-old/` for porting reference.
+## Benchmarks
 
-- **Rust binary (agnsh)**: 3.8MB ELF x86-64, dynamically linked, debug_info, not stripped
-- **Rust source**: 27,251 lines, 62 modules, 1,241 unit tests, 30 criterion benchmarks
-- **Rust version**: 0.90.0 (pre-v1.0.0)
+See `benchmarks-rust-v-cyrius.md` for full Rust-vs-Cyrius comparison.
+
+| Metric | Rust 0.90 | Cyrius 1.0 | Δ |
+|--------|-----------|-----------|---|
+| Parse NL→Intent | 32 us | 1 us | **32× faster** |
+| Translate Intent→cmd | 167 ns | 680 ns | 4× slower |
+| Full pipeline | 32.2 us | 1.7 us | **19× faster** |
+| Binary size | 3.8 MB | 146 KB | **−96%** |
+| Startup | ~5 ms | microseconds | near-instant |
+
+## Rust Legacy
+
+The original Rust implementation is preserved in `rust-old/` for reference during the port.
+27,251 lines, 62 modules, 1,241 unit tests, 30 criterion benchmarks, version 0.90.0.
 
 ## License
 

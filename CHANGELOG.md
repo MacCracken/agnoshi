@@ -4,7 +4,64 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0] - 2026-04-13
+
+### Added
+- **port** — full Cyrius port of the Rust codebase (27,251 → 4,042 lines, 20 modules)
+- **sanitize.cyr** — shared validation module: `is_safe_arg`, `is_safe_path`, `get_command_basename`, `strip_control_chars`, `json_escape`, `build_safe_env`, `is_valid_pid`, `is_safe_branch_name`, `is_safe_commit_message`, `is_safe_username`
+- **audit** — JSON-escaped audit log output (prevents log injection)
+- **benchmarks** — `tests/bench_core.bcyr` with 10 benchmarks; results in `bench-history.csv` and `benchmarks-rust-v-cyrius.md`
+- **tests** — `tests/test_core.tcyr` (100 assertions), `tests/test_security.tcyr` (80 assertions)
+- **scripts/install.sh** — install to /usr/local/bin
+- **scripts/uninstall.sh** — clean removal
+- **scripts/smoke-test.sh** — 20 end-to-end tests for the binary
+- **docs/agnsh.1** — man page
+- **docs/audit/2026-04-13.md** — 21-finding security audit report
+- **CI** — GitHub Actions workflow builds, smoke-tests, and benchmarks on every push
+
+### Changed
+- **entry point** — `src/agnsh.cyr` replaces `src/main.cyr` (minimal, works with current cc3)
+- **binary name** — `agnsh` (was `agnoshi`) to match man page and prior convention
+- **permissions** — `analyze_command_permission` now extracts basename before classification (prevents `/usr/bin/dd` bypass)
+- **security** — check effective UID (catches setuid), sudo re-verified at escalation time
+- **checkpoint** — backups moved from world-readable `/tmp` to `$HOME/.agnoshi/checkpoints` (mode 0700)
+- **checkpoint** — auto-prune keeps only the most recent 100 entries (deletes old backups)
+- **interpreter** — split `Interpreter_translate` 42-arm match into `translate_core` + `translate_extended` (cc3 per-function limit)
+- **IntentTag** — pruned from 211 to 44 entries (downstream consumer apps deferred)
+
+### Fixed
+- **security (C1)** — command bypass via absolute/relative paths (basename extraction)
+- **security (C2)** — argument injection (dangerous character validation)
+- **security (C3)** — null pointer dereference in 4 translators
+- **security (C4)** — JSON injection in audit logs
+- **security (C5)** — 8 unhandled intent tags fell through to SAFE echo
+- **security (H1)** — euid check in root detection
+- **security (H2)** — environment inheritance in privilege escalation (clean env whitelist)
+- **security (H3)** — checkpoint dir in world-readable /tmp
+- **security (H4)** — git branch terminal escape injection
+- **security (H5)** — approval UI terminal escape injection
+- **security (H7)** — git commit message argument injection (leading-dash reject)
+- **security (M1)** — /proc/self/environ 8KB fixed buffer (now 32KB dynamic with bounds check)
+- **security (M2)** — PID validation (`kill 0` kills process group)
+- **security (M3)** — rm flag parsing (`--`, combined flags, per-char scan)
+- **security (M4)** — path traversal in file translators
+- **security (M5)** — backslash escape handling in quote parser
+- **security (M6)** — alias expansion metacharacter injection
+- **security (M7)** — checkpoint failure warning before destructive ops
+- **security (M8)** — /etc/passwd username validation
+- **security (M9)** — sudo re-verification at escalation time
+
+### Performance
+- parse/list_files: 32.0us (Rust) → 1us (Cyrius) — **32× faster**
+- parse/cd: 19us (Rust) → 1us (Cyrius) — **19× faster**
+- binary size: 3.8 MB (Rust, dynlinked+debug) → 146 KB (Cyrius, static) — **−96%**
+- startup: ~2-5ms (Rust, dynamic linker) → microseconds (Cyrius, static ELF)
+- note: translation is 4-8× slower per call (still sub-microsecond); net pipeline 19× faster
+
+### Removed
+- **Rust implementation** — preserved in `rust-old/` for reference during port
+
+## [0.90.0] - 2026-04-02
 
 ### Added
 

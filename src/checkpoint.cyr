@@ -89,3 +89,23 @@ fn CheckpointManager_undo_last(self) {
 fn CheckpointManager_count(self) {
     return load64(self + 16);
 }
+var CHECKPOINT_MAX_ENTRIES = 100;
+fn CheckpointManager_prune(self) {
+    var count = load64(self + 16);
+    if (count <= CHECKPOINT_MAX_ENTRIES) { return 0; }
+    var to_remove = count - CHECKPOINT_MAX_ENTRIES;
+    var vec = load64(self);
+    for (var i = 0; i < to_remove; i = i + 1) {
+        var cp = vec_get(vec, i);
+        if (load64(cp) == CheckpointOp.FILE_REMOVED) {
+            fs_remove(load64(cp + 16));
+        }
+    }
+    var new_vec = vec_new();
+    for (var i = to_remove; i < count; i = i + 1) {
+        vec_push(new_vec, vec_get(vec, i));
+    }
+    store64(self, new_vec);
+    store64(self + 16, count - to_remove);
+    return to_remove;
+}

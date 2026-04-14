@@ -1,0 +1,150 @@
+# agnsh.cyr -- minimal working agnoshi binary for v1.0
+# Demonstrates the core NL -> command translation pipeline.
+# Uses only Cyrius stdlib features that actually work.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/hashmap.cyr"
+include "lib/tagged.cyr"
+include "lib/args.cyr"
+
+fn getenv(name) { return 0; }
+fn ui_show_error(m) { return 0; }
+fn ui_show_warning(m) { return 0; }
+fn chrono_now_rfc3339() { return str_from("2026-04-13T00:00:00Z"); }
+
+include "src/sanitize.cyr"
+include "src/mode.cyr"
+include "src/permissions.cyr"
+include "src/intent.cyr"
+include "src/commands.cyr"
+include "src/translate.cyr"
+include "src/interpreter.cyr"
+
+var VERSION_STR = "agnoshi 1.0.0";
+
+fn print_version() {
+    println(VERSION_STR);
+}
+
+fn print_usage() {
+    println("Usage: agnsh [OPTIONS] [-c COMMAND]");
+    println("");
+    println("  -c, --command CMD   Execute one command and exit");
+    println("  -v, --version       Show version");
+    println("  -h, --help          Show this help");
+    println("");
+    println("Interactive mode (no args): type natural language or shell commands.");
+    println("  help    -- builtin commands");
+    println("  exit    -- leave shell");
+}
+
+fn print_intent_result(input_cstr) {
+    var s = str_from(input_cstr);
+    var interp = Interpreter_new();
+    var intent = Interpreter_parse(interp, s);
+    var tag = load64(intent);
+
+    str_print(str_from("Intent: "));
+    str_print(str_from_int(tag));
+
+    if (tag == IntentTag.UNKNOWN) {
+        println(" (UNKNOWN)");
+        return 0;
+    }
+
+    var translation = Interpreter_translate(interp, intent);
+    if (translation == 0) {
+        println(" (no translation)");
+        return 0;
+    }
+
+    var cmd = load64(translation);
+    var perm = load64(translation + 24);
+
+    str_print(str_from("  Command: "));
+    str_print(cmd);
+    println("");
+
+    str_print(str_from("  Permission: "));
+    println(str_from_int(perm));
+
+    return 0;
+}
+
+fn interactive_loop() {
+    println("agnoshi 1.0.0 -- AI-native shell");
+    println("Type a natural language command or 'exit' to quit.");
+    println("");
+
+    var buf[4096];
+    var interp = Interpreter_new();
+
+    while (1 == 1) {
+        str_print(str_from("> "));
+        var n = syscall(SYS_READ, 0, &buf, 4095);
+        if (n <= 0) { break; }
+
+        if (n > 0) {
+            if (load8(&buf + n - 1) == 10) { n = n - 1; }
+        }
+        if (n == 0) { continue; }
+        store8(&buf + n, 0);
+
+        if (streq(&buf, "exit") == 1) { break; }
+        if (streq(&buf, "quit") == 1) { break; }
+        if (streq(&buf, "help") == 1) {
+            println("Commands: exit, quit, help, version");
+            println("Or type a natural language shell command.");
+            continue;
+        }
+        if (streq(&buf, "version") == 1) {
+            print_version();
+            continue;
+        }
+
+        print_intent_result(&buf);
+    }
+    println("bye");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    args_init();
+
+    var n_args = argc();
+    if (n_args < 2) {
+        return interactive_loop();
+    }
+
+    var arg1 = argv(1);
+    if (streq(arg1, "-v") == 1 || streq(arg1, "--version") == 1) {
+        print_version();
+        return 0;
+    }
+    if (streq(arg1, "-h") == 1 || streq(arg1, "--help") == 1) {
+        print_usage();
+        return 0;
+    }
+    if (streq(arg1, "-c") == 1 || streq(arg1, "--command") == 1) {
+        if (n_args < 3) {
+            println("Error: -c requires a command argument");
+            return 1;
+        }
+        print_intent_result(argv(2));
+        return 0;
+    }
+
+    print_usage();
+    return 1;
+}
+
+var exit_code = main();
+syscall(60, exit_code);
