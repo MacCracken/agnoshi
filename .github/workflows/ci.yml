@@ -90,7 +90,9 @@ jobs:
           test -d docs/audit && ls docs/audit/*.md && echo "OK: audit reports present" || { echo "MISSING: docs/audit/"; exit 1; }
 
       - name: Check sanitize module exists
-        run: test -f src/sanitize.cyr && echo "OK: sanitize.cyr"
+        run: |
+          test -f src/sanitize.cyr && echo "OK sanitize.cyr"
 
       - name: Check security test suite
-        run: test -f tests/test_security.tcyr && echo "OK: test_security.tcyr"
+        run: |
+          test -f tests/test_security.tcyr && echo "OK test_security.tcyr"
