@@ -62,9 +62,28 @@ src/
 └── ui.cyr            — terminal UI helpers
 ```
 
+## Documentation
+
+- **Getting started**: `docs/guides/getting-started.md`
+- **Writing new intents**: `docs/guides/writing-intents.md`
+- **Security model**: `docs/guides/security-model.md`
+- **Architecture**: `docs/architecture/overview.md`
+- **Examples**:
+  - Common commands: `docs/examples/common-commands.md`
+  - Scripting: `docs/examples/scripting.md`
+  - Server hardening: `docs/examples/server-hardening.md`
+- **ADRs** (architectural decisions):
+  - 001: Port from Rust to Cyrius
+  - 002: Struct construction via alloc + store64
+  - 003: Keyword parser instead of regex
+  - 004: Split translate match across functions
+  - 005: String type discipline (cstring vs Str)
+- **Security audit**: `docs/audit/2026-04-13.md` (21 findings, all resolved)
+- **Man page**: `docs/agnsh.1` (install via `scripts/install.sh`)
+
 ## Security
 
-See `docs/audit/` for the security audit report. All 21 findings resolved as of v1.0.0.
+See `docs/guides/security-model.md` for the deep dive. All 21 audit findings resolved as of v1.0.0.
 
 **Key protections:**
 - Command basename extraction (prevents `/usr/bin/dd` bypass of blocked list)
