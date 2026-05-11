@@ -6,9 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.0 "deeper intent parsing" work. Slice 1 (committed) fixed two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions that had left the parser routing **every NL input to `SHELL_COMMAND`**. Slice 2 (committed) retired the substring-trap class with a word-prefix matcher. Slice 3 (committed) added service-status NL (`"is X running/active/enabled"`, `"status of X"`). Slice 4 (this cut) adds the imperative service-action form — bare `"start nginx"` / `"stop sshd"` / `"restart cron"` now route to `SERVICE_CONTROL` instead of trying to exec `start` / `stop` as shell commands.
+v1.2.0 work. Slices 1-4 (committed) advanced the **deeper intent parsing** roadmap item: parse-side stdlib regression fixes, word-prefix matching that retired the substring-trap class, service-status NL (`"is X running"`, `"status of X"`), and imperative service actions (`"start nginx"`, `"stop sshd"`, etc.). Slice 5 (this cut) pivots to the second open v1.2.0 roadmap item — **"all core translators production-tested on real commands"** — by adding the first translator-coverage pass: 40 assertions across 16 filesystem / process / system / network / disk / install / shell translators, verifying command name, permission level, safety-check fallbacks to `translate_unknown`, and a couple of args-shape spot-checks.
 
-### Slice 4 — imperative service actions (this cut)
+### Slice 5 — translator coverage: core file/process/system (this cut)
+
+#### Added
+- **tests/test_core.tcyr — translator coverage block** — 40 new assertions, one or more per core translator. Each block verifies:
+  - **`translate_list_files`** — command="ls", READ_ONLY, args reflect packed options (long+all+path → 3 args).
+  - **`translate_show_file`** — happy path (cat, READ_ONLY) + safety regressions: unsafe path (`"../etc/passwd"` triggers path-traversal check) AND null field-1 both fall through to `translate_unknown` (command="echo"). Locks in the security audit's path-traversal mitigation.
+  - **`translate_find_files`** — command="find", READ_ONLY with name + path fields set.
+  - **`translate_search_content`** — command="grep", READ_ONLY with pattern + path.
+  - **`translate_change_dir`** — command="cd", SAFE; null field-1 → translate_unknown (locks the existing nil-guard).
+  - **`translate_create_dir`** — command="mkdir", USER_WRITE.
+  - **`translate_copy`** — command="cp", USER_WRITE with both src+dst; missing dst → translate_unknown.
+  - **`translate_move`** — command="mv", USER_WRITE.
+  - **`translate_remove`** — command="rm", `BLOCKED` permission (caller-must-approve is a hard rule); recursive-flag intent gets 2 args (`-r` + path).
+  - **`translate_show_processes`** — command="ps", READ_ONLY (no fields required).
+  - **`translate_kill_process`** — command="kill", ADMIN with a valid pid; pid=0 → translate_unknown (locks the `is_valid_pid` gate).
+  - **`translate_system_info`** — command="uname", READ_ONLY.
+  - **`translate_network_info`** — command="ip", READ_ONLY.
+  - **`translate_disk_usage`** — command="df", READ_ONLY.
+  - **`translate_install_package`** — command="apt", ADMIN with a packages vec at intent+56.
+  - **`translate_shell_command`** — derives permission from `analyze_command_permission`: `"ls"` → READ_ONLY, `"apt"` → ADMIN. This is the only translator whose permission level is dynamic — tests both arms.
+  
+  Test count 111 → 151, all passing. Coverage milestone: every core (non-domain-specific) translator now has at least command + permission assertions; the safety-check fallbacks have explicit negative tests where they exist.
+
+#### Notes
+- **Translator-coverage scope** — slice 5 covers the 16 core translators. Remaining: 10 git translators, 5 user/group, 7 firewall, plus `translate_audit_view` / `translate_agent_info` / `translate_question` / `translate_unknown` / `translate_service_control` (already implicitly covered through the parse-side service tests). Queued for slices 6-7 to keep cuts shippable.
+- **No source changes in this slice** — pure test addition. Build size unchanged at 279,400 B.
+
+### Slice 4 — imperative service actions (committed)
 
 #### Added
 - **interpreter.cyr: `token_count(input)`** — counts whitespace-delimited tokens in a Str. Used as a sanity gate by `parse_service_action` to require exactly `<verb> <name>` and reject multi-word phrasings like `"start a new project"` or `"stop wasting time"`.

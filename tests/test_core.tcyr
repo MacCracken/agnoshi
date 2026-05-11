@@ -263,6 +263,165 @@ fn main() {
     check("disable ufw stays FIREWALL_DISABLE",
     load64(Interpreter_parse(interp, str_from("disable ufw"))) == IntentTag.FIREWALL_DISABLE);
 
+    # Translator coverage — slice 5: core filesystem + process + system.
+    # Verifies each translate_X populates the right command name, the
+    # right permission level, and (where applicable) the safety-check
+    # fallback to translate_unknown when its input is unsafe or missing.
+
+    # translate_list_files — opts pack: long+all → "-l", "-a"
+    var lf_intent = Intent_new(IntentTag.LIST_FILES);
+    store64(lf_intent + 8, str_from("/tmp"));
+    store64(lf_intent + 40, list_options_pack(1, 1, 0, 0, 0));
+    var lf_t = translate_list_files(lf_intent);
+    check("translate_list_files cmd", streq(load64(lf_t), "ls") == 1);
+    check("translate_list_files perm", load64(lf_t + 24) == PermissionLevel.READ_ONLY);
+    check("translate_list_files args has 3", vec_len(load64(lf_t + 8)) == 3);
+
+    # translate_show_file — happy path
+    var sf_intent = Intent_new(IntentTag.SHOW_FILE);
+    store64(sf_intent + 8, "/tmp/foo.txt");
+    var sf_t = translate_show_file(sf_intent);
+    check("translate_show_file cmd", streq(load64(sf_t), "cat") == 1);
+    check("translate_show_file perm", load64(sf_t + 24) == PermissionLevel.READ_ONLY);
+    # translate_show_file — unsafe path falls to translate_unknown
+    var sf_bad = Intent_new(IntentTag.SHOW_FILE);
+    store64(sf_bad + 8, "../etc/passwd");
+    var sf_bt = translate_show_file(sf_bad);
+    check("translate_show_file unsafe → unknown",
+    streq(load64(sf_bt), "echo") == 1);
+    # translate_show_file — null path also falls
+    var sf_null = Intent_new(IntentTag.SHOW_FILE);
+    var sf_nt = translate_show_file(sf_null);
+    check("translate_show_file null → unknown",
+    streq(load64(sf_nt), "echo") == 1);
+
+    # translate_find_files
+    var ff_intent = Intent_new(IntentTag.FIND_FILES);
+    store64(ff_intent + 8, "foo.txt");
+    store64(ff_intent + 16, "/tmp");
+    var ff_t = translate_find_files(ff_intent);
+    check("translate_find_files cmd", streq(load64(ff_t), "find") == 1);
+    check("translate_find_files perm", load64(ff_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_search_content
+    var sc_intent = Intent_new(IntentTag.SEARCH_CONTENT);
+    store64(sc_intent + 8, "hello");
+    store64(sc_intent + 16, "/tmp");
+    var sc_t = translate_search_content(sc_intent);
+    check("translate_search_content cmd", streq(load64(sc_t), "grep") == 1);
+    check("translate_search_content perm", load64(sc_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_change_dir — happy path + null fallback
+    var cd_intent = Intent_new(IntentTag.CHANGE_DIR);
+    store64(cd_intent + 8, "/home");
+    var cd_t = translate_change_dir(cd_intent);
+    check("translate_change_dir cmd", streq(load64(cd_t), "cd") == 1);
+    check("translate_change_dir perm", load64(cd_t + 24) == PermissionLevel.SAFE);
+    var cd_null = Intent_new(IntentTag.CHANGE_DIR);
+    var cd_nt = translate_change_dir(cd_null);
+    check("translate_change_dir null → unknown",
+    streq(load64(cd_nt), "echo") == 1);
+
+    # translate_create_dir
+    var mkd_intent = Intent_new(IntentTag.CREATE_DIR);
+    store64(mkd_intent + 8, "/tmp/newdir");
+    var mkd_t = translate_create_dir(mkd_intent);
+    check("translate_create_dir cmd", streq(load64(mkd_t), "mkdir") == 1);
+    check("translate_create_dir perm", load64(mkd_t + 24) == PermissionLevel.USER_WRITE);
+
+    # translate_copy — both paths set
+    var cp_intent = Intent_new(IntentTag.COPY);
+    store64(cp_intent + 8, "/tmp/src");
+    store64(cp_intent + 16, "/tmp/dst");
+    var cp_t = translate_copy(cp_intent);
+    check("translate_copy cmd", streq(load64(cp_t), "cp") == 1);
+    check("translate_copy perm", load64(cp_t + 24) == PermissionLevel.USER_WRITE);
+    # translate_copy — missing destination falls to unknown
+    var cp_miss = Intent_new(IntentTag.COPY);
+    store64(cp_miss + 8, "/tmp/src");
+    var cp_mt = translate_copy(cp_miss);
+    check("translate_copy missing dst → unknown",
+    streq(load64(cp_mt), "echo") == 1);
+
+    # translate_move
+    var mv_intent = Intent_new(IntentTag.MOVE);
+    store64(mv_intent + 8, "/tmp/from");
+    store64(mv_intent + 16, "/tmp/to");
+    var mv_t = translate_move(mv_intent);
+    check("translate_move cmd", streq(load64(mv_t), "mv") == 1);
+    check("translate_move perm", load64(mv_t + 24) == PermissionLevel.USER_WRITE);
+
+    # translate_remove — BLOCKED permission level (caller must approve)
+    var rm_intent = Intent_new(IntentTag.REMOVE);
+    store64(rm_intent + 8, "/tmp/foo");
+    var rm_t = translate_remove(rm_intent);
+    check("translate_remove cmd", streq(load64(rm_t), "rm") == 1);
+    check("translate_remove perm BLOCKED", load64(rm_t + 24) == PermissionLevel.BLOCKED);
+    # translate_remove with recursive flag set
+    var rm_r = Intent_new(IntentTag.REMOVE);
+    store64(rm_r + 8, "/tmp/dir");
+    store64(rm_r + 40, 1);
+    var rm_rt = translate_remove(rm_r);
+    check("translate_remove recursive args has -r and path",
+    vec_len(load64(rm_rt + 8)) == 2);
+
+    # translate_show_processes — no fields needed
+    var ps_t = translate_show_processes(Intent_new(IntentTag.SHOW_PROCESSES));
+    check("translate_show_processes cmd", streq(load64(ps_t), "ps") == 1);
+    check("translate_show_processes perm", load64(ps_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_kill_process — valid pid
+    var kp_intent = Intent_new(IntentTag.KILL_PROCESS);
+    store64(kp_intent + 40, 1234);
+    var kp_t = translate_kill_process(kp_intent);
+    check("translate_kill_process cmd", streq(load64(kp_t), "kill") == 1);
+    check("translate_kill_process perm ADMIN", load64(kp_t + 24) == PermissionLevel.ADMIN);
+    # translate_kill_process — invalid pid (0) falls to unknown
+    var kp_bad = Intent_new(IntentTag.KILL_PROCESS);
+    var kp_bt = translate_kill_process(kp_bad);
+    check("translate_kill_process pid=0 → unknown",
+    streq(load64(kp_bt), "echo") == 1);
+
+    # translate_system_info
+    var si_t = translate_system_info(Intent_new(IntentTag.SYSTEM_INFO));
+    check("translate_system_info cmd", streq(load64(si_t), "uname") == 1);
+    check("translate_system_info perm", load64(si_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_network_info
+    var ni_t = translate_network_info(Intent_new(IntentTag.NETWORK_INFO));
+    check("translate_network_info cmd", streq(load64(ni_t), "ip") == 1);
+    check("translate_network_info perm", load64(ni_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_disk_usage
+    var du_t = translate_disk_usage(Intent_new(IntentTag.DISK_USAGE));
+    check("translate_disk_usage cmd", streq(load64(du_t), "df") == 1);
+    check("translate_disk_usage perm", load64(du_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_install_package — needs a packages vec at intent + 56
+    var ip_intent = Intent_new(IntentTag.INSTALL_PACKAGE);
+    var ip_pkgs = vec_new();
+    vec_push(ip_pkgs, "vim");
+    store64(ip_intent + 56, ip_pkgs);
+    var ip_t = translate_install_package(ip_intent);
+    check("translate_install_package cmd", streq(load64(ip_t), "apt") == 1);
+    check("translate_install_package perm ADMIN", load64(ip_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_shell_command — permission derived from analyze_command_permission
+    var sh_intent = Intent_new(IntentTag.SHELL_COMMAND);
+    store64(sh_intent + 8, "ls");
+    var sh_args = vec_new();
+    store64(sh_intent + 56, sh_args);
+    var sh_t = translate_shell_command(sh_intent);
+    check("translate_shell_command cmd ls", streq(load64(sh_t), "ls") == 1);
+    check("translate_shell_command perm READ_ONLY", load64(sh_t + 24) == PermissionLevel.READ_ONLY);
+    # SHELL_COMMAND with admin command picks up ADMIN classification
+    var sh_admin = Intent_new(IntentTag.SHELL_COMMAND);
+    store64(sh_admin + 8, "apt");
+    store64(sh_admin + 56, vec_new());
+    var sh_at = translate_shell_command(sh_admin);
+    check("translate_shell_command apt → ADMIN",
+    load64(sh_at + 24) == PermissionLevel.ADMIN);
+
     println("");
     str_print(str_from("Passed: "));
     print_num(pass_count);
