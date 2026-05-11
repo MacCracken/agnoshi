@@ -14,12 +14,10 @@ include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 include "lib/args.cyr"
 
-# cc3-era stubs: `getenv` was removed (lib/io.cyr now ships the real
-# impl — keeping the stub triggered a duplicate-fn linker warning on
-# 5.10.x). `ui_show_*` and `chrono_now_rfc3339` remain as minimal
-# stand-ins because src/ui.cyr and lib/chrono.cyr aren't pulled into
-# this entry's include graph. The fuller src/main.cyr entry that
-# pulls them in is queued for the 1.2.0 deeper-intent-parsing pass.
+# `ui_show_*` and `chrono_now_rfc3339` are minimal stand-ins because
+# src/ui.cyr and lib/chrono.cyr aren't pulled into this entry's include
+# graph yet. The full src/main.cyr entry that pulls them in is queued
+# for the v1.2.1 interactive-shell wire-up.
 fn ui_show_error(m) { return 0; }
 fn ui_show_warning(m) { return 0; }
 fn chrono_now_rfc3339() { return str_from("2026-04-13T00:00:00Z"); }
@@ -31,6 +29,7 @@ include "src/intent.cyr"
 include "src/commands.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
+include "src/approval.cyr"
 
 var VERSION_STR = "agnoshi 1.2.0";
 
@@ -72,20 +71,34 @@ fn print_intent_result(input_cstr) {
 
     var cmd = load64(translation);
     var perm = load64(translation + 24);
+    var risk = risk_from_permission(perm);
 
+    # `cmd` is a cstring literal stored by translate_X (e.g. "ls", "cp",
+    # "systemctl"); wrap in str_from so str_print's `load64(s+8)` reads a
+    # real Str length, not the bytes past the cstring's null terminator.
+    # Pre-v1.2.1 the line silently printed garbage / nothing.
     str_print(str_from("  Command: "));
-    str_print(cmd);
+    str_print(str_from(cmd));
     println("");
 
-    str_print(str_from("  Permission: "));
-    println(str_from_int(perm));
+    str_print(str_from("  Risk: "));
+    println(risk_icon(risk));
+
+    # BLOCKED commands (Risk: CRITICAL) cannot be auto-executed —
+    # surface this in `-c` output so scripts and call-sites can see the
+    # decision without parsing a permission integer.
+    if (perm == PermissionLevel.BLOCKED) {
+        println("  WARNING: BLOCKED -- would not execute without explicit override");
+    } elif (risk == RiskLevel.HIGH) {
+        println("  Approval required (interactive prompt in shell mode)");
+    }
 
     return 0;
 }
 
 fn interactive_loop() {
-    println("agnoshi 1.1.0 -- AI-native shell");
-    println("Type a natural language command or 'exit' to quit.");
+    println(VERSION_STR);
+    println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
     println("");
 
     var buf[4096];

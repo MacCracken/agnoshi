@@ -17,7 +17,7 @@ fn translate_list_files(intent) {
 }
 fn translate_show_file(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
     return Translation_new(
@@ -31,14 +31,14 @@ fn translate_show_file(intent) {
 fn translate_find_files(intent) {
     var args = vec_new();
     if (load64(intent + 16) != 0) {
-        if (is_safe_path(load64(intent + 16)) == 0) { return translate_unknown(intent); }
+        if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 16));
     } else {
         vec_push(args, ".");
     }
     vec_push(args, "-name");
     if (load64(intent + 8) != 0) {
-        if (is_safe_arg(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+        if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     } else {
         vec_push(args, "*");
@@ -55,11 +55,11 @@ fn translate_search_content(intent) {
     var args = vec_new();
     vec_push(args, "-r");
     if (load64(intent + 8) != 0) {
-        if (is_safe_arg(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+        if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
     if (load64(intent + 16) != 0) {
-        if (is_safe_path(load64(intent + 16)) == 0) { return translate_unknown(intent); }
+        if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 16));
     }
     return Translation_new(
@@ -84,7 +84,7 @@ fn translate_change_dir(intent) {
 }
 fn translate_create_dir(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, "-p");
     vec_push(args, load64(intent + 8));
@@ -98,8 +98,8 @@ fn translate_create_dir(intent) {
 }
 fn translate_copy(intent) {
     if (load64(intent + 8) == 0 || load64(intent + 16) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 8)) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 16)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
     vec_push(args, load64(intent + 16));
@@ -113,8 +113,8 @@ fn translate_copy(intent) {
 }
 fn translate_move(intent) {
     if (load64(intent + 8) == 0 || load64(intent + 16) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 8)) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 16)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
     vec_push(args, load64(intent + 16));
@@ -128,7 +128,7 @@ fn translate_move(intent) {
 }
 fn translate_remove(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
-    if (is_safe_path(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+    if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     if (load64(intent + 40) == 1) { vec_push(args, "-r"); }
     vec_push(args, load64(intent + 8));

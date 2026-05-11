@@ -75,6 +75,28 @@ check "parse firewall" "Intent:" "$out"
 out=$("$BIN" -c "create user alice" 2>&1)
 check "parse user add" "Intent:" "$out"
 
+# Approval wiring -- every -c output now carries a "Risk: [LEVEL]"
+# line (assessed via risk_from_permission). BLOCKED commands surface
+# a WARNING line; HIGH-risk ones note the approval requirement.
+out=$("$BIN" -c "show me files" 2>&1)
+check "risk LOW for read-only" "Risk: \[LOW\]" "$out"
+
+out=$("$BIN" -c "copy a to b" 2>&1)
+check "risk MED for user-write" "Risk: \[MED\]" "$out"
+
+out=$("$BIN" -c "install vim" 2>&1)
+check "risk HIGH for admin" "Risk: \[HIGH\]" "$out"
+check "high-risk approval hint" "Approval required" "$out"
+
+out=$("$BIN" -c "rm -rf /tmp/foo" 2>&1)
+check "risk CRIT for blocked" "Risk: \[CRIT\]" "$out"
+check "blocked warning line" "WARNING: BLOCKED" "$out"
+
+# Command field populated -- the cstring/Str print mismatch that left
+# this blank pre-v1.2.1 is now fixed.
+out=$("$BIN" -c "show me files" 2>&1)
+check "command field has ls" "Command: ls" "$out"
+
 # Error handling
 out=$("$BIN" -c 2>&1) || true
 check "error on missing -c arg" "Error\|Usage\|required" "$out"

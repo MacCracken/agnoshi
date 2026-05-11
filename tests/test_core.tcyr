@@ -132,12 +132,13 @@ fn main() {
     check("translation perm", load64(t + 24) == PermissionLevel.READ_ONLY);
 
     var interp = Interpreter_new();
-    check("parse empty unknown",
-    load64(Interpreter_parse(interp, str_from(""))) == IntentTag.UNKNOWN);
-    check("parse show files",
-    load64(Interpreter_parse(interp, str_from("show me all files"))) == IntentTag.LIST_FILES);
-    check("parse list directory",
-    load64(Interpreter_parse(interp, str_from("list the directory"))) == IntentTag.LIST_FILES);
+    var pe = Interpreter_parse(interp, str_from(""));
+    var pe_tag = load64(pe);
+    check("parse empty unknown", pe_tag == IntentTag.UNKNOWN);
+    var p_show = Interpreter_parse(interp, str_from("show me all files"));
+    check("parse show files", load64(p_show) == IntentTag.LIST_FILES);
+    var p_list = Interpreter_parse(interp, str_from("list the directory"));
+    check("parse list directory", load64(p_list) == IntentTag.LIST_FILES);
     check("parse cd",
     load64(Interpreter_parse(interp, str_from("cd /tmp"))) == IntentTag.CHANGE_DIR);
     check("parse go to",
@@ -280,13 +281,13 @@ fn main() {
 
     # translate_show_file — happy path
     var sf_intent = Intent_new(IntentTag.SHOW_FILE);
-    store64(sf_intent + 8, "/tmp/foo.txt");
+    store64(sf_intent + 8, str_from("/tmp/foo.txt"));
     var sf_t = translate_show_file(sf_intent);
     check("translate_show_file cmd", streq(load64(sf_t), "cat") == 1);
     check("translate_show_file perm", load64(sf_t + 24) == PermissionLevel.READ_ONLY);
     # translate_show_file — unsafe path falls to translate_unknown
     var sf_bad = Intent_new(IntentTag.SHOW_FILE);
-    store64(sf_bad + 8, "../etc/passwd");
+    store64(sf_bad + 8, str_from("../etc/passwd"));
     var sf_bt = translate_show_file(sf_bad);
     check("translate_show_file unsafe → unknown",
     streq(load64(sf_bt), "echo") == 1);
@@ -298,16 +299,16 @@ fn main() {
 
     # translate_find_files
     var ff_intent = Intent_new(IntentTag.FIND_FILES);
-    store64(ff_intent + 8, "foo.txt");
-    store64(ff_intent + 16, "/tmp");
+    store64(ff_intent + 8, str_from("foo.txt"));
+    store64(ff_intent + 16, str_from("/tmp"));
     var ff_t = translate_find_files(ff_intent);
     check("translate_find_files cmd", streq(load64(ff_t), "find") == 1);
     check("translate_find_files perm", load64(ff_t + 24) == PermissionLevel.READ_ONLY);
 
     # translate_search_content
     var sc_intent = Intent_new(IntentTag.SEARCH_CONTENT);
-    store64(sc_intent + 8, "hello");
-    store64(sc_intent + 16, "/tmp");
+    store64(sc_intent + 8, str_from("hello"));
+    store64(sc_intent + 16, str_from("/tmp"));
     var sc_t = translate_search_content(sc_intent);
     check("translate_search_content cmd", streq(load64(sc_t), "grep") == 1);
     check("translate_search_content perm", load64(sc_t + 24) == PermissionLevel.READ_ONLY);
@@ -325,42 +326,42 @@ fn main() {
 
     # translate_create_dir
     var mkd_intent = Intent_new(IntentTag.CREATE_DIR);
-    store64(mkd_intent + 8, "/tmp/newdir");
+    store64(mkd_intent + 8, str_from("/tmp/newdir"));
     var mkd_t = translate_create_dir(mkd_intent);
     check("translate_create_dir cmd", streq(load64(mkd_t), "mkdir") == 1);
     check("translate_create_dir perm", load64(mkd_t + 24) == PermissionLevel.USER_WRITE);
 
     # translate_copy — both paths set
     var cp_intent = Intent_new(IntentTag.COPY);
-    store64(cp_intent + 8, "/tmp/src");
-    store64(cp_intent + 16, "/tmp/dst");
+    store64(cp_intent + 8, str_from("/tmp/src"));
+    store64(cp_intent + 16, str_from("/tmp/dst"));
     var cp_t = translate_copy(cp_intent);
     check("translate_copy cmd", streq(load64(cp_t), "cp") == 1);
     check("translate_copy perm", load64(cp_t + 24) == PermissionLevel.USER_WRITE);
     # translate_copy — missing destination falls to unknown
     var cp_miss = Intent_new(IntentTag.COPY);
-    store64(cp_miss + 8, "/tmp/src");
+    store64(cp_miss + 8, str_from("/tmp/src"));
     var cp_mt = translate_copy(cp_miss);
     check("translate_copy missing dst → unknown",
     streq(load64(cp_mt), "echo") == 1);
 
     # translate_move
     var mv_intent = Intent_new(IntentTag.MOVE);
-    store64(mv_intent + 8, "/tmp/from");
-    store64(mv_intent + 16, "/tmp/to");
+    store64(mv_intent + 8, str_from("/tmp/from"));
+    store64(mv_intent + 16, str_from("/tmp/to"));
     var mv_t = translate_move(mv_intent);
     check("translate_move cmd", streq(load64(mv_t), "mv") == 1);
     check("translate_move perm", load64(mv_t + 24) == PermissionLevel.USER_WRITE);
 
     # translate_remove — BLOCKED permission level (caller must approve)
     var rm_intent = Intent_new(IntentTag.REMOVE);
-    store64(rm_intent + 8, "/tmp/foo");
+    store64(rm_intent + 8, str_from("/tmp/foo"));
     var rm_t = translate_remove(rm_intent);
     check("translate_remove cmd", streq(load64(rm_t), "rm") == 1);
     check("translate_remove perm BLOCKED", load64(rm_t + 24) == PermissionLevel.BLOCKED);
     # translate_remove with recursive flag set
     var rm_r = Intent_new(IntentTag.REMOVE);
-    store64(rm_r + 8, "/tmp/dir");
+    store64(rm_r + 8, str_from("/tmp/dir"));
     store64(rm_r + 40, 1);
     var rm_rt = translate_remove(rm_r);
     check("translate_remove recursive args has -r and path",
