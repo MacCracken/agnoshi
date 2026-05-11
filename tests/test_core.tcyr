@@ -24,6 +24,7 @@ include "src/commands.cyr"
 include "src/intent.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
+include "src/approval.cyr"
 
 var pass_count = 0;
 var fail_count = 0;
@@ -742,6 +743,65 @@ fn main() {
     check("build_safe_env non-empty", vec_len(se_env) >= 1);
     check("build_safe_env PATH first",
     streq(vec_get(se_env, 0), "PATH=/usr/bin:/bin:/usr/sbin:/sbin") == 1);
+
+    # === Approval workflow (src/approval.cyr) ===
+    # v1.2.1 lead-item coverage: decision matrix is the gate between
+    # permission classification and command execution. Risk mapping,
+    # auto-approve behavior, and the blocklist are all unit-testable
+    # without invoking the interactive UI.
+
+    # risk_from_permission — the spine of the approval decision.
+    check("risk SAFE = LOW",
+    risk_from_permission(PermissionLevel.SAFE) == RiskLevel.LOW);
+    check("risk READ_ONLY = LOW",
+    risk_from_permission(PermissionLevel.READ_ONLY) == RiskLevel.LOW);
+    check("risk USER_WRITE = MEDIUM",
+    risk_from_permission(PermissionLevel.USER_WRITE) == RiskLevel.MEDIUM);
+    check("risk SYSTEM_WRITE = HIGH",
+    risk_from_permission(PermissionLevel.SYSTEM_WRITE) == RiskLevel.HIGH);
+    check("risk ADMIN = HIGH",
+    risk_from_permission(PermissionLevel.ADMIN) == RiskLevel.HIGH);
+    check("risk BLOCKED = CRITICAL",
+    risk_from_permission(PermissionLevel.BLOCKED) == RiskLevel.CRITICAL);
+
+    # risk_icon — the labels the approval UI prints.
+    check("risk_icon LOW", streq(risk_icon(RiskLevel.LOW), "[LOW]") == 1);
+    check("risk_icon MED", streq(risk_icon(RiskLevel.MEDIUM), "[MED]") == 1);
+    check("risk_icon HIGH", streq(risk_icon(RiskLevel.HIGH), "[HIGH]") == 1);
+    check("risk_icon CRIT",
+    streq(risk_icon(RiskLevel.CRITICAL), "[CRIT]") == 1);
+
+    # ApprovalManager_assess_risk — composes analyze_command_permission +
+    # risk_from_permission. Verify the end-to-end mapping for each
+    # PermissionLevel bucket.
+    var am = ApprovalManager_new();
+    var empty_args = vec_new();
+    check("assess_risk ls = LOW",
+    ApprovalManager_assess_risk(am, "ls", empty_args, 0) == RiskLevel.LOW);
+    check("assess_risk cp = MEDIUM",
+    ApprovalManager_assess_risk(am, "cp", empty_args, 0) == RiskLevel.MEDIUM);
+    check("assess_risk apt = HIGH",
+    ApprovalManager_assess_risk(am, "apt", empty_args, 0) == RiskLevel.HIGH);
+    check("assess_risk dd = CRITICAL",
+    ApprovalManager_assess_risk(am, "dd", empty_args, 0) == RiskLevel.CRITICAL);
+
+    # ApprovalManager_is_blocked — pattern-based blocklist (substring
+    # match). Default state is empty.
+    check("is_blocked default empty",
+    ApprovalManager_is_blocked(am, str_from("ls")) == 0);
+    ApprovalManager_block_pattern(am, str_from("rm -rf /"));
+    check("is_blocked after pattern add",
+    ApprovalManager_is_blocked(am, str_from("rm -rf /home")) == 1);
+    check("is_blocked unrelated cmd",
+    ApprovalManager_is_blocked(am, str_from("ls -la")) == 0);
+
+    # set_auto_approve — flips the auto-approve-low-risk bit at offset 8.
+    var am2 = ApprovalManager_new();
+    check("auto_approve default off", load64(am2 + 8) == 0);
+    ApprovalManager_set_auto_approve(am2, 1);
+    check("auto_approve on", load64(am2 + 8) == 1);
+    ApprovalManager_set_auto_approve(am2, 0);
+    check("auto_approve off", load64(am2 + 8) == 0);
 
     println("");
     str_print(str_from("Passed: "));

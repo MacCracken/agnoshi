@@ -60,7 +60,7 @@ fn AliasManager_expand(self, input) {
         rest_start = rest_start + 1;
     }
     var rest = str_substr(input, rest_start, len);
-    var result = str_cat(expansion, " ");
+    var result = str_cat(expansion, str_from(" "));
     result = str_cat(result, rest);
     return result;
 }

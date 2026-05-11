@@ -25,7 +25,7 @@ fn Session_new(config, security, initial_mode) {
     var history_path = str_from("/tmp/.agnsh_history");
     var home = getenv("HOME");
     if (home != 0) {
-        history_path = str_cat(home, "/.agnsh_history");
+        history_path = str_cat(home, str_from("/.agnsh_history"));
     }
     var history = CommandHistory_new(history_path, load64(config + 8));
     var checkpoint = CheckpointManager_new();

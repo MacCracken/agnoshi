@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+First slice of v1.2.1. Lead roadmap item is "approval workflow battle-tested interactively"; this cut starts that with unit coverage of `src/approval.cyr` (decision matrix, risk mapping, blocklist, auto-approve toggle — every non-UI surface that was previously untested) AND a follow-on bug-class audit pass that caught 7 more `str_cat(X, "cstring")` sites — same Cyrius 4.5 → 5.10 stdlib drift, but in the *second*-arg position which slice 8's grep missed.
+
+### Fixed
+- **Second-position str_cat bug-class sweep** — slice 8's audit only checked `str_cat("...", X)` (cstring as first arg). The dual case `str_cat(X, "...")` (cstring as second arg) is *also* broken because `lib/str.cyr`'s `str_cat(a: Str, b: Str)` types both sides — passing a raw cstring for `b` causes the function to read `load64(cstring+8)` as a Str length header (garbage). 7 latent sites fixed across `aliases.cyr` (expansion suffix space), `checkpoint.cyr` ×3 (HOME-relative checkpoint dir + backup-name infixes), `audit.cyr` (`"..."` truncation suffix), `prompt.cyr` (`/.git/HEAD` path build), `session.cyr` (HOME-relative history path). All in modules deferred to v1.2.x wire-up; same hygiene rationale as slice 8.
+
+### Added
+- **tests/test_core.tcyr — approval workflow coverage** — 20 new assertions exercising `src/approval.cyr` (first time the module has unit tests):
+  - `risk_from_permission` — full mapping locked: SAFE/READ_ONLY → LOW, USER_WRITE → MEDIUM, SYSTEM_WRITE/ADMIN → HIGH, BLOCKED → CRITICAL.
+  - `risk_icon` — UI label strings (`[LOW]`, `[MED]`, `[HIGH]`, `[CRIT]`) locked. When the interactive approval dialog ships in slice 10+, drift here would silently break the on-screen risk indicator.
+  - `ApprovalManager_assess_risk` — end-to-end risk for representative commands (`ls` → LOW, `cp` → MEDIUM, `apt` → HIGH, `dd` → CRITICAL). Tests the composition of `analyze_command_permission` + `risk_from_permission`.
+  - `ApprovalManager_is_blocked` — pattern blocklist (substring match). Default-empty + add-pattern + matching cmd + unrelated cmd all locked.
+  - `ApprovalManager_set_auto_approve` — toggle bit at offset 8 locked in both directions.
+  - Test count 257 → **277**, all passing.
+- **approval.cyr now wired into tests/test_core.tcyr** — the test binary now compiles + links the module, which means future regressions (e.g. another stdlib drift) surface as build failures rather than runtime crashes on first use.
+
+### Notes
+- `ApprovalManager_request` itself (the interactive dialog) is *not* covered yet — it does `syscall(SYS_READ, 0, ...)` to read keyboard input, which can't be exercised in a unit-test harness. That branch lands in slice 10's interactive-shell wiring with an injection seam for testable I/O.
+- Binary size unchanged at 280,344 B (approval.cyr only landed in the test binary, not in `agnsh.cyr`'s include graph yet — the runtime wire-up is the next slice).
+
 ## [1.2.0] - 2026-05-11
 
 The v1.2.0 cycle closed out all three roadmap items: deeper intent parsing (slices 1-4), all-core-translators production-tested (slices 5-7), and a coverage report wired into CI (slice 9, 89% fn-level coverage against an 80% threshold). Slice 8 was a bug-class audit pass that swept `src/` for the same `(cstring, Str)`-where-`(Str, Str)`-expected pattern that bit slices 1 and 7, fixing 10 latent call sites across `prompt.cyr`, `security.cyr`, `checkpoint.cyr`, `sanitize.cyr`, and `session.cyr` — all in modules deferred to the v1.2.x interactive-shell wire-up, but now correct ahead of that work.

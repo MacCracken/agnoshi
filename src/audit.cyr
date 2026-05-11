@@ -154,7 +154,7 @@ fn audit_format_table(entries) {
         if (load64(e + 40) == 1) { approved_str = "yes"; }
         var input_display = load64(e + 24);
         if (str_len(load64(e + 24)) > 30) {
-            input_display = str_cat(str_substr(load64(e + 24), 0, 27), "...");
+            input_display = str_cat(str_substr(load64(e + 24), 0, 27), str_from("..."));
         }
         str_builder_add(builder, ts);
         str_builder_add(builder, " ");

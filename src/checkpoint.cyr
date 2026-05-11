@@ -16,7 +16,7 @@ fn CheckpointManager_new() {
     var home = getenv("HOME");
     var dir = str_from("/tmp/agnoshi-checkpoints");
     if (home != 0) {
-        dir = str_cat(home, "/.agnoshi/checkpoints");
+        dir = str_cat(home, str_from("/.agnoshi/checkpoints"));
     }
     fs_mkdir_p(dir);
     syscall(SYS_CHMOD, str_data(dir), 448);
@@ -35,9 +35,9 @@ fn CheckpointManager_checkpoint_remove(self, path) {
     }
     var idx = str_from_int(load64(self + 16));
     var basename = fs_basename(path);
-    var backup = str_cat(load64(self + 8), "/");
+    var backup = str_cat(load64(self + 8), str_from("/"));
     backup = str_cat(backup, idx);
-    backup = str_cat(backup, "_");
+    backup = str_cat(backup, str_from("_"));
     backup = str_cat(backup, basename);
     var result = fs_copy(path, backup);
     if (result != 0) {
