@@ -346,6 +346,45 @@ fn parse_admin_ops(trimmed) {
     }
     return 0;
 }
+fn parse_service_query(trimmed) {
+    # "is X running" / "is X active" / "is X enabled" — interrogative form
+    # only (input must start with "is "), so statements like "the
+    # application is running" don't get hijacked into SERVICE_CONTROL.
+    # Maps to SERVICE_CONTROL with action="status" and target=X — flows
+    # through the existing translate_service_control which emits
+    # `systemctl status <X>` at ADMIN permission level.
+    if (input_starts_with(trimmed, "is ") == 1) {
+        var name = 0;
+        if (input_has_word(trimmed, "running") == 1) {
+            name = extract_between(trimmed, "is ", " running");
+        }
+        if (name == 0 && input_has_word(trimmed, "active") == 1) {
+            name = extract_between(trimmed, "is ", " active");
+        }
+        if (name == 0 && input_has_word(trimmed, "enabled") == 1) {
+            name = extract_between(trimmed, "is ", " enabled");
+        }
+        if (name != 0) {
+            var intent = Intent_new(IntentTag.SERVICE_CONTROL);
+            store64(intent + 8, "status");
+            store64(intent + 16, name);
+            return intent;
+        }
+    }
+    # "status of X" — interrogative or imperative ("status of nginx",
+    # "show status of nginx") both work; the substring-anchored "status of"
+    # only fires when the user is asking about a specific service.
+    if (input_has_word(trimmed, "status of") == 1) {
+        var name = extract_after(trimmed, "status of ");
+        if (name != 0) {
+            var intent = Intent_new(IntentTag.SERVICE_CONTROL);
+            store64(intent + 8, "status");
+            store64(intent + 16, name);
+            return intent;
+        }
+    }
+    return 0;
+}
 fn parse_state_queries(trimmed) {
     if (input_has_word(trimmed, "ip address") == 1
     || input_has_word(trimmed, "my ip") == 1
@@ -416,6 +455,8 @@ fn Interpreter_parse(self, input) {
     }
     var r5 = parse_admin_ops(trimmed);
     if (r5 != 0) { return r5; }
+    var r_sq = parse_service_query(trimmed);
+    if (r_sq != 0) { return r_sq; }
     var r6 = parse_state_queries(trimmed);
     if (r6 != 0) { return r6; }
     if (input_has_word(trimmed, "what") == 1

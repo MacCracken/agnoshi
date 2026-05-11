@@ -219,6 +219,25 @@ fn main() {
     check("plural directories via show",
     load64(Interpreter_parse(interp, str_from("show me the directories"))) == IntentTag.LIST_FILES);
 
+    # Service-status NL — "is X running"/"active"/"enabled" + "status of X"
+    # all map to SERVICE_CONTROL with action="status" and target=X.
+    check("is X running routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("is nginx running"))) == IntentTag.SERVICE_CONTROL);
+    check("is X active routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("is sshd active"))) == IntentTag.SERVICE_CONTROL);
+    check("is X enabled routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("is cronie enabled"))) == IntentTag.SERVICE_CONTROL);
+    check("status of X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("status of nginx"))) == IntentTag.SERVICE_CONTROL);
+    # Verify target extraction populates field2 (intent + 16).
+    var svc_intent = Interpreter_parse(interp, str_from("is nginx running"));
+    check("is X running extracts target",
+    load64(svc_intent + 16) != 0);
+    # Negative: a statement like "the application is running" must NOT
+    # route to SERVICE_CONTROL (no "is " prefix).
+    check("statement falls through service-query gate",
+    load64(Interpreter_parse(interp, str_from("the application is running"))) != IntentTag.SERVICE_CONTROL);
+
     println("");
     str_print(str_from("Passed: "));
     print_num(pass_count);

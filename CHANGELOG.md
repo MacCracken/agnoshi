@@ -6,12 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.0 "deeper intent parsing" work. Slice 1 (committed) fixed two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions that had left the parser routing **every NL input to `SHELL_COMMAND`**. Slice 2 (this cut) retires the substring-trap class structurally with a real word-prefix matcher, so "remove" stops grabbing the MOVE branch, "file" still matches "files" (plural-tolerance), and the previous "rm "/"move "/"remove first" ordering hacks are gone.
+v1.2.0 "deeper intent parsing" work. Slice 1 (committed) fixed two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions that had left the parser routing **every NL input to `SHELL_COMMAND`**. Slice 2 (committed) retired the substring-trap class structurally with a word-prefix matcher (`is_word_prefix`), so "remove" stopped grabbing the MOVE branch and "file" still matches "files" without false positives. Slice 3 (this cut) extends NL coverage to service-status queries — `"is nginx running"`, `"is sshd active"`, `"status of nginx"` now route to `SERVICE_CONTROL` instead of falling to `SHELL_COMMAND`.
 
-### Slice 2 — word-prefix matching (this cut)
+### Slice 3 — service-status NL (this cut)
 
 #### Added
-- **sanitize.cyr: `is_word_prefix(input, word)`** — case-insensitive matcher that returns 1 iff `word` (cstring; leading/trailing whitespace stripped) is a prefix of any whitespace-delimited token in `input` (Str). Designed for keyword intent parsing: gives plural-tolerance ("file" → "files", "process" → "processes", "directory" → "directories") AND substring-trap immunity ("move" never matches inside "remove", "rm" never matches inside "warm") in one helper. The strict whole-token alternative would kill plurals; raw substring matching has the trap class; token-prefix lands in the right middle for shell NL.
+- **sanitize.cyr: `input_starts_with(input, prefix_cstr)`** — case-insensitive prefix check on a Str input against a cstring prefix. Used by the parser to gate interrogative form: parse only fires when the input opens with `"is "`, so a statement like `"the application is running"` doesn't get hijacked into `SERVICE_CONTROL`.
+- **interpreter.cyr: `parse_service_query`** — catches three NL service patterns and maps each to `SERVICE_CONTROL` with `field1="status"`, `field2=service_name`, flowing through the existing `translate_service_control` (emits `systemctl status <name>` at ADMIN permission):
+  - `"is X running"` — gated on `input_starts_with("is ")` + `"running"` word-present, target extracted via `extract_between("is ", " running")`
+  - `"is X active"` — same shape with `"active"`
+  - `"is X enabled"` — same shape with `"enabled"`
+  - `"status of X"` — substring-anchored `"status of"` trigger, target extracted via `extract_after("status of ")`
+  Slotted in `Interpreter_parse` after `parse_admin_ops` and before `parse_state_queries` — specific service-query patterns take precedence over generic state queries; the existing `"service"` / `"systemctl"` trigger inside `parse_system_ops` is unchanged.
+- **tests/test_core.tcyr** — 6 new assertions covering each NL pattern + target-extraction + the negative-case ("statement falls through service-query gate" — `"the application is running"` must NOT route to `SERVICE_CONTROL`). Test count 96 → 102, all passing.
+
+### Slice 2 — word-prefix matching (committed)
+
+#### Added
+- **sanitize.cyr: `is_word_prefix(input, word)`** — case-insensitive matcher that returns 1 iff `word` (cstring; leading/trailing whitespace stripped) is a prefix of any whitespace-delimited token in `input` (Str). Designed for keyword intent parsing: gives plural-tolerance ("file" → "files", "process" → "processes", "directory" → "directories") AND substring-trap immunity ("move" never matches inside "remove", "rm" never matches inside "warm") in one helper. Strict whole-token would kill plurals; raw substring has the trap class; token-prefix lands in the right middle for shell NL.
 - **interpreter.cyr: `input_has_word` auto-dispatch** — single-token needles (`"move"`, `"ip"`, `"file"`) route to `is_word_prefix`; compound phrases with internal whitespace (`"go to"`, `"contents of"`, `"running process"`, `" in "`) keep substring matching (the interior space already anchors at word boundaries in the input). Selection happens by inspecting the needle after a leading/trailing-space trim — preserves backward-compatibility with existing call sites that have trailing-space anchors (`"rm "`, `"cd "`, `"named "`) without needing to rewrite every needle.
 - **tests/test_core.tcyr** — 8 new assertions covering the trap-immunity and plural-tolerance invariants: `"remove the file foo.txt"` → REMOVE (not MOVE), `"rm foo.txt"` → REMOVE, `"warm the soup"` → SHELL_COMMAND (not REMOVE), `"move foo to bar"` → MOVE, `"rename foo to bar"` → MOVE, `"show me the files"` → LIST_FILES (plural), `"show me the directories"` → LIST_FILES (irregular plural), `"running processes"` → SHOW_PROCESSES (plural). Test count 88 → 96, all passing.
 

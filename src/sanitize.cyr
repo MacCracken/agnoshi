@@ -85,6 +85,24 @@ fn str_split_ci(input, sep) {
     vec_push(result, str_substr(input, idx + sep_len, str_len(input)));
     return result;
 }
+# Returns 1 if `input` (Str) starts with `prefix_cstr` (cstring),
+# case-insensitive. Used by the parser to gate on interrogative form
+# ("is X running" — only fires when the input opens with "is ", so a
+# statement like "the application is running" doesn't get routed to
+# SERVICE_CONTROL).
+fn input_starts_with(input, prefix_cstr) {
+    var plen = strlen(prefix_cstr);
+    if (plen > str_len(input)) { return 0; }
+    var hd = str_data(input);
+    for (var i = 0; i < plen; i = i + 1) {
+        var hc = load8(hd + i);
+        var pc = load8(prefix_cstr + i);
+        if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
+        if (pc >= 65) { if (pc <= 90) { pc = pc + 32; } }
+        if (hc != pc) { return 0; }
+    }
+    return 1;
+}
 # Word-prefix matcher. Returns 1 if `word` (cstring, leading/trailing
 # whitespace ignored) is a prefix of any whitespace-delimited token in
 # `input` (Str), case-insensitive.
