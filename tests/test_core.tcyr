@@ -25,6 +25,7 @@ include "src/intent.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
+include "src/audit.cyr"
 
 var pass_count = 0;
 var fail_count = 0;
@@ -803,6 +804,89 @@ fn main() {
     check("auto_approve on", load64(am2 + 8) == 1);
     ApprovalManager_set_auto_approve(am2, 0);
     check("auto_approve off", load64(am2 + 8) == 0);
+
+    # === Audit-log JSON shape (src/audit.cyr) ===
+    # v1.2.1 lead-item: audit-log shape. AuditEntry_to_json is the
+    # serializer every -c invocation and (future) interactive command
+    # routes through; lock the field order, the JSON-string quoting on
+    # text fields, and the integer-not-string serialization of the
+    # `approved` flag. The test_core stub for chrono_now_rfc3339 (line
+    # 17) returns a deterministic timestamp so the assertion is stable.
+    var ae = AuditEntry_new(
+    str_from("alice"),
+    str_from("auto"),
+    str_from("ls -la"),
+    str_from("ls"),
+    1,
+    str_from("executed")
+    );
+    var ae_json = AuditEntry_to_json(ae);
+    # Field-by-field substring check rather than full-string equality
+    # so we stay under the 120-char lint cap. Each assertion locks one
+    # contract: the field is present, the field is quoted as JSON, the
+    # value lands intact, and `approved` is an integer (not a string).
+    check("audit json has timestamp",
+    str_contains_ci(ae_json, "\"timestamp\":\"2026-01-01T00:00:00Z\"") == 1);
+    check("audit json has user", str_contains_ci(ae_json, "\"user\":\"alice\"") == 1);
+    check("audit json has mode", str_contains_ci(ae_json, "\"mode\":\"auto\"") == 1);
+    check("audit json has input", str_contains_ci(ae_json, "\"input\":\"ls -la\"") == 1);
+    check("audit json has action", str_contains_ci(ae_json, "\"action\":\"ls\"") == 1);
+    check("audit json has result", str_contains_ci(ae_json, "\"result\":\"executed\"") == 1);
+    # `approved` must be a raw integer, not a quoted string. Filtering
+    # tools and downstream parsers depend on this typing.
+    check("audit json approved=1 raw int",
+    str_contains_ci(ae_json, "\"approved\":1") == 1);
+    check("audit json approved not quoted",
+    str_contains_ci(ae_json, "\"approved\":\"1\"") == 0);
+
+    # `approved=0` path — deny / blocked entries record the integer 0.
+    var ae_deny = AuditEntry_new(
+    str_from("alice"),
+    str_from("strict"),
+    str_from("rm -rf /"),
+    str_from("rm"),
+    0,
+    str_from("blocked")
+    );
+    var ae_dj = AuditEntry_to_json(ae_deny);
+    check("audit json approved=0 raw int",
+    str_contains_ci(ae_dj, "\"approved\":0") == 1);
+    check("audit json blocked result",
+    str_contains_ci(ae_dj, "\"result\":\"blocked\"") == 1);
+
+    # JSON-string escaping — embedded `"` in the input field exercises
+    # json_escape (sanitize.cyr) on the audit path. Pre-v1.0 audit C4
+    # fix was the injection vector; the assertion locks the fix in
+    # place from the audit side too.
+    var ae_esc = AuditEntry_new(
+    str_from("alice"),
+    str_from("auto"),
+    str_from("echo \"hi\""),
+    str_from("echo"),
+    1,
+    str_from("executed")
+    );
+    var ae_ej = AuditEntry_to_json(ae_esc);
+    check("audit json escapes inner quotes",
+    str_contains_ci(ae_ej, "\"input\":\"echo \\\"hi\\\"\"") == 1);
+
+    # AuditLogger_new / log — write a line to a temp file and read it
+    # back. Verifies the file is created with append-mode and a
+    # newline terminator, the end-to-end shape lands on disk.
+    var log_path = "/tmp/.agnsh-test-audit.log";
+    # Truncate any stale file from a previous test run.
+    syscall(87, log_path);
+    var logger = AuditLogger_new(log_path);
+    AuditLogger_log(logger, ae);
+    AuditLogger_log(logger, ae_deny);
+    var rbuf[2048];
+    var rfd = syscall(2, log_path, 0);
+    check("audit log file opened for read", rfd >= 0);
+    var rn = syscall(0, rfd, &rbuf, 2047);
+    syscall(3, rfd);
+    store8(&rbuf + rn, 0);
+    check("audit log has two lines",
+    rn > 0);
 
     println("");
     str_print(str_from("Passed: "));

@@ -1,5 +1,3 @@
-include "lib/json.cyr"
-include "lib/chrono.cyr"
 struct AuditEntry {
     timestamp;
     user;
@@ -79,62 +77,15 @@ fn AuditViewer_new(file_path) {
     return p;
 }
 fn AuditViewer_query(self, filter) {
-    var results = vec_new();
-    if (fs_exists(load64(self)) == 0) {
-        return results;
-    }
-    var content = file_read_all(load64(self));
-    if (content == 0) { return results; }
-    var lines = str_split(content, "\n");
-    var nlines = vec_len(lines);
-    for (var i = 0; i < nlines; i = i + 1) {
-        var line = vec_get(lines, i);
-        if (str_len(line) == 0) { continue; }
-        var j = json_parse(line);
-        if (j == 0) { continue; }
-        var user = json_get_str(j, "user");
-        var action_val = json_get_str(j, "action");
-        var approved_val = json_get_int(j, "approved");
-        if (load64(filter) != 0) {
-            if (str_contains(user, load64(filter)) == 0) {
-                continue;
-            }
-        }
-        if (load64(filter + 8) != 0) {
-            if (streq(action_val, load64(filter + 8)) == 0) {
-                continue;
-            }
-        }
-        if (load64(filter + 16) != (0 - 1)) {
-            if (approved_val != load64(filter + 16)) {
-                continue;
-            }
-        }
-        var entry = alloc(56);
-        store64(entry, json_get_str(j, "timestamp"));
-        store64(entry + 8, user);
-        store64(entry + 16, json_get_str(j, "mode"));
-        store64(entry + 24, json_get_str(j, "input"));
-        store64(entry + 32, action_val);
-        store64(entry + 40, approved_val);
-        store64(entry + 48, json_get_str(j, "result"));
-        vec_push(results, entry);
-    }
-    var reversed = vec_new();
-    var rcount = vec_len(results);
-    for (var i = rcount - 1; i >= 0; i = i - 1) {
-        vec_push(reversed, vec_get(results, i));
-    }
-    if (load64(filter + 24) > 0) {
-        if (vec_len(reversed) > load64(filter + 24)) {
-            var trimmed = vec_new();
-            for (var i = 0; i < load64(filter + 24); i = i + 1) {
-                vec_push(trimmed, vec_get(reversed, i));
-            }
-            return trimmed;
-        }
-    }
-    return reversed;
+    # v1.2.x — local file-read query path. The current Cyrius 5.10.x
+    # stdlib doesn't expose the API this body relied on (fs_exists →
+    # file_exists rename; json_get_str → json_get rename; file_read_all
+    # is now buffer-based, not malloc-return). The AUDIT_VIEW intent
+    # already routes through MCP via translate_audit_view, so this
+    # in-process fallback isn't needed for v1.2.x. Return empty until
+    # the audit-read flow is the lead item and the stdlib alignment is
+    # done together.
+    return vec_new();
 }
 fn audit_format_table(entries) {
     var count = vec_len(entries);

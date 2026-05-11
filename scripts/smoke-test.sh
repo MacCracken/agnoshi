@@ -97,6 +97,28 @@ check "blocked warning line" "WARNING: BLOCKED" "$out"
 out=$("$BIN" -c "show me files" 2>&1)
 check "command field has ls" "Command: ls" "$out"
 
+# Audit log -- every -c invocation appends a JSON line to
+# $HOME/.agnsh_audit.log. Point HOME at a clean temp dir, run two
+# commands, verify the log has well-formed lines with the expected
+# action+approved shape.
+SMOKE_HOME=$(mktemp -d -t agnsh-smoke.XXXXXX)
+HOME="$SMOKE_HOME" "$BIN" -c "show me files" >/dev/null 2>&1
+HOME="$SMOKE_HOME" "$BIN" -c "rm -rf /tmp/x" >/dev/null 2>&1
+LOG="$SMOKE_HOME/.agnsh_audit.log"
+if [ -f "$LOG" ]; then
+    PASS=$((PASS+1))
+else
+    FAIL=$((FAIL+1))
+    FAILED_TESTS="$FAILED_TESTS
+  FAIL: audit log not created at $LOG"
+fi
+log_content=$(cat "$LOG" 2>/dev/null)
+check "audit log has approved=1 for ls" '"action":"ls","approved":1' "$log_content"
+check "audit log has approved=0 for rm" '"action":"rm","approved":0' "$log_content"
+lines=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+check "audit log lines match invocations" "2" "$lines"
+rm -rf "$SMOKE_HOME"
+
 # Error handling
 out=$("$BIN" -c 2>&1) || true
 check "error on missing -c arg" "Error\|Usage\|required" "$out"

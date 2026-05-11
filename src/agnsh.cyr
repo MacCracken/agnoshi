@@ -13,14 +13,18 @@ include "lib/fs.cyr"
 include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 include "lib/args.cyr"
+include "lib/chrono.cyr"
 
-# `ui_show_*` and `chrono_now_rfc3339` are minimal stand-ins because
-# src/ui.cyr and lib/chrono.cyr aren't pulled into this entry's include
-# graph yet. The full src/main.cyr entry that pulls them in is queued
-# for the v1.2.1 interactive-shell wire-up.
+# `ui_show_*` are minimal stand-ins because src/ui.cyr isn't pulled
+# into this entry's include graph yet (queued for the v1.2.1
+# interactive-shell wire-up). `chrono_now_rfc3339` now reaches into
+# lib/chrono.cyr's iso8601_now (real wall-clock time) instead of the
+# v1.0-era fixed-string stub; the wrap converts iso8601_now's cstring
+# buffer to a Str so audit's json_escape (Str-typed) reads a valid
+# length header.
 fn ui_show_error(m) { return 0; }
 fn ui_show_warning(m) { return 0; }
-fn chrono_now_rfc3339() { return str_from("2026-04-13T00:00:00Z"); }
+fn chrono_now_rfc3339() { return str_from(iso8601_now()); }
 
 include "src/sanitize.cyr"
 include "src/mode.cyr"
@@ -30,6 +34,7 @@ include "src/commands.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
+include "src/audit.cyr"
 
 var VERSION_STR = "agnoshi 1.2.0";
 
@@ -49,6 +54,46 @@ fn print_usage() {
     println("  exit    -- leave shell");
 }
 
+fn audit_log_path() {
+    # `$HOME/.agnsh_audit.log` is the v1.0 convention (per docs/agnsh.1).
+    # Returns a NULL-TERMINATED cstring (not a Str) because AuditLogger_log
+    # passes the path to syscall(SYS_OPEN) directly, and str_cat allocates
+    # a length-prefixed buffer with no trailing zero. Falls back to /tmp
+    # when HOME is unset (test harness / restricted envs).
+    var home = getenv("HOME");
+    if (home == 0) { return "/tmp/agnsh_audit.log"; }
+    var hlen = strlen(home);
+    var suffix = "/.agnsh_audit.log";
+    var slen = strlen(suffix);
+    var buf = alloc(hlen + slen + 1);
+    memcpy(buf, home, hlen);
+    memcpy(buf + hlen, suffix, slen);
+    store8(buf + hlen + slen, 0);
+    return buf;
+}
+fn audit_one_shot(input_cstr, cmd_cstr, perm) {
+    # Every -c invocation produces one audit line. `approved` is 1 for
+    # auto-runnable (SAFE/READ_ONLY/USER_WRITE), 0 for anything that
+    # would require an interactive approval prompt (SYSTEM_WRITE/ADMIN)
+    # or is outright blocked. `result` is "proposed" since -c mode
+    # prints the translation but doesn't execute it yet — the exec
+    # wire-up is part of the interactive-shell slice. Once that lands
+    # the result field flips to "executed" / "denied" / "error".
+    var approved = 0;
+    if (perm == PermissionLevel.SAFE) { approved = 1; }
+    elif (perm == PermissionLevel.READ_ONLY) { approved = 1; }
+    elif (perm == PermissionLevel.USER_WRITE) { approved = 1; }
+    var entry = AuditEntry_new(
+    str_from("user"),
+    str_from("auto"),
+    str_from(input_cstr),
+    str_from(cmd_cstr),
+    approved,
+    str_from("proposed")
+    );
+    var logger = AuditLogger_new(audit_log_path());
+    AuditLogger_log(logger, entry);
+}
 fn print_intent_result(input_cstr) {
     var s = str_from(input_cstr);
     var interp = Interpreter_new();
@@ -93,6 +138,7 @@ fn print_intent_result(input_cstr) {
         println("  Approval required (interactive prompt in shell mode)");
     }
 
+    audit_one_shot(input_cstr, cmd, perm);
     return 0;
 }
 
