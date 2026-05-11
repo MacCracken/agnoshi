@@ -25,7 +25,8 @@ agnoshi
 │   ├── output.cyr          -- output formatting (auto/json/table)
 │   ├── prompt.cyr          -- prompt rendering
 │   └── ui.cyr              -- terminal UI helpers
-├── lib/                    -- vendored Cyrius stdlib
+├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
+│                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
 │   ├── test_core.tcyr      -- 57 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
@@ -120,11 +121,11 @@ Every command is classified into one of six levels:
 ## Dependencies
 
 **Build-time:**
-- `cyrius` v4.3.0+ (compiler + toolchain)
-- vendored stdlib in `lib/` (string, str, alloc, vec, syscalls, io, fs, hashmap, tagged, fnptr, bench, chrono, json, fmt, args, net)
+- Cyrius 5.10.34 (pinned in `cyrius.cyml`: `cyrius = "5.10.34"`)
+- Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, json, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step.
 
 **Runtime:**
-- None (statically linked ELF, ~150 KB)
+- None (statically linked ELF, ~272 KB on Cyrius 5.10.34; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth, not new agnoshi code)
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 

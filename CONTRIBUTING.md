@@ -6,14 +6,18 @@ Thank you for your interest in contributing to Agnoshi.
 
 1. Fork the repository
 2. Create a feature branch
-3. Install the Cyrius toolchain from https://github.com/MacCracken/cyrius
-4. Make your changes
-5. Run `sh tests/test.sh` to verify
-6. Submit a pull request
+3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "5.10.34"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
+4. `cyrius deps` — resolves the version-pinned stdlib snapshot into `./lib/` (gitignored)
+5. Make your changes
+6. Run the cleanliness gates + `sh tests/test.sh` to verify
+7. Submit a pull request
 
 ## Development
 
 ```bash
+# Resolve the version-pinned stdlib snapshot (./lib/ is gitignored)
+cyrius deps
+
 # Build the binary
 cyrius build src/agnsh.cyr build/agnsh
 
@@ -26,6 +30,20 @@ cyrius build tests/test_security.tcyr build/test_security && ./build/test_securi
 cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core
 sh scripts/smoke-test.sh build/agnsh
 ```
+
+### Cleanliness gates
+
+These match the CI gate set. Run them before pushing — any drift fails the build.
+
+```bash
+cyrius check src/agnsh.cyr             # syntax (entry-walk; modules are stitched through agnsh.cyr)
+cyrius capacity --check src/agnsh.cyr  # fn-table / code-size headroom (must be <85%)
+cyrius vet src/agnsh.cyr               # include-graph audit
+cyrius fmt <file>                      # emits formatted source; diff vs tree must be empty
+cyrius lint <file>                     # warn-as-error
+```
+
+For the format / lint loop, the CI walks `src/*.cyr tests/*.tcyr tests/*.bcyr` and fails on any drift or `warn` line — auto-discover so new modules pick up the gate.
 
 ## Code Standards
 
@@ -46,10 +64,11 @@ sh scripts/smoke-test.sh build/agnsh
   `str_len`, `str_trim`, `str_sub`. Don't mix.
 - **String literals** default to cstring; convert with `str_from()` if you
   need Str semantics.
-- **Comments**: use `#` or `//`. Avoid inline `//` comments containing `:`
-  — cc3 may mis-parse them.
-- **Match statements**: always include a `_ =>` default case. Split large
-  matches across multiple functions (40+ arms may exceed per-function limits).
+- **Match statements**: always include a `_ =>` default case.
+- **Trailing commas**: Cyrius 5.10.x `cyrius build` rejects a trailing comma
+  after the last argument in a call (even though `cyrius fmt` preserves it on
+  multi-line calls). Wrap long calls without a trailing comma after the last
+  argument.
 - **Reserved words**: don't use `match`, `default`, `in`, `shared` as
   variable names.
 

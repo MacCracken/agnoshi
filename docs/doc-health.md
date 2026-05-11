@@ -6,31 +6,35 @@ type: state
 
 # Documentation Health — agnoshi
 
-> **Last refresh**: 2026-05-10 (initial audit, paired with the 1.1.0 modernization pass) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-10 (1.1.0 closeout pass — five stale doc rows refreshed) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`agnoshi`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md)) — same buckets, agnoshi-shaped tiers.
 
 ---
 
-## At a glance — 2026-05-10 inventory
+## At a glance — 2026-05-10 inventory (post-closeout)
 
-**~26 markdown files** total (7 root + 18 under `docs/`) plus the `agnsh.1` man page. Bucket counts at the start of the 1.1.0 cycle:
+**~26 markdown files** total (7 root + 18 under `docs/`) plus the `agnsh.1` man page. Bucket counts after the 1.1.0 closeout pass:
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh — refreshed in 1.1.0 modernization** | 6 | `CLAUDE.md` (Rust→Cyrius gate commands swapped, Known Issues purged), `docs/development/roadmap.md` (1.2.x slot rework), `CHANGELOG.md` (1.1.0 entry), `VERSION` (bumped), `doc-health.md` (this file, debut), `cyrius.cyml` (manifest migration). |
-| 🟡 **Stale — refresh in 1.1.0 closeout** | 5 | `README.md` (still references Rust toolchain commands + 1.0.0 footprint), `CONTRIBUTING.md` (likely Rust-era), `docs/architecture/overview.md` (post-port Rust→Cyrius — verify module map matches `src/`), `docs/agnsh.1` (regenerate against 1.1.x command surface), `benchmarks-rust-v-cyrius.md` (header line/footnote about "cc3 limits" was misleading — see note below). |
-| 🟠 **Read-through outstanding** | 4 | `docs/guides/getting-started.md`, `docs/guides/writing-intents.md`, `docs/guides/security-model.md`, `docs/examples/*` (4 files) — written during the v0.90/v1.0 cycle; need a per-page re-read against current src/ before stamping fresh, especially the security-model guide vs. the approval/sanitize/permissions wiring. |
+| ✅ **Fresh — refreshed in 1.1.0** | 11 | `CLAUDE.md`, `docs/development/roadmap.md`, `CHANGELOG.md` (1.1.0 entry), `VERSION` (bumped), `doc-health.md` (this file), `cyrius.cyml` (manifest migration), **plus the five closeout items below**: `README.md` (Cyrius 5.10.34 + `cyrius deps` install, 272 KB binary stat-line), `CONTRIBUTING.md` (cc3-era warnings stripped, cleanliness gates + `cyrius deps` step added), `docs/architecture/overview.md` (lib/ reframed as `cyrius deps`-managed, build-time req bumped 4.3.0+ → 5.10.34), `docs/agnsh.1` (header bumped 1.0.0 → 1.1.0), `benchmarks-rust-v-cyrius.md` (cc3 framing re-anchored as historical port-arc, in-tree refresh command added). |
+| 🟠 **Read-through outstanding** | 4 | `docs/guides/getting-started.md`, `docs/guides/writing-intents.md`, `docs/guides/security-model.md`, `docs/examples/*` (4 files) — written during the v0.90/v1.0 cycle; need a per-page re-read against current src/ before stamping fresh, especially the security-model guide vs. the approval/sanitize/permissions wiring. **Slot**: 1.2.x where intent / approval / interactive-shell work touches the surfaces these guides describe. |
 | 🔵 **Probably evergreen** | 4 | `CODE_OF_CONDUCT.md`, `LICENSE`, `SECURITY.md` (reporting policy), `docs/adr/README.md` (index, not a decision record). Re-read annually. |
 | 📦 **Archive / frozen by design** | 7 | The 5 ADRs (each a point-in-time decision record), `docs/audit/2026-04-13.md` (P(-1) report for 1.0.0 cycle), `docs/guides/README.md` / `docs/examples/README.md` (index files — refresh only when contents change). |
-| ❓ **Open strategic question** | 1 | Whether `benchmarks-rust-v-cyrius.md` at the repo root should move to `docs/` (matches agnosys's posture) or stay at root as the port-arc headliner. Deferred to 1.2.x. |
+| ❓ **Open strategic question** | 1 | Whether `benchmarks-rust-v-cyrius.md` at the repo root should move to `docs/` (matches agnosys's posture) or stay at root as the port-arc headliner. **Resolution slot**: 1.2.0 doc-sync. The misleading cc3 framing was fixed in 1.1.0 closeout; the home question is now the only thing outstanding. |
 
 **Doc cleanup landed in 1.1.0:**
 - ✅ `CLAUDE.md` — Rust toolchain refs (`cargo fmt/clippy/audit/deny/doc`) swapped to Cyrius equivalents (`cyrius check/fmt/lint/vet/capacity`). Known Issues block purged: the "ModeManager undefined" note was self-contradicting (the struct is defined in `src/mode.cyr:8`); the "cc3 token limit" note was about a retired compiler and no longer applies on Cyrius 5.10.34.
 - ✅ `docs/development/roadmap.md` — Shipped section dated, 1.1.0 scoped, polish items slotted across 1.2.0 / 1.2.1 / 1.2.2; demand-gated bucket relabeled to v1.3.x+.
-- ✅ `docs/doc-health.md` — this file, debut.
+- ✅ `docs/doc-health.md` — this file, debut + closeout refresh.
 - ✅ Manifest discipline note added — version lives in `VERSION`, `cyrius.cyml` pulls via `${file:VERSION}`, no duplicate edits.
+- ✅ `README.md` — added "1.1.0 · Cyrius 5.10.34 · 21 modules · ~4 K src lines · 272 KB static binary (DCE) · 0 runtime deps" stat-line, install instructions prefixed with `cyrius deps`, 146 KB boast replaced with a 1.0.0-port-arc snapshot framing + pointer to in-tree benchmark refresh, "v1.0 minimal" agnsh.cyr annotation dropped now that the entry is shipped.
+- ✅ `CONTRIBUTING.md` — `cyrius deps` step added; cleanliness gate command list (`cyrius check / capacity / vet / fmt / lint`) documented inline; cc3-era warnings purged (`//`-comments-with-colons mis-parse note, 40+ match-arm per-function limit). Cyrius 5.10.x trailing-comma rule from CHANGELOG carried in.
+- ✅ `docs/architecture/overview.md` — `lib/` reframed as "Cyrius stdlib (gitignored; populated by `cyrius deps` from the pinned snapshot)"; build-time req bumped `cyrius v4.3.0+` → `Cyrius 5.10.34 pinned in cyrius.cyml`; runtime binary size annotated with the 146 KB → 272 KB 4.5.0→5.10.x toolchain-side growth.
+- ✅ `docs/agnsh.1` — `.TH` header bumped `April 2026 / agnoshi 1.0.0` → `May 2026 / agnoshi 1.1.0`. Command surface unchanged in 1.1.0 (modes, builtins, options, files) so the body needed no edits.
+- ✅ `benchmarks-rust-v-cyrius.md` — historical-port-arc framing added at top; cc3-limit references called out as point-in-time / no longer applicable on 5.10.34; in-tree refresh command (`cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core`) wired in for current-toolchain numbers. Doc itself remains frozen by design.
 
 ---
 
@@ -38,10 +42,10 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-04-30 | 🟡 Stale | Likely still references the 1.0.0 binary size / parse-speedup numbers and may reference `cyrius.toml`. Refresh during 1.1.0 closeout: pin to Cyrius 5.10.34, link `cyrius.cyml`, note the `cyrius deps`-managed `./lib/`, and update the CI gate list. |
+| `README.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: Cyrius 5.10.34 stat-line added, install prefixed with `cyrius deps`, "146 KB" headline reframed as a 1.0.0-port-arc snapshot pointing at `benchmarks-rust-v-cyrius.md` + in-tree refresh command, "v1.0 minimal" annotation dropped. |
 | `CHANGELOG.md` | 2026-05-10 | ✅ Fresh | 1.1.0 entry written this pass. Source of truth for shipped work. |
 | `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Rust→Cyrius gate commands swapped; stale Known Issues purged; version-discipline note added (VERSION is single SoT). |
-| `CONTRIBUTING.md` | 2026-04-30 | 🟡 Stale | Likely Rust-era. Refresh: Cyrius prereq, the 5-gate cleanliness step, `cyrius deps` workflow, the `agnosys`-parity CI shape. |
+| `CONTRIBUTING.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `cyrius deps` step added, cleanliness gate command list inlined, cc3-era warnings (`//`-with-colons mis-parse, 40-arm per-fn limit) purged, Cyrius 5.10.x trailing-comma rule carried in from CHANGELOG. |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
 | `VERSION` | 2026-05-10 | ✅ Fresh | `1.1.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
@@ -61,7 +65,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `overview.md` | 2026-04-30 | 🟡 Stale | Post-port Rust→Cyrius — confirm the module map matches the 21 files in `src/` (agnsh, aliases, approval, audit, checkpoint, commands, completion, config, history, intent, interpreter, main, mode, output, permissions, prompt, sanitize, security, session, translate, ui). Refresh during 1.1.0 closeout. |
+| `overview.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `lib/` reframed as `cyrius deps`-managed (gitignored); build-time req bumped 4.3.0+ → Cyrius 5.10.34; runtime binary size annotated with 146 KB → 272 KB 4.5.0→5.10.x toolchain-side growth. Module map verified against `src/` (21 files). |
 
 ---
 
@@ -118,8 +122,8 @@ Next audit slot: 1.2.0 P(-1) pass (paired with intent-parsing depth + translator
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `benchmarks-rust-v-cyrius.md` (repo root) | 2026-04-13 | 🟡 Stale — HEADLINER | Rust → Cyrius port-arc comparison, point-in-time at 1.0.0 / Cyrius 4.5.0. Per agnosys precedent (`docs/benchmarks-rust-vs-cyrius.md`) this kind of doc is **frozen by design** — but the prior CLAUDE.md's "exceeds cc3 limits" footnote is misleading (Cyrius 4.5.0+ has no such limit; the doc reads as if a current constraint, not a port-time observation). Either re-anchor the framing as historical at 1.1.0 closeout OR move it to `docs/` to match the agnosys home and rewrite the footnote. See the Open Question below. |
-| `docs/agnsh.1` | 2026-04-13 | 🟡 Stale | Man page — regenerate against the 1.1.x command surface during closeout. |
+| `benchmarks-rust-v-cyrius.md` (repo root) | 2026-05-10 | ✅ Fresh (frozen by design) | Rust → Cyrius port-arc comparison, point-in-time at 1.0.0 / Cyrius 4.5.0. The cc3-limit framing was re-anchored as historical in 1.1.0 closeout (header callout + in-tree refresh command for current-toolchain numbers); substance left frozen. Home decision (root vs `docs/`) still open — see Open Question. |
+| `docs/agnsh.1` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `.TH` header bumped `April 2026 / agnoshi 1.0.0` → `May 2026 / agnoshi 1.1.0`. Command surface (modes, builtins, options, files) unchanged in 1.1.0 so the body needed no edits. |
 
 ---
 
@@ -168,4 +172,4 @@ When the bucket counts at the top drift by more than ~3 in any cell, refresh the
 
 ---
 
-*Last refresh: 2026-05-10 (initial audit, paired with the 1.1.0 modernization pass). Refresh in place when docs are touched.*
+*Last refresh: 2026-05-10 (1.1.0 closeout pass — README, CONTRIBUTING, architecture/overview, agnsh.1, benchmarks-rust-v-cyrius all moved Stale → Fresh). Refresh in place when docs are touched.*

@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Repair-focused modernization. No new shell features — toolchain bump + scaffolding parity with the rest of the AGNOS ecosystem.
 
+### Documentation
+- **doc closeout** — Five docs flagged Stale in the initial `doc-health.md` audit moved Fresh in the 1.1.0 closeout pass. Each refreshed in-place against the agnoshi shape (userland AI shell), not pasted from the agnosys playbook (kernel-interface library):
+  - `README.md` — added a `1.1.0 · Cyrius 5.10.34 · 21 modules · ~4 K src lines · 272 KB static binary (DCE) · 0 runtime deps` stat-line; install instructions now lead with `cyrius deps`; the "146 KB" headline from 1.0.0 is reframed as a port-arc snapshot pointing at `benchmarks-rust-v-cyrius.md` with an in-tree refresh command; the `agnsh.cyr "v1.0 minimal"` annotation dropped (the entry shipped).
+  - `CONTRIBUTING.md` — `cyrius deps` step added before build; cleanliness gate command list (`cyrius check / capacity / vet / fmt / lint`) documented inline matching the CI shape; cc3-era warnings purged (`//`-comment-with-colons mis-parse note, "40+ match arms may exceed per-fn limit"); Cyrius 5.10.x trailing-comma rule from the toolchain-bump notes carried in.
+  - `docs/architecture/overview.md` — `lib/` reframed as "Cyrius stdlib (gitignored; populated by `cyrius deps` from the pinned snapshot)"; build-time requirement bumped `cyrius v4.3.0+` → `Cyrius 5.10.34 pinned in cyrius.cyml`; runtime size annotated with the 146 KB → 272 KB toolchain-side growth between 4.5.0 and 5.10.x.
+  - `docs/agnsh.1` — `.TH` header bumped `April 2026 / agnoshi 1.0.0` → `May 2026 / agnoshi 1.1.0`. Command surface (modes, builtins, options, files) unchanged in 1.1.0 so the body needed no edits.
+  - `benchmarks-rust-v-cyrius.md` — historical-port-arc framing added at the top; cc3-limit references called out as point-in-time and no longer applicable on Cyrius 5.10.34; in-tree refresh command (`cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core`) wired in for current-toolchain numbers. Doc otherwise remains frozen by design.
+- **doc-health.md** — bucket counts re-rolled (Fresh: 6 → 11), per-row entries for the five closeout items moved to ✅ Fresh with refresh notes; the one outstanding Open Strategic Question is now strictly `benchmarks-rust-v-cyrius.md`'s home (root vs `docs/`), deferred to 1.2.0 doc-sync.
+
 ### Changed
 - **toolchain** — Cyrius pin bumped 4.5.0 → 5.10.34 (latest stable). Pin now lives in `cyrius.cyml` (`cyrius = "5.10.34"`); the standalone `.cyrius-toolchain` file was retired.
 - **manifest** — `cyrius.toml` → `cyrius.cyml`. Package version is no longer hand-edited in the manifest — `version = "${file:VERSION}"` reads `VERSION` at toolchain-resolve time, so `VERSION` is the only file the release process touches.

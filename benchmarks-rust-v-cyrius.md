@@ -1,5 +1,7 @@
 # Benchmarks: Rust vs Cyrius
 
+> **Historical port-arc record.** Frozen at the 1.0.0 cut. Numbers below are the point-in-time Rust 0.90 → Cyrius 4.5.0 comparison that proved the port. Cyrius has since moved to 5.10.x (the per-function and code-size limits referenced under "Build Journey" are cc3-era and no longer apply on 5.10.34 — current capacity headroom is reported by `cyrius capacity --check src/agnsh.cyr`). For an in-tree refresh on the current toolchain, run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core`.
+
 Rust baseline: commit `5a662b0` (2026-04-06), criterion v0.8, `--release` (opt=3, lto=thin, codegen-units=1)
 Cyrius: port commit (2026-04-13), cc3 v4.1.1 (opt: constant folding, DSE, inline)
 

@@ -6,6 +6,8 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
+**1.1.0 · Cyrius 5.10.34 · 21 modules · ~4 K src lines · 272 KB static binary (DCE) · 0 runtime deps**
+
 ## Features
 
 - **Natural language interpretation** — keyword-based intent parser, 44 intent types
@@ -15,12 +17,16 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 - **Checkpoint/undo** — destructive ops (rm, mv) backed up before execution
 - **Audit logging** — structured JSON log of every action with timestamp, user, mode, result
 - **Four modes** — human, assist, auto, strict
-- **Static binary** — 146 KB, no dynamic dependencies
+- **Single static binary** — `agnsh`, no dynamic dependencies
 
 ## Install
 
 ```bash
-# Build from source (requires cyrius compiler)
+# Resolve the version-pinned stdlib snapshot into ./lib/ (gitignored).
+# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "5.10.34").
+cyrius deps
+
+# Build from source
 cyrius build src/agnsh.cyr build/agnsh
 
 # Install to /usr/local/bin
@@ -40,7 +46,7 @@ agnsh --help                    # show usage
 
 ```
 src/
-├── agnsh.cyr         — binary entry point (v1.0 minimal)
+├── agnsh.cyr         — binary entry point (CLI flags, interactive loop)
 ├── sanitize.cyr      — input validation, JSON escape, env whitelist
 ├── mode.cyr          — operating mode (human/assist/auto/strict)
 ├── permissions.cyr   — command classification, permission levels
@@ -95,7 +101,7 @@ See `docs/guides/security-model.md` for the deep dive. All 21 audit findings res
 
 ## Benchmarks
 
-See `benchmarks-rust-v-cyrius.md` for full Rust-vs-Cyrius comparison.
+Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius 4.5.0):
 
 | Metric | Rust 0.90 | Cyrius 1.0 | Δ |
 |--------|-----------|-----------|---|
@@ -105,9 +111,11 @@ See `benchmarks-rust-v-cyrius.md` for full Rust-vs-Cyrius comparison.
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 5.10.34 is 272 KB — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 5.10.x, not from new agnoshi code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh.
+
 ## Rust Legacy
 
-The original Rust implementation is preserved in `rust-old/` for reference during the port.
+The original Rust implementation is preserved in `rust-old/` as a historical reference for the port.
 27,251 lines, 62 modules, 1,241 unit tests, 30 criterion benchmarks, version 0.90.0.
 
 ## License
