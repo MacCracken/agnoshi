@@ -490,20 +490,24 @@ fn translate_group_list(intent) {
 }
 fn translate_audit_view(intent) {
     var args = vec_new();
-    var agent_str = "";
+    var agent_str = str_from("");
     if (load64(intent + 8) != 0) { agent_str = json_escape(load64(intent + 8)); }
-    var mcp_body = str_cat("{\"agent\":\"", agent_str);
-    mcp_body = str_cat(mcp_body, "\"}");
+    # lib/str.cyr's str_cat takes (Str, Str) on 5.10.x — wrap each
+    # literal in str_from. Passing a raw cstring as the first arg
+    # causes load64(cstring) to be read as a Str header (garbage
+    # length) and the binary segfaults on AUDIT_VIEW invocation.
+    var mcp_body = str_cat(str_from("{\"agent\":\""), agent_str);
+    mcp_body = str_cat(mcp_body, str_from("\"}"));
     return Translation_with_mcp("echo", args, "View audit log", PermissionLevel.ADMIN,
     "Query the audit trail for shell actions",
     "agnos_audit_query", mcp_body);
 }
 fn translate_agent_info(intent) {
     var args = vec_new();
-    var agent_str = "";
+    var agent_str = str_from("");
     if (load64(intent + 8) != 0) { agent_str = json_escape(load64(intent + 8)); }
-    var mcp_body = str_cat("{\"agent_id\":\"", agent_str);
-    mcp_body = str_cat(mcp_body, "\"}");
+    var mcp_body = str_cat(str_from("{\"agent_id\":\""), agent_str);
+    mcp_body = str_cat(mcp_body, str_from("\"}"));
     return Translation_with_mcp("echo", args, "View agent info", PermissionLevel.READ_ONLY,
     "Query agent status and information",
     "agnos_agent_info", mcp_body);

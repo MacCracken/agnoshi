@@ -422,6 +422,223 @@ fn main() {
     check("translate_shell_command apt → ADMIN",
     load64(sh_at + 24) == PermissionLevel.ADMIN);
 
+    # Translator coverage — slice 6: git (10 translators). All emit
+    # command="git" with the operation name as the first arg. Permission
+    # is READ_ONLY for status/diff/log, USER_WRITE for everything that
+    # mutates the repo or remote.
+
+    # translate_git_commit — happy path with safe message
+    var gc_intent = Intent_new(IntentTag.GIT_COMMIT);
+    store64(gc_intent + 8, "wip: refactor");
+    var gc_t = translate_git_commit(gc_intent);
+    check("translate_git_commit cmd", streq(load64(gc_t), "git") == 1);
+    check("translate_git_commit perm", load64(gc_t + 24) == PermissionLevel.USER_WRITE);
+    # translate_git_commit — -a flag set
+    var gc_a = Intent_new(IntentTag.GIT_COMMIT);
+    store64(gc_a + 8, "fix bug");
+    store64(gc_a + 40, 1);
+    var gc_at = translate_git_commit(gc_a);
+    check("translate_git_commit -a adds flag",
+    vec_len(load64(gc_at + 8)) == 4);
+    # translate_git_commit — unsafe message (leading dash) falls to unknown.
+    # Locks `is_safe_commit_message`'s reject-leading-dash rule that closed
+    # the v1.0 security audit H7 finding (argument injection).
+    var gc_bad = Intent_new(IntentTag.GIT_COMMIT);
+    store64(gc_bad + 8, "-rf evil");
+    var gc_bt = translate_git_commit(gc_bad);
+    check("translate_git_commit leading-dash → unknown",
+    streq(load64(gc_bt), "echo") == 1);
+
+    # translate_git_diff
+    var gd_intent = Intent_new(IntentTag.GIT_DIFF);
+    var gd_t = translate_git_diff(gd_intent);
+    check("translate_git_diff cmd", streq(load64(gd_t), "git") == 1);
+    check("translate_git_diff perm READ_ONLY", load64(gd_t + 24) == PermissionLevel.READ_ONLY);
+    # --staged flag
+    var gd_st = Intent_new(IntentTag.GIT_DIFF);
+    store64(gd_st + 40, 1);
+    var gd_stt = translate_git_diff(gd_st);
+    check("translate_git_diff --staged adds flag",
+    vec_len(load64(gd_stt + 8)) == 2);
+
+    # translate_git_branch
+    var gb_intent = Intent_new(IntentTag.GIT_BRANCH);
+    store64(gb_intent + 8, "feature-x");
+    var gb_t = translate_git_branch(gb_intent);
+    check("translate_git_branch cmd", streq(load64(gb_t), "git") == 1);
+    check("translate_git_branch perm", load64(gb_t + 24) == PermissionLevel.USER_WRITE);
+    # -d delete flag
+    var gb_del = Intent_new(IntentTag.GIT_BRANCH);
+    store64(gb_del + 8, "stale");
+    store64(gb_del + 40, 1);
+    var gb_dt = translate_git_branch(gb_del);
+    check("translate_git_branch -d adds flag",
+    vec_len(load64(gb_dt + 8)) == 3);
+
+    # translate_git_status
+    var gs_t = translate_git_status(Intent_new(IntentTag.GIT_STATUS));
+    check("translate_git_status cmd", streq(load64(gs_t), "git") == 1);
+    check("translate_git_status perm READ_ONLY", load64(gs_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_git_log
+    var gl_t = translate_git_log(Intent_new(IntentTag.GIT_LOG));
+    check("translate_git_log cmd", streq(load64(gl_t), "git") == 1);
+    check("translate_git_log perm READ_ONLY", load64(gl_t + 24) == PermissionLevel.READ_ONLY);
+    # log carries --oneline + -20
+    check("translate_git_log args=3", vec_len(load64(gl_t + 8)) == 3);
+
+    # translate_git_push
+    var gp_t = translate_git_push(Intent_new(IntentTag.GIT_PUSH));
+    check("translate_git_push cmd", streq(load64(gp_t), "git") == 1);
+    check("translate_git_push perm USER_WRITE", load64(gp_t + 24) == PermissionLevel.USER_WRITE);
+
+    # translate_git_pull
+    var gpl_t = translate_git_pull(Intent_new(IntentTag.GIT_PULL));
+    check("translate_git_pull cmd", streq(load64(gpl_t), "git") == 1);
+    check("translate_git_pull perm USER_WRITE", load64(gpl_t + 24) == PermissionLevel.USER_WRITE);
+
+    # translate_git_checkout
+    var gco_intent = Intent_new(IntentTag.GIT_CHECKOUT);
+    store64(gco_intent + 8, "main");
+    var gco_t = translate_git_checkout(gco_intent);
+    check("translate_git_checkout cmd", streq(load64(gco_t), "git") == 1);
+    check("translate_git_checkout perm", load64(gco_t + 24) == PermissionLevel.USER_WRITE);
+
+    # translate_git_merge
+    var gm_intent = Intent_new(IntentTag.GIT_MERGE);
+    store64(gm_intent + 8, "feature-x");
+    var gm_t = translate_git_merge(gm_intent);
+    check("translate_git_merge cmd", streq(load64(gm_t), "git") == 1);
+    check("translate_git_merge perm", load64(gm_t + 24) == PermissionLevel.USER_WRITE);
+
+    # translate_git_stash
+    var gst_intent = Intent_new(IntentTag.GIT_STASH);
+    store64(gst_intent + 8, "pop");
+    var gst_t = translate_git_stash(gst_intent);
+    check("translate_git_stash cmd", streq(load64(gst_t), "git") == 1);
+    check("translate_git_stash perm", load64(gst_t + 24) == PermissionLevel.USER_WRITE);
+
+    # Translator coverage — slice 7: user/group + firewall + remaining.
+    # All admin-class operations (every user/group write, every firewall
+    # mutation) land at ADMIN permission so the approval workflow gates
+    # them. The two query-shape branches (firewall_list/status,
+    # group_list) sit at READ_ONLY.
+
+    # translate_user_add
+    var ua_intent = Intent_new(IntentTag.USER_ADD);
+    store64(ua_intent + 8, "alice");
+    var ua_t = translate_user_add(ua_intent);
+    check("translate_user_add cmd", streq(load64(ua_t), "useradd") == 1);
+    check("translate_user_add perm ADMIN", load64(ua_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_user_delete
+    var ud_intent = Intent_new(IntentTag.USER_DELETE);
+    store64(ud_intent + 8, "alice");
+    var ud_t = translate_user_delete(ud_intent);
+    check("translate_user_delete cmd", streq(load64(ud_t), "userdel") == 1);
+    check("translate_user_delete perm ADMIN", load64(ud_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_passwd
+    var pw_intent = Intent_new(IntentTag.PASSWD);
+    store64(pw_intent + 8, "alice");
+    var pw_t = translate_passwd(pw_intent);
+    check("translate_passwd cmd", streq(load64(pw_t), "passwd") == 1);
+    check("translate_passwd perm ADMIN", load64(pw_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_group_add
+    var ga_intent = Intent_new(IntentTag.GROUP_ADD);
+    store64(ga_intent + 8, "devs");
+    var ga_t = translate_group_add(ga_intent);
+    check("translate_group_add cmd", streq(load64(ga_t), "groupadd") == 1);
+    check("translate_group_add perm ADMIN", load64(ga_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_group_list — query, READ_ONLY
+    var gli_t = translate_group_list(Intent_new(IntentTag.GROUP_LIST));
+    check("translate_group_list cmd", streq(load64(gli_t), "groups") == 1);
+    check("translate_group_list perm READ_ONLY", load64(gli_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_firewall_allow — mutating, ADMIN
+    var fa_intent = Intent_new(IntentTag.FIREWALL_ALLOW);
+    store64(fa_intent + 8, "8080");
+    var fa_t = translate_firewall_allow(fa_intent);
+    check("translate_firewall_allow cmd", streq(load64(fa_t), "ufw") == 1);
+    check("translate_firewall_allow perm ADMIN", load64(fa_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_firewall_deny
+    var fd_intent = Intent_new(IntentTag.FIREWALL_DENY);
+    store64(fd_intent + 8, "23");
+    var fd_t = translate_firewall_deny(fd_intent);
+    check("translate_firewall_deny cmd", streq(load64(fd_t), "ufw") == 1);
+    check("translate_firewall_deny perm ADMIN", load64(fd_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_firewall_list — query, READ_ONLY
+    var fli_t = translate_firewall_list(Intent_new(IntentTag.FIREWALL_LIST));
+    check("translate_firewall_list cmd", streq(load64(fli_t), "ufw") == 1);
+    check("translate_firewall_list perm READ_ONLY", load64(fli_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_firewall_status — query, READ_ONLY
+    var fst_t = translate_firewall_status(Intent_new(IntentTag.FIREWALL_STATUS));
+    check("translate_firewall_status cmd", streq(load64(fst_t), "ufw") == 1);
+    check("translate_firewall_status perm READ_ONLY", load64(fst_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_firewall_enable / disable — both ADMIN
+    var fen_t = translate_firewall_enable(Intent_new(IntentTag.FIREWALL_ENABLE));
+    check("translate_firewall_enable cmd", streq(load64(fen_t), "ufw") == 1);
+    check("translate_firewall_enable perm ADMIN", load64(fen_t + 24) == PermissionLevel.ADMIN);
+    var fdi_t = translate_firewall_disable(Intent_new(IntentTag.FIREWALL_DISABLE));
+    check("translate_firewall_disable cmd", streq(load64(fdi_t), "ufw") == 1);
+    check("translate_firewall_disable perm ADMIN", load64(fdi_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_firewall_delete
+    var fde_intent = Intent_new(IntentTag.FIREWALL_DELETE);
+    store64(fde_intent + 8, "8080");
+    var fde_t = translate_firewall_delete(fde_intent);
+    check("translate_firewall_delete cmd", streq(load64(fde_t), "ufw") == 1);
+    check("translate_firewall_delete perm ADMIN", load64(fde_t + 24) == PermissionLevel.ADMIN);
+
+    # translate_service_control — happy path + null-action fallback.
+    # (Bare imperative parse paths cover this end-to-end in the parse-side
+    # tests above; here we lock the translator's own contract.)
+    var sctl_intent = Intent_new(IntentTag.SERVICE_CONTROL);
+    store64(sctl_intent + 8, "start");
+    store64(sctl_intent + 16, "nginx");
+    var sctl_t = translate_service_control(sctl_intent);
+    check("translate_service_control cmd", streq(load64(sctl_t), "systemctl") == 1);
+    check("translate_service_control perm ADMIN", load64(sctl_t + 24) == PermissionLevel.ADMIN);
+    var sctl_null = Intent_new(IntentTag.SERVICE_CONTROL);
+    var sctl_nt = translate_service_control(sctl_null);
+    check("translate_service_control null action → unknown",
+    streq(load64(sctl_nt), "echo") == 1);
+
+    # translate_audit_view + translate_agent_info — both route through
+    # MCP (Translation_with_mcp). field+8 must be a Str (json_escape
+    # uses str_len), matching the parser's extract_after output.
+    var av_intent = Intent_new(IntentTag.AUDIT_VIEW);
+    store64(av_intent + 8, str_from("agent-1"));
+    var av_t = translate_audit_view(av_intent);
+    check("translate_audit_view cmd echo", streq(load64(av_t), "echo") == 1);
+    check("translate_audit_view perm ADMIN", load64(av_t + 24) == PermissionLevel.ADMIN);
+    check("translate_audit_view mcp_tool set", load64(av_t + 40) != 0);
+    # Null-field path — json_escape returns "" for null, no crash.
+    var av_null = Intent_new(IntentTag.AUDIT_VIEW);
+    var av_nt = translate_audit_view(av_null);
+    check("translate_audit_view null field cmd echo", streq(load64(av_nt), "echo") == 1);
+
+    var ag_intent = Intent_new(IntentTag.AGENT_INFO);
+    store64(ag_intent + 8, str_from("agent-1"));
+    var ag_t = translate_agent_info(ag_intent);
+    check("translate_agent_info cmd echo", streq(load64(ag_t), "echo") == 1);
+    check("translate_agent_info perm READ_ONLY", load64(ag_t + 24) == PermissionLevel.READ_ONLY);
+    check("translate_agent_info mcp_tool set", load64(ag_t + 40) != 0);
+
+    # translate_question + translate_unknown — both echo, both SAFE.
+    var q_t = translate_question(Intent_new(IntentTag.QUESTION));
+    check("translate_question cmd echo", streq(load64(q_t), "echo") == 1);
+    check("translate_question perm SAFE", load64(q_t + 24) == PermissionLevel.SAFE);
+    var u_t = translate_unknown(Intent_new(IntentTag.UNKNOWN));
+    check("translate_unknown cmd echo", streq(load64(u_t), "echo") == 1);
+    check("translate_unknown perm SAFE", load64(u_t + 24) == PermissionLevel.SAFE);
+
     println("");
     str_print(str_from("Passed: "));
     print_num(pass_count);

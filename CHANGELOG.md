@@ -6,9 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.0 work. Slices 1-4 (committed) advanced the **deeper intent parsing** roadmap item: parse-side stdlib regression fixes, word-prefix matching that retired the substring-trap class, service-status NL (`"is X running"`, `"status of X"`), and imperative service actions (`"start nginx"`, `"stop sshd"`, etc.). Slice 5 (this cut) pivots to the second open v1.2.0 roadmap item — **"all core translators production-tested on real commands"** — by adding the first translator-coverage pass: 40 assertions across 16 filesystem / process / system / network / disk / install / shell translators, verifying command name, permission level, safety-check fallbacks to `translate_unknown`, and a couple of args-shape spot-checks.
+v1.2.0 work. Slices 1-4 (committed) advanced the **deeper intent parsing** roadmap item. Slice 5 (committed) opened the **"all core translators production-tested"** item with 40 assertions across the 16 core filesystem / process / system / network / disk translators. Slices 6-7 (this cut) finish translator coverage — git (10 translators), user/group (5), firewall (7), MCP-routing (audit_view + agent_info), and the SAFE-fallback pair (question + unknown). Tests revealed a real bug: `translate_audit_view` and `translate_agent_info` were doing `str_cat(cstring, Str)` against `lib/str.cyr`'s `(Str, Str)` signature — same Cyrius 4.5 → 5.10 stdlib drift the parser had — and the binary segfaulted on `"show audit"`. Fixed.
 
-### Slice 5 — translator coverage: core file/process/system (this cut)
+### Slices 6-7 — translator coverage: git, user/group, firewall, MCP (this cut)
+
+#### Fixed
+- **translate.cyr: `translate_audit_view` / `translate_agent_info`** — both built MCP JSON bodies via `str_cat("{\"agent\":\"", agent_str)`. `lib/str.cyr`'s `str_cat` takes `(Str, Str)` on 5.10.x, and passing a cstring as the first arg causes `load64(cstring)` to be read as a Str header (garbage length). Binary segfaulted any time the user asked for an audit view (`"show audit log"`) or queried agent info. Both literals now wrapped in `str_from()`. Verified by the new translator tests AND end-to-end against the binary (`./build/agnsh -c "show audit"` no longer crashes). This is the same bug-class as the slice-1 sanitize-helper fixes; finding it in translate.cyr suggests the migration audit should be re-run more broadly — queued as a roadmap follow-up.
+
+#### Added — Slice 6: git translators (10)
+- `translate_git_commit` — command="git", USER_WRITE; `-a` flag arms; unsafe leading-dash message (`"-rf evil"`) → `translate_unknown` (locks the v1.0 security audit H7 mitigation).
+- `translate_git_diff` — command="git", READ_ONLY; `--staged` flag arm.
+- `translate_git_branch` — command="git", USER_WRITE; `-d` delete flag arm.
+- `translate_git_status` / `translate_git_log` — both READ_ONLY; `log` carries `--oneline -20` (args count locked).
+- `translate_git_push` / `translate_git_pull` / `translate_git_checkout` / `translate_git_merge` / `translate_git_stash` — all USER_WRITE, all `git`-rooted.
+
+#### Added — Slice 7: user/group, firewall, MCP, fallbacks (15 translators)
+- `translate_user_add` / `translate_user_delete` / `translate_passwd` / `translate_group_add` — all ADMIN.
+- `translate_group_list` — READ_ONLY (the one query in the user/group set).
+- `translate_firewall_allow` / `translate_firewall_deny` / `translate_firewall_enable` / `translate_firewall_disable` / `translate_firewall_delete` — all `ufw`, all ADMIN.
+- `translate_firewall_list` / `translate_firewall_status` — READ_ONLY (the two query shapes).
+- `translate_service_control` — happy path (command="systemctl", ADMIN) + null-action → `translate_unknown` fallback.
+- `translate_audit_view` / `translate_agent_info` — both echo + MCP-routed; `mcp_tool` field-40 locked non-zero (`Translation_with_mcp` populated correctly). Audit view at ADMIN, agent info at READ_ONLY. Null-field path also covered for audit_view.
+- `translate_question` / `translate_unknown` — both echo + SAFE.
+
+#### Notes
+- Test count 151 → **214**, all passing. Every translator in `src/translate.cyr` now has at least command + permission-level assertions; every safety-check fallback has an explicit negative test.
+- **Bug-class follow-up** — slice 1 caught the `str_len(cstring)` and `str_sub` semantics drift in `sanitize.cyr` / `interpreter.cyr` / six other files; slice 7 caught the `str_cat(cstring, Str)` variant in `translate.cyr`. Queueing a broader audit pass for v1.2.0 closeout to grep the rest of `src/` for the same shape (cstring literal passed where Str is expected by a 5.10.x stdlib fn) — probably worth its own slice rather than chasing case-by-case.
+
+### Slice 5 — translator coverage: core file/process/system (committed)
 
 #### Added
 - **tests/test_core.tcyr — translator coverage block** — 40 new assertions, one or more per core translator. Each block verifies:
