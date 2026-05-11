@@ -116,6 +116,31 @@ BAD_OUT=$(printf 'mode wibble\nexit\n' | "$BIN" 2>&1)
 check "unknown mode error" "Unknown mode: wibble" "$BAD_OUT"
 check "unknown mode suggests list" "Available: auto, assist, human, strict" "$BAD_OUT"
 
+# History -- every non-builtin input is recorded; the `history` builtin
+# replays the last 20; the on-disk $HOME/.agnsh_history persists across
+# sessions; the next session loads it on start.
+HIST_HOME=$(mktemp -d -t agnsh-hist.XXXXXX)
+HIST_OUT=$(printf 'show files\nfind /tmp\nhistory\nexit\n' | HOME="$HIST_HOME" "$BIN" 2>&1)
+check "history shows 1 entry" "1  show files" "$HIST_OUT"
+check "history shows 2 entry" "2  find /tmp" "$HIST_OUT"
+HIST_FILE="$HIST_HOME/.agnsh_history"
+check "history file created" "$(test -f "$HIST_FILE" && echo yes)" "yes"
+check "history file line count" "$(wc -l < "$HIST_FILE" 2>/dev/null)" "2"
+check "history file content" "show files" "$(cat "$HIST_FILE" 2>/dev/null)"
+
+# Second session must load the persisted file on start.
+HIST2_OUT=$(printf 'history\nexit\n' | HOME="$HIST_HOME" "$BIN" 2>&1)
+check "history loads on next session" "1  show files" "$HIST2_OUT"
+check "history loads entry 2" "2  find /tmp" "$HIST2_OUT"
+rm -rf "$HIST_HOME"
+
+# Empty-history path -- a fresh shell with no prior history file
+# reports `(history empty)` rather than crashing or echoing nothing.
+EMPTY_HOME=$(mktemp -d -t agnsh-empty.XXXXXX)
+EMPTY_OUT=$(printf 'history\nexit\n' | HOME="$EMPTY_HOME" "$BIN" 2>&1)
+check "empty-history message" "(history empty)" "$EMPTY_OUT"
+rm -rf "$EMPTY_HOME"
+
 # Audit log -- every -c invocation appends a JSON line to
 # $HOME/.agnsh_audit.log. Point HOME at a clean temp dir, run two
 # commands, verify the log has well-formed lines with the expected

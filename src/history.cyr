@@ -1,22 +1,37 @@
-include "lib/io.cyr"
-include "lib/fs.cyr"
 struct CommandHistory {
     entries;
     count;
     max_size;
     file_path;
 }
+# CommandHistory_new — file_path is a cstring (null-terminated buffer)
+# because `file_exists`, `file_read_all`, and `syscall(SYS_OPEN)` all
+# expect a cstring path. Entries are normalized to Str throughout so
+# CommandHistory_add can use str_eq for dedup; the load-from-file path
+# already yields Str via str_split.
 fn CommandHistory_new(file_path, max_size) {
     var entries = vec_new();
-    if (fs_exists(file_path) == 1) {
-        var content = file_read_all(file_path);
-        if (content != 0) {
-            var lines = str_split(content, "\n");
-            var nlines = vec_len(lines);
-            for (var i = 0; i < nlines; i = i + 1) {
-                var line = vec_get(lines, i);
-                if (str_len(line) > 0) {
-                    vec_push(entries, line);
+    if (file_exists(file_path) == 1) {
+        # Cyrius 5.10.x file_read_all is buffer-based — preallocate a
+        # generous 64 KB scratch buffer (history files are line-oriented
+        # and conventionally small; even 1000 long commands fit easily).
+        var bufsize = 65536;
+        var buf = alloc(bufsize);
+        if (buf != 0) {
+            var n = file_read_all(file_path, buf, bufsize - 1);
+            if (n > 0) {
+                store8(buf + n, 0);
+                var content = str_new(buf, n);
+                # Explicit byte separator (10 = '\n') — bypasses the
+                # cstring-needle dispatch path that returned the whole
+                # buffer as a single Str on a first probe.
+                var lines = str_split(content, 10);
+                var nlines = vec_len(lines);
+                for (var i = 0; i < nlines; i = i + 1) {
+                    var line = vec_get(lines, i);
+                    if (str_len(line) > 0) {
+                        vec_push(entries, line);
+                    }
                 }
             }
         }
@@ -28,10 +43,21 @@ fn CommandHistory_new(file_path, max_size) {
     store64(p + 24, file_path);
     return p;
 }
-fn CommandHistory_add(self, command) {
+# CommandHistory_add — incoming `command_cstr` is the interactive_loop's
+# stdin buffer (cstring); wrap as Str on entry so the entries vec stays
+# uniformly Str-typed and the dedup check uses str_eq. Pre-v1.2.1 dedup
+# was via streq(Str, cstring) which silently never matched.
+fn CommandHistory_add(self, command_cstr) {
+    # str_clone deep-copies into a fresh heap buffer so the stored Str
+    # is independent of the caller's stdin scratch — interactive_loop
+    # reuses a single static `var buf[4096]` across iterations, so a
+    # naive str_from(command_cstr) would have every history entry's
+    # data pointer aliased to whatever bytes happen to be in &buf at
+    # display time. str_clone breaks that aliasing.
+    var command = str_clone(str_from(command_cstr));
     if (load64(self + 8) > 0) {
         var last = vec_get(load64(self), load64(self + 8) - 1);
-        if (streq(last, command) == 1) {
+        if (str_eq(last, command) == 1) {
             return 0;
         }
     }
@@ -73,12 +99,14 @@ fn CommandHistory_save(self) {
         str_builder_add(builder, "\n");
     }
     var content = str_builder_build(builder);
-    var parent = fs_parent(load64(self + 24));
-    if (fs_exists(parent) == 0) {
-        fs_mkdir_p(parent);
-        syscall(SYS_CHMOD, parent, 448);
-    }
-    file_write_all(load64(self + 24), content);
+    # Cyrius 5.10.x file_write_all takes (path, buf, len). Pre-slice-7
+    # this code was calling the v1.0 two-arg form `file_write_all(path,
+    # content)` against a content Str — would have raised an arity
+    # error on first wire-up. Pass content's data ptr + length. Skip
+    # the v1.0-era fs_parent/fs_mkdir_p call (those helpers no longer
+    # exist in 5.10.x); `$HOME` is the conventional parent and is
+    # guaranteed to exist when the shell starts.
+    file_write_all(load64(self + 24), str_data(content), str_len(content));
     syscall(SYS_CHMOD, load64(self + 24), 384);
     return 0;
 }

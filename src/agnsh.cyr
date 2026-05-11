@@ -35,6 +35,7 @@ include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
 include "src/audit.cyr"
+include "src/history.cyr"
 
 var VERSION_STR = "agnoshi 1.2.0";
 
@@ -54,6 +55,21 @@ fn print_usage() {
     println("  exit    -- leave shell");
 }
 
+fn history_path() {
+    # Mirrors audit_log_path's shape — cstring with manual concat so
+    # file_exists/read/write can use it directly. `$HOME/.agnsh_history`
+    # matches the docs/agnsh.1 convention.
+    var home = getenv("HOME");
+    if (home == 0) { return "/tmp/agnsh_history"; }
+    var hlen = strlen(home);
+    var suffix = "/.agnsh_history";
+    var slen = strlen(suffix);
+    var buf = alloc(hlen + slen + 1);
+    memcpy(buf, home, hlen);
+    memcpy(buf + hlen, suffix, slen);
+    store8(buf + hlen + slen, 0);
+    return buf;
+}
 fn audit_log_path() {
     # `$HOME/.agnsh_audit.log` is the v1.0 convention (per docs/agnsh.1).
     # Returns a NULL-TERMINATED cstring (not a Str) because AuditLogger_log
@@ -192,7 +208,7 @@ fn try_mode_switch(mgr, arg_cstr) {
 fn interactive_loop() {
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
-    println("Built-ins: help, version, mode [auto|assist|human|strict], clear, exit");
+    println("Built-ins: help, version, mode, history, clear, exit");
     println("");
 
     var buf[4096];
@@ -201,6 +217,11 @@ fn interactive_loop() {
     # as the v1.0 design intent. ModeManager owns the "allow_switching"
     # bit; 1 means the user can change modes at runtime.
     var mode_mgr = ModeManager_new(Mode.AI_ASSISTED, 1);
+    # CommandHistory keeps the last 1000 lines (ShellConfig default is
+    # 10000 but that's heavy for interactive; 1000 covers a long session
+    # without bloating the on-disk file). Loads from $HOME/.agnsh_history
+    # if present, so history survives across sessions.
+    var history = CommandHistory_new(history_path(), 1000);
 
     while (1 == 1) {
         # Prompt carries the current mode prefix so the user always
@@ -215,14 +236,31 @@ fn interactive_loop() {
 
         if (streq(&buf, "exit") == 1) { break; }
         if (streq(&buf, "quit") == 1) { break; }
+        if (streq(&buf, "history") == 1) {
+            var recent = CommandHistory_get_recent(history, 20);
+            var rcount = vec_len(recent);
+            if (rcount == 0) {
+                println("(history empty)");
+            } else {
+                for (var i = 0; i < rcount; i = i + 1) {
+                    str_print(str_from("  "));
+                    str_print(str_from_int(i + 1));
+                    str_print(str_from("  "));
+                    str_print(vec_get(recent, i));
+                    println("");
+                }
+            }
+            continue;
+        }
         if (streq(&buf, "help") == 1) {
             println("Built-ins:");
             println("  help                                 show this help");
             println("  version                              show version");
             println("  mode                                 show current mode");
             println("  mode auto|assist|human|strict        switch mode");
+            println("  history                              show last 20 commands");
             println("  clear                                clear screen");
-            println("  exit, quit                           leave shell");
+            println("  exit, quit                           leave shell (saves history)");
             println("Or type a natural-language command.");
             continue;
         }
@@ -256,12 +294,16 @@ fn interactive_loop() {
             continue;
         }
 
+        # Record every non-builtin input in history. Persists on exit.
+        CommandHistory_add(history, &buf);
+
         # Audit entry carries the actual session mode (vs `-c`'s
         # hardcoded "auto"); a downstream filter on `"mode":"HUMAN"`
         # can now distinguish interactive-human sessions from
         # interactive-auto.
         print_intent_result(&buf, mode_display(cur_mode));
     }
+    CommandHistory_save(history);
     println("bye");
     return 0;
 }

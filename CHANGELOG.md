@@ -6,9 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.1 work, slices 1-5 (committed) closed out the entire "approval workflow battle-tested interactively" item (decision UI risk-print, audit-log shape, sudo re-verification timing). Slice 6 (this cut) opens the **second** v1.2.1 lead-item — "interactive shell end-to-end" — by wiring `ModeManager` into `interactive_loop`, adding mode-aware prompts, mode-switching + clear builtins, fixing the multi-line-blob stdin read that was making the loop hostile to scripted invocation, and threading the actual session mode through to the audit log instead of hardcoding "auto".
+v1.2.1 work, slices 1-6 (committed) closed out the approval-workflow item and started the interactive-shell roadmap (prompt + mode switching). Slice 7 (this cut) lands command history: persistent across sessions, recall via the `history` builtin, plus a Cyrius 4.5 → 5.10 stdlib repair of `src/history.cyr` that had been carrying four latent build breaks since v1.0 (never tripped because the module wasn't in any include graph).
 
-### Slice 6 — interactive shell: mode switching + line-oriented stdin (this cut)
+### Slice 7 — interactive shell: command history (this cut)
+
+#### Fixed
+- **src/history.cyr — Cyrius 5.10.x stdlib alignment**. Same shape as slice-5's security.cyr repair: four latent bugs that compile-broke any wire-up attempt.
+  - `fs_exists` (2 sites) → `file_exists` (per lib/io.cyr 5.10.x).
+  - `file_read_all(path)` single-arg → buffer-based `(path, buf, maxlen)`. Reworked `CommandHistory_new` to alloc a 64 KB scratch buffer, read the file, null-terminate, wrap as Str for `str_split`.
+  - `file_write_all(path, content)` two-arg → `(path, buf, len)`. `CommandHistory_save` now passes `str_data(content)` + `str_len(content)`.
+  - `fs_parent` / `fs_mkdir_p` — don't exist in 5.10.x stdlib. Removed the parent-dir-create call; `$HOME` is the conventional parent and is guaranteed to exist when the shell starts.
+- **history dedup**: `streq(last, command)` was a Str/cstring type mismatch (entries are Str from str_split / str_clone; command was cstring) — replaced with `str_eq(Str, Str)`. Pre-slice-7 dedup never matched, so a flood of identical inputs would have all stuck. Caught by Cyrius 5.10.x's type-warning hint at first build attempt.
+- **history entry data lifetime**: `CommandHistory_add` was `str_from(command_cstr)` which BORROWS the cstring buffer. interactive_loop reuses one static `var buf[4096]` across iterations, so every history entry's data pointer would alias to whatever was in `&buf` at display time — first probe showed all entries dereferencing to the same garbled bytes. Now `str_clone(str_from(command_cstr))` deep-copies into a fresh heap buffer so the stored Str is independent of the caller's scratch.
+- **load-side str_split**: `str_split(content, "\n")` returned the whole file as one entry — the cstring-needle dispatch path didn't route the way audit/translate calls do. Switched to explicit byte separator `str_split(content, 10)` (where 10 is `'\n'`). Persisted multi-line history files now load with the correct entry count.
+
+#### Added
+- **agnsh.cyr: `history_path()`** — `$HOME/.agnsh_history` cstring builder, mirrors `audit_log_path` shape. Falls back to `/tmp/agnsh_history` when HOME is unset.
+- **`CommandHistory` wired into `interactive_loop`** — loads from disk on session start (last 1000 lines); every non-builtin input gets recorded; `CommandHistory_save` writes the file back on `exit` / `quit`.
+- **`history` builtin** — prints the last 20 entries with 1-indexed numbering. `(history empty)` when the list is empty (vs silently printing nothing — discoverability).
+- **`help` updated** — mentions `history` builtin and that `exit/quit` save history.
+- **scripts/smoke-test.sh — 8 new history assertions**: entry recording (entries 1 and 2 appear in the in-session `history` output), file creation, file line count, file content shape, persistence across sessions (next invocation's `history` shows the same entries), empty-history path. Smoke 40 → **48**.
+
+#### Notes
+- **Binary size**: 289,896 → 292,920 B (+3.0 KB) — history.cyr's CommandHistory body + the new `history_path` builder + the history builtin's display loop.
+- **Coverage** holds at **86%**; new history fns gain transitive coverage via the smoke tests, no direct unit anchors yet (load+save are I/O-bound and exercised end-to-end through smoke).
+- **Remaining v1.2.1 interactive-shell sub-items**: completion (tab), error recovery loop, streaming LLM. Completion needs terminal raw mode + tty escape handling. Streaming needs hoosh wire-up. Error-recovery loop is the smallest of the three.
+
+### Slice 6 — interactive shell: mode switching + line-oriented stdin (committed)
 
 #### Added
 - **agnsh.cyr: `read_line(buf, maxlen)`** — byte-by-byte stdin reader that delivers one line per call. The previous `syscall(SYS_READ, 0, &buf, 4095)` worked in a real terminal (line discipline serves one line per read) but collapsed multi-line piped input into a single buffer, so the loop's line-oriented dispatch (`streq` against builtins) failed under any kind of scripted invocation. Byte-by-byte is slow per char but correct for both modes; terminal users see no difference (the tty's local echo handles visible feedback before \n arrives).
