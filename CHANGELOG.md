@@ -36,6 +36,7 @@ The v1.2.x cycle outgrew patch scope — what started as "v1.2.1 approval workfl
 - All five-module stdlib regressions listed above.
 - **agnsh.cyr** — `str_print(cmd)` where `cmd` was a cstring command literal (e.g. `"ls"`, `"systemctl"`); pre-v1.3.0 the `Command:` line silently printed empty because `load64(s+8)` read past the cstring as a fake Str length. Now `str_print(str_from(cmd))`.
 - **Interactive banner** — was hardcoded `agnoshi 1.1.0`; now uses `VERSION_STR`.
+- **aarch64 cross-build** — three direct `syscall(SYS_*, ...)` sites broke the aarch64 CI cross-build because aarch64's generic syscall table doesn't expose bare SYS_OPEN (= io_setup there), SYS_CHMOD (only fchmodat), or SYS_STAT (with a different `struct stat` layout). Switched to the per-arch wrappers `sys_open` / `sys_chmod` / `sys_stat` (lib/syscalls_{x86,aarch64}_linux.cyr both export them) in `audit.cyr`, `history.cyr`, and `security.cyr`. The st_uid offset in `verify_sudo_path` is now `#ifdef`-gated per the architecture's `struct stat` layout (x86=28, aarch64=24). Both arches now build clean: x86_64 293,824 B, aarch64 337,032 B.
 
 ### Notes
 

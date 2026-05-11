@@ -75,17 +75,23 @@ fn security_get_username_safe(uid) {
 # window from session-start to escalation. Returns 1 iff the path
 # exists at this moment AND its on-disk owner is uid 0.
 #
-# Layout note: x86_64's `struct stat` puts `st_uid` at offset 28;
-# aarch64's at a different offset. This helper is x86_64-only for
-# now (matches the binary's primary target). aarch64 cross-build
-# skips the runtime sudo path (cross-binaries aren't run on the
-# build host).
+# Layout note: x86_64's `struct stat` puts `st_uid` at offset 28
+# (`arch/x86/include/uapi/asm/stat.h`); aarch64's at offset 24
+# (`include/uapi/asm-generic/stat.h`). Both arches expose a `sys_stat`
+# wrapper in lib/syscalls_{x86,aarch64}_linux.cyr — but the st_uid
+# offset has to be per-arch. The build flag `CYRIUS_ARCH_X86` (set by
+# cc5; cc5_aarch64 sets `CYRIUS_ARCH_AARCH64`) selects the right one.
 fn verify_sudo_path(sudo_path) {
     if (file_exists(sudo_path) == 0) { return 0; }
     var stat_buf[18];
-    var stat_result = syscall(SYS_STAT, sudo_path, &stat_buf);
+    var stat_result = sys_stat(sudo_path, &stat_buf);
     if (stat_result != 0) { return 0; }
+    #ifdef CYRIUS_ARCH_X86
     var st_uid = load32(&stat_buf + 28);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    var st_uid = load32(&stat_buf + 24);
+    #endif
     if (st_uid != 0) { return 0; }
     return 1;
 }

@@ -45,13 +45,18 @@ fn AuditLogger_new(file_path) {
     return p;
 }
 fn AuditLogger_log(self, entry) {
+    # Use the lib/io.cyr `sys_open` / `sys_write` / `sys_close` wrappers
+    # so aarch64 cross-builds compile. aarch64 doesn't expose bare
+    # SYS_OPEN (= io_setup in its generic syscall table) and routes
+    # the open through openat(AT_FDCWD, ...) inside `sys_open`. Direct
+    # `syscall(SYS_OPEN, ...)` broke the cross-build at CI.
     var line = AuditEntry_to_json(entry);
-    var fd = syscall(SYS_OPEN, load64(self), 1089, 384);
+    var fd = sys_open(load64(self), 1089, 384);
     if (fd < 0) { return 0 - 1; }
     var len = str_len(line);
-    syscall(SYS_WRITE, fd, str_data(line), len);
-    syscall(SYS_WRITE, fd, "\n", 1);
-    syscall(SYS_CLOSE, fd);
+    sys_write(fd, str_data(line), len);
+    sys_write(fd, "\n", 1);
+    sys_close(fd);
     return 0;
 }
 struct AuditFilter {

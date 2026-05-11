@@ -107,7 +107,9 @@ fn CommandHistory_save(self) {
     # exist in 5.10.x); `$HOME` is the conventional parent and is
     # guaranteed to exist when the shell starts.
     file_write_all(load64(self + 24), str_data(content), str_len(content));
-    syscall(SYS_CHMOD, load64(self + 24), 384);
+    # Use the lib/io.cyr `sys_chmod` wrapper — aarch64 has no bare
+    # SYS_CHMOD (the generic syscall table only exposes fchmodat).
+    sys_chmod(load64(self + 24), 384);
     return 0;
 }
 fn CommandHistory_len(self) {
