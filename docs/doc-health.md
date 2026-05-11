@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — agnoshi
 
-> **Last refresh**: 2026-05-11 (1.2.0 release cut — `CHANGELOG.md`, `VERSION`, `roadmap.md` all moved to reflect shipped state) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-11 (1.3.0 release cut — `CHANGELOG.md`, `VERSION`, `roadmap.md`, `docs/agnsh.1` all moved to reflect shipped state) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`agnoshi`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md)) — same buckets, agnoshi-shaped tiers.
@@ -43,12 +43,12 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `README.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: Cyrius 5.10.34 stat-line added, install prefixed with `cyrius deps`, "146 KB" headline reframed as a 1.0.0-port-arc snapshot pointing at `benchmarks-rust-v-cyrius.md` + in-tree refresh command, "v1.0 minimal" annotation dropped. |
-| `CHANGELOG.md` | 2026-05-11 | ✅ Fresh | 1.2.0 entry cut. Documents all nine slices (deeper intent parsing, full translator coverage, coverage-into-CI, bug-class audits). Source of truth for shipped work. |
+| `CHANGELOG.md` | 2026-05-11 | ✅ Fresh | 1.3.0 entry cut. Documents the nine-slice approval-workflow + interactive-shell + bug-class arc (audit/security/history modules unbusted, Str-aware safety predicates, six-class audit result vocabulary). Slice 1-9 detail preserved below the consolidated release summary. Source of truth for shipped work. |
 | `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Rust→Cyrius gate commands swapped; stale Known Issues purged; version-discipline note added (VERSION is single SoT). |
 | `CONTRIBUTING.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `cyrius deps` step added, cleanliness gate command list inlined, cc3-era warnings (`//`-with-colons mis-parse, 40-arm per-fn limit) purged, Cyrius 5.10.x trailing-comma rule carried in from CHANGELOG. |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
-| `VERSION` | 2026-05-11 | ✅ Fresh | `1.2.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-05-11 | ✅ Fresh | `1.3.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -57,7 +57,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-05-11 | ✅ Fresh | 1.2.0 moved to Shipped (2026-05-11) with the full nine-slice summary inline; 1.2.1 / 1.2.2 slotted for the polish bucket; v1.3.x+ holds demand-gated systems/UX/consumer-app translators. |
+| `roadmap.md` | 2026-05-11 | ✅ Fresh | 1.3.0 moved to Shipped (2026-05-11) with the nine-slice approval+interactive summary inline; v1.3.x polish bucket holds 1.3.1 P(-1) audit/review per AGNOS first-party standards and 1.3.2 packaging; v1.4.0 holds the deferred exec wire-up + hoosh modernization + LLM streaming + tab completion bucket; v1.5.x+ holds demand-gated systems/UX/consumer-app translators. |
 
 ---
 
@@ -123,7 +123,7 @@ Next audit slot: 1.2.0 P(-1) pass (paired with intent-parsing depth + translator
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `benchmarks-rust-v-cyrius.md` (repo root) | 2026-05-10 | ✅ Fresh (frozen by design) | Rust → Cyrius port-arc comparison, point-in-time at 1.0.0 / Cyrius 4.5.0. The cc3-limit framing was re-anchored as historical in 1.1.0 closeout (header callout + in-tree refresh command for current-toolchain numbers); substance left frozen. Home decision (root vs `docs/`) still open — see Open Question. |
-| `docs/agnsh.1` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `.TH` header bumped `April 2026 / agnoshi 1.0.0` → `May 2026 / agnoshi 1.1.0`. Command surface (modes, builtins, options, files) unchanged in 1.1.0 so the body needed no edits. |
+| `docs/agnsh.1` | 2026-05-11 | ✅ Fresh | 1.3.0 closeout: `.TH` header bumped to `agnoshi 1.3.0`; DESCRIPTION expanded with mode-aware prompt + Risk / Hint output shape; FILES entry for `~/.agnsh_audit.log` now documents the six-class `result` vocabulary. BUILTINS section already covered history / mode / clear / undo at 1.1.0; no additions needed. |
 
 ---
 

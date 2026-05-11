@@ -1,4 +1,4 @@
-.TH AGNSH 1 "May 2026" "agnoshi 1.1.0" "User Commands"
+.TH AGNSH 1 "May 2026" "agnoshi 1.3.0" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -11,8 +11,15 @@ agnsh \- AI-native natural language shell for AGNOS
 translates natural language into system commands with human oversight,
 security approval workflows, and full audit logging.
 .PP
-Without arguments, starts an interactive shell. Type natural language to
-see the proposed shell command and its permission level before execution.
+Without arguments, starts an interactive shell. The prompt carries the
+current mode (e.g.
+.BR [ASSIST]\ > ).
+Type natural language to see the proposed shell command, its risk level
+.RB ( [LOW] " / " [MED] " / " [HIGH] " / " [CRIT] ),
+and a
+.B Hint:
+line when the translation isn't directly runnable (LLM-routed question,
+unsupported pipeline, or translator safety rejection).
 .SH OPTIONS
 .TP
 .B -c, --command \fICMD\fR
@@ -81,7 +88,9 @@ Never allowed for AI (rm -rf, dd, mkfs, chmod, chown).
 Command history (mode 0600).
 .TP
 .I ~/.agnsh_audit.log
-Structured JSON audit log.
+Structured JSON audit log. Each line carries timestamp, user, mode,
+input, action, approved (0/1), and result (proposed / needs_approval /
+blocked / needs_llm / needs_exec / rejected_safety).
 .TP
 .I ~/.agnoshi/checkpoints/
 Backup files for undo (mode 0700).

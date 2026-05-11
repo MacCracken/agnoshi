@@ -6,7 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Heading to v1.3.0 (not v1.2.1) — the work landed since v1.2.0 is too big for a patch: full approval workflow (decision UI + audit shape + sudo re-verification), three deferred modules unbusted (audit, security, history), interactive shell wired (mode-aware prompt, mode/history/clear builtins, error-recovery hints), and the audit-result vocabulary now mirrors the parse+translate decision space. Slice 9 (this cut) extends slice 8's user-facing Hint: lines into the audit log itself — the `result` field now carries one of six labels (`proposed`, `needs_approval`, `blocked`, `needs_llm`, `needs_exec`, `rejected_safety`) so downstream filters can `jq 'select(.result == "rejected_safety")'` and find exactly the inputs the user got a Hint for.
+## [1.3.0] - 2026-05-11
+
+The v1.2.x cycle outgrew patch scope — what started as "v1.2.1 approval workflow + interactive shell" closed *both* lead roadmap items, swept five Cyrius 4.5 → 5.10 stdlib regressions across deferred modules, and added a six-label audit-result vocabulary. Bumped to v1.3.0 to reflect the actual scope.
+
+**Approval workflow battle-tested interactively** — every `-c` invocation now prints `Risk: [LOW|MED|HIGH|CRIT]` with `WARNING: BLOCKED` / `Approval required` lines as appropriate; `src/approval.cyr` and `src/audit.cyr` and `src/security.cyr` all wired into the binary's include graph. Audit-log JSON line per command (timestamp + user + mode + input + action + approved 0/1 + result), real wall-clock timestamps via `lib/chrono.cyr::iso8601_now()`, six-class `result` field (`proposed`, `needs_approval`, `blocked`, `needs_llm`, `needs_exec`, `rejected_safety`) so downstream filters can `jq 'select(.result == "rejected_safety")'`. Sudo path re-verified for existence AND root-ownership at the escalation moment via `verify_sudo_path` — closes the TOCTOU window between session-init cache and actual sudo invocation.
+
+**Interactive shell end-to-end** — mode-aware prompt (`[ASSIST] >`, `[HUMAN] >`, `[STRICT] >`, `[AUTO] >`), `mode` / `history` / `clear` / `help` builtins, persistent command history at `$HOME/.agnsh_history` (last 1000 entries) loaded on session start, line-oriented `read_line` byte-reader for piped + terminal use, error-recovery `Hint:` lines surfacing parse-succeeded-but-translation-not-runnable cases (LLM-routed questions, pipelines, safety-rejected translations).
+
+**Five deferred modules unbusted**. The v1.1.0 toolchain migration left silent build breaks in every module not in the agnsh binary's include graph. This cycle swept:
+- **audit.cyr** — `str_cat(cstring, *)` × 3; `fs_exists` / `json_get_str` / `file_read_all` arity (read-side `AuditViewer_query` body gutted, MCP-routed AUDIT_VIEW is the user-facing path)
+- **security.cyr** — `fs_exists` → `file_exists` × 5; `file_read_all` arity; `process_exec` → `exec_vec`; `str_data(cstring)` mismatch; `streq(Str, Str)` → `str_eq` (caught by Cyrius 5.10.x's type-warning hint — first time the toolchain caught one of these)
+- **history.cyr** — `fs_exists`/`file_read_all`/`file_write_all` arity; `fs_parent`/`fs_mkdir_p` removed; `streq` → `str_eq`; entry-data-lifetime fix (`str_clone(str_from(...))` to break aliasing with the reused interactive_loop static buf); explicit byte-separator workaround for `str_split` cstring-needle dispatch
+- **translate.cyr** — `is_safe_path` / `is_safe_arg` were cstring-only but the parser hands `Str`; added `safe_path_in_str` / `safe_arg_in_str` variants and routed all 11 translator call sites. **Every NL filesystem operation (copy / move / remove / mkdir / show-file / find / search-content) had been silently routing to `translate_unknown` since v1.0** because of this — now `agnsh -c "copy a to b"` correctly prints `Command: cp / Risk: [MED]` instead of `Command: echo / Risk: [LOW]`.
+- **sanitize.cyr** — already swept in v1.2.0 slice 1; v1.3.0 carries the str_substr migration + new Str-aware variants
+
+### Added
+
+- **agnsh.cyr — runtime wire-up** of approval/audit/history/chrono; `audit_log_path` / `history_path` cstring builders; `audit_one_shot` with mode-aware + tag-aware classification; `classify_audit_result` six-label classifier; `print_intent_result` with risk-line + Hint:-line dispatch; `interactive_loop` with `ModeManager` + `CommandHistory` + `read_line` + builtin dispatch (help / version / mode / mode `<name>` / history / clear / exit / quit).
+- **sanitize.cyr — Str-aware safety predicates** (`safe_path_in_str`, `safe_arg_in_str`, `path_traversal_in_str`, `shell_metachars_in_str`); `is_word_prefix` token-prefix matcher (plural-tolerance + substring-trap immunity); `input_starts_with` interrogative-form gate.
+- **interpreter.cyr — new NL paths** — `parse_state_queries` (noun-phrase queries: ip address / my ip / uptime / disk space / running processes / etc.), `parse_service_query` (`is X running` / `is X active` / `is X enabled` / `status of X`), `parse_service_action` (bare imperative `start X` / `stop X` / `restart X` / `reload X` / `enable X` / `disable X`); `token_count` whitespace tokenizer.
+- **security.cyr — `verify_sudo_path`** — escalation-time existence + root-ownership re-check.
+- **scripts/check-coverage.sh** — fn-level coverage gate, ≥80% threshold, wired into `.github/workflows/ci.yml`. Current: 86%.
+- **tests/test_core.tcyr** — 44 new assertions across approval workflow (20), audit JSON shape (11), security context + sudo gate (11), coverage anchors. Test count 257 → **301**.
+- **scripts/smoke-test.sh** — 27 new assertions across interactive mode/history/exit (9), audit shape (4), audit result vocabulary (6), Hint: surfacing (4), command-field populated (1), risk-line per level (3). Smoke 31 → **58**.
+
+### Fixed
+
+- All five-module stdlib regressions listed above.
+- **agnsh.cyr** — `str_print(cmd)` where `cmd` was a cstring command literal (e.g. `"ls"`, `"systemctl"`); pre-v1.3.0 the `Command:` line silently printed empty because `load64(s+8)` read past the cstring as a fake Str length. Now `str_print(str_from(cmd))`.
+- **Interactive banner** — was hardcoded `agnoshi 1.1.0`; now uses `VERSION_STR`.
+
+### Notes
+
+- **Binary size**: 280,344 B (v1.2.0) → **293,824 B** (+13.5 KB). Growth from approval.cyr + audit.cyr + history.cyr + lib/chrono.cyr now in the include graph, plus the new parser helpers + safety predicates + audit/result vocabulary.
+- **Coverage**: holds at 86% — the denominator grew with five newly-included modules; numerator grew through smoke + test_core additions to stay above the 80% gate.
+- **Bug-class lesson** — five Cyrius 4.5 → 5.10 stdlib regression patterns surfaced over the v1.2.0 + v1.3.0 arc: `str_len(cstring)`, `str_sub(start, end)` semantics, `str_cat(cstring, *)` / `str_cat(*, cstring)`, `is_safe_path(Str)`, and renames (`fs_exists` / `process_exec` / `file_read_all` / `file_write_all` arity). Cyrius 5.10.x's type-warning hint caught one (`streq` in slice 5); the rest still surface as silent runtime fallthroughs. A static-analyzer pass for "cstring passed where `Str` is typed" is queued for v1.4.0 tooling.
+- **What's deferred** — Tab completion (terminal raw mode + tty escapes); LLM response streaming (waits on hoosh modernization); exec wire-up for SAFE/READ_ONLY commands; `undo` builtin (needs exec wire-up). All slotted for v1.4.0. The v1.3.1 P(-1) audit/review pass per [agnosticos first-party standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/planning/first-party-standards.md) sits between.
+
+---
+
+**Detailed slice history below** — slices 1-9 documented as they landed (decision UI risk-print, audit-log shape, sudo timing, mode switching + line-oriented stdin, command history, error-recovery hints, audit result vocabulary, plus two bug-class audit sweeps).
 
 ### Slice 9 — audit result enrichment (this cut)
 
