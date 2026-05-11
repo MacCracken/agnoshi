@@ -6,99 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.3.1 P(-1) audit/review. Slices 1-4 (committed): toolchain bump, cstring/Str linter, buffer-safety sweep, syscall-return audit + chmod fixes + audit report. Slice 5 (this cut): **doc audit + ADR-006**. Captures the v1.2.0/v1.3.0 bug-class learnings as an architectural decision record; refines ADR-005's per-module convention with the three operational rules (explicit `_in_str` suffix, per-arch syscall wrappers, `str_clone` for static-buf escape) and references the 14-pattern CI lint shield as the mechanical enforcement.
+## [1.3.1] - 2026-05-11
 
-### Slice 5 — doc audit + ADR-006 (this cut)
+P(-1) audit/review pass per AGNOS first-party standards. Eight slices across the roadmap's P(-1) bullets: toolchain bump (zero codegen drift), cstring/Str static analyzer with **14 patterns across 5 categories** wired into CI (catches 7 distinct bug variants that took 5 separate slices to discover during v1.2.0/v1.3.0), buffer-safety sweep with 5 dormant static-buf-escape fixes, syscall-return audit with 2 HIGH-severity unchecked-chmod fixes (live multi-user data-leak shape on `$HOME/.agnsh_history` and `$HOME/.agnoshi/checkpoints/`), ADR-006 codifying the four operational rules, input-validation sweep clearing 3 stale-stdlib breaks in `prompt.cyr`, path-traversal sweep verifying every file-op site, CVE pattern review.
 
-#### Added
-- **docs/adr/006-cstr-str-dispatch-discipline.md** — refines ADR-005 with the operational rules earned by v1.2.0/v1.3.0 production discovery. Catalogues the seven distinct bug variants (each linked back to its discovery slice), codifies the `_in_str` suffix convention (and the load-bearing rename from `is_safe_path_str` to `safe_path_in_str` to sidestep Cyrius's overload-registration trap), and documents the four rules: (1) explicit `_str`-side suffix at cross-type boundaries, (2) per-arch syscall wrappers, (3) `str_clone` for static-buf escape, (4) CI lint shield as the mechanical enforcement. Includes the four alternatives considered (stay-with-005, --strict-types in Cyrius, all-Str, Cyrius lint plugin) with rejection rationale.
-- **docs/adr/README.md** — index entry for ADR-006 + the "Writing a new ADR" footer bumped (current: 006, next: 007).
+**Zero CRITICAL findings.** Eight HIGH all fixed. Five MEDIUM deferred (three getcwd + two `str_data(Str)` → syscall, all in modules not currently in agnsh's include graph). Twelve LOW triaged.
 
-#### Changed
-- **docs/doc-health.md** — Tier 4 (ADRs) and Tier 5 (Audit reports) rows refreshed. ADR-005 status now reads "Refined by ADR-006" (still frozen, but its discipline-table is now augmented by 006's operational rules). Audit report `2026-05-11-pminus1.md` row added with the running-tally severity counts. ADR-posture commentary updated to reflect that v1.1.0 was a modernization (no ADR), v1.2.0 was a feature pass with no architectural reversal (no ADR), and v1.3.0's repeated bug-class discovery earned ADR-006.
+### Fixed
+- **history.cyr** — unchecked `sys_chmod` return on `$HOME/.agnsh_history`. **HIGH severity, live in agnsh**: if chmod fails the file stays at umask default (0644), leaking every typed command to other users on a multi-user system. Captured return + stderr warning.
+- **checkpoint.cyr** — same chmod shape on the checkpoint directory. **HIGH severity, deferred module**. Same fix.
+- **session.cyr** — `str_starts_with(trimmed, "mode ")` was Str + cstring with no `_cstr` overload (would have silently never matched the `mode <name>` builtin when wired). Wrapped cstring with `str_from`.
+- **Five static-buf-escape sites** in `ui.cyr` / `prompt.cyr` / `session.cyr` (× 3) — `str_from(&local_static_buf)` returns or stores a Str borrowing memory that gets overwritten on the next function call. **HIGH severity each, all dormant**. Same shape that bit `CommandHistory_add` in v1.3.0 slice 7. Wrapped each with `str_clone(str_from(&buf))`.
+- **prompt.cyr — three stale-stdlib build breaks** (`fs_exists` → `file_exists`, single-arg `file_read_all` → buffer-based, `fs_parent` removed) plus a variable-cstring passed to `str_starts_with`. Caught during the input-validation sweep. `prompt_detect_git_branch` rewired against Cyrius 5.10.x stdlib; parent-walk replaced with a single-iteration break (TODO for v1.4.0 wire-up). Module now ready for inclusion.
 
-#### Notes
-- **Doc deliverables for v1.3.1 P(-1) are complete.** The roadmap's `Doc audit — doc-health.md refresh, ADRs for any architectural calls` line is satisfied (ADR landed; doc-health Tier rows refreshed). What remains in the v1.3.1 P(-1) roadmap: input validation sweep, no-command-injection audit (deferred to v1.4.0 exec wire-up — agnoshi has no exec call sites in the live binary yet), no-path-traversal sweep (largely covered by `safe_path_in_str` + the linter), and known-CVE review. These are smaller residual items; v1.3.1 can close after one or two more bites.
-
-### Slice 4 — syscall return-value handling (committed)
-
-#### Fixed
-- **history.cyr:112 — `sys_chmod` return unchecked** on `$HOME/.agnsh_history`. **HIGH severity**: if chmod fails (race / NFS / unusual filesystem), the history file stays at the umask default (typically 0644), leaking every shell command the user has ever typed to other users on a multi-user system. **Live in agnsh** (saved on every `exit` / `quit`). Captured the return; writes a one-line stderr warning on non-zero result so the operator sees a visible signal without escalating the write failure (the file itself was already written successfully).
-- **checkpoint.cyr:29 — `sys_chmod` return unchecked** on `$HOME/.agnoshi/checkpoints/`. **HIGH severity**: directory holds pre-destructive-op backups; same multi-user data-leak shape. Same fix applied. Deferred module today; ready for v1.4.0 exec wire-up.
-
-#### Added
-- **scripts/lint-cstr-str.sh — Category E: unchecked sys_chmod**. Pattern `^\s*sys_chmod\(` flags any chmod statement where the result isn't captured into a variable or an `if` condition. Catches bare `sys_chmod(path, mode);` but allows `var rc = sys_chmod(...)` and `if (sys_chmod(...) != 0)`. Closes the security-critical syscall-return-handling class.
-- **docs/audit/2026-05-11-pminus1.md** — consolidated P(-1) audit report covering all four slices so far (toolchain bump, cstring/Str linter, buffer-safety sweep, syscall return audit). Records every finding by severity, the fix applied, and the forward-shield (lint pattern) added. Per AGNOS first-party-standards convention.
-
-#### Notes
-- **Syscall site catalog** in the audit report: 35+ sites categorized. 19 sites verified clean (return-checked or "never fails" syscalls like getuid). 8 stdout/stderr writes intentionally ignored (LOW severity — terminal/pipe failures rare; conventional). 2 sys_chmod fixed (HIGH). 3 SYS_GETCWD return-unchecked sites in `session.cyr` flagged as MEDIUM and deferred to the v1.4.0 wire-up slice (the fix involves a fallback-path policy decision: display "?" / use last-known cwd / fail-loudly).
-- **Chmod-failure probe**: deliberately tried to trigger chmod failure (`chmod 000` on the history file then re-running agnsh) didn't fire — Linux grants chmod on user-owned files regardless of current mode. The code path is correct; symptoms would surface on NFS / SELinux denials / AppArmor / read-only FS. The linter prevents future regressions.
-- **Cumulative shield count**: 14 lint patterns across 5 categories. **All 7 distinct bug variants** that surfaced over v1.2.0/v1.3.0 (cstring/Str type mismatches, semantic drift, aarch64 syscalls, static-buf escape, unchecked chmod) are now CI-caught at lint time. The 8th audit class (sys_write return) is NOT linted; logging best-effort is the consensus default.
-
-### Slice 3 — buffer-safety sweep + static-buf-escape linter (committed)
-
-#### Fixed
-Five sites in deferred modules carried the static-buffer-escape pattern — `str_from(&buf)` wrapping a `var buf[N]` static buffer, with the resulting Str either *returned* or *stored in a long-lived struct*. Each call to the same fn would overwrite the buffer and silently invalidate every earlier returned Str. The fix is `str_clone(str_from(&buf))` to deep-copy into a heap buffer the Str owns. Same pattern that bit `CommandHistory_add` in slice 7 of v1.3.0 (every history entry's data aliased to whatever was last typed).
-- **ui.cyr:13** — `read_input_line` returned `str_from(&buf)` where `buf` was the function-local 4 KB stdin buffer. Every caller would see the same Str data after the next `read_input_line` call.
-- **prompt.cyr:18** — `PromptContext_new` stored `str_from(&hostname_buf + 65)` (uname's nodename field) into the prompt context struct. Long-lived store, function-local buffer.
-- **session.cyr:22, 162, 256** — three `str_from(&cwd_buf)` sites storing the cwd into the prompt context / session struct after a `chdir`. Same shape.
-
-All five wrapped with `str_clone`. The modules stay deferred to v1.4.0's exec wire-up; the fix means that wire-up doesn't double as a bug-discovery slice.
-
-#### Added
-- **scripts/lint-cstr-str.sh — Category D: static-buffer escape**. Two new patterns:
-  - `return str_from(&...)` — Str borrowing a local static buf, returned to outlive the buf.
-  - `store64(*, str_from(&...))` — Str borrowing a local static buf, stored into a long-lived struct slot.
+### Added
+- **scripts/lint-cstr-str.sh** — static analyzer for the Cyrius cstring/Str mismatch class. Five categories, fourteen patterns:
+  - A: 1st-arg cstring × 5 (`str_len`, `str_data`, `str_cat`, `str_starts_with`, `str_ends_with`)
+  - B: 2nd-arg cstring × 3 (`str_cat`, `str_starts_with`, `str_ends_with`)
+  - C: aarch64-broken syscalls × 3 (`SYS_OPEN`, `SYS_CHMOD`, `SYS_STAT`)
+  - D: static-buf escape × 2 (`return str_from(&...)`, `store64(*, str_from(&...))`)
+  - E: security-critical syscall return × 1 (`^\s*sys_chmod(`)
   
-  Together they catch the aliasing-trap class that took slice 7 of v1.3.0 to discover (and three more slices of confusion before that to even see). Escape hatch (`# lint:cstr-ok`) still applies for any rare intentional case (single-call, immediate-use lifetimes).
+  Word-anchored regexes (so `cstr_starts_with` ≠ `str_starts_with`). Only fns lacking a `_cstr` overload in `lib/str.cyr` are flagged (so `str_contains` / `str_eq` / `str_split` are intentionally not — Cyrius dispatches them). Escape hatch: `# lint:cstr-ok`. Wired into `.github/workflows/ci.yml`.
+- **docs/adr/006-cstr-str-dispatch-discipline.md** — refines ADR-005 with four operational rules earned by v1.2.0/v1.3.0 production discovery: (1) explicit `_in_str` suffix for cross-type-boundary Str-side variants, (2) per-arch syscall wrappers, (3) `str_clone(str_from(&buf))` for static-buf escape paths, (4) CI lint shield as mechanical enforcement. Catalogues all seven historical bug variants with discovery-slice attribution and severities.
+- **docs/audit/2026-05-11-pminus1.md** — full P(-1) audit report per AGNOS convention. Eight §-sections one per slice; running tally by severity; known linter gaps documented.
+- **bench-history.csv** — 20 new rows bracketing the toolchain bump (5.10.34 vs 5.10.44, 10 benchmarks each).
+- **docs/agnsh.1**, **docs/doc-health.md**, **docs/adr/README.md**, **docs/development/roadmap.md** — refreshed for the v1.3.1 close.
 
-- **Documentation in the linter** of the five distinct bug variants the script now retroactively catches:
-  - `str_len(cstring)` — slice 1 v1.2.0
-  - `str_sub(start, end)` semantics — slice 1 v1.2.0 (semantic, not type; covered by str_substr migration)
-  - `str_cat(cstring, *)` — slice 7 v1.2.0 + slice 8 v1.3.0
-  - `str_cat(*, cstring)` — slice 2 v1.3.1
-  - `is_safe_path(Str)` — slice 3 v1.3.0 (silent translate_unknown for every NL filesystem op since v1.0)
-  - aarch64 raw syscalls — v1.3.0 closeout
-  - `str_from(&static_buf)` aliasing — slice 7 v1.3.0
+### Changed
+- **Cyrius toolchain pin 5.10.34 → 5.10.44** (`cyrius.cyml`). 10-patch bump along the 5.10 line. Bracketed benchmarks pre/post: all 10 averages unchanged to microsecond resolution. Codegen drift on x86_64: −32 bytes; aarch64 unchanged. No regression.
 
-#### Notes
-- **Buffer size audit** — every `var buf[N]` in agnoshi's source catalogued and verified safe:
-  - `agnsh.cyr:230 var b[1]` (1 i64 = 8B; reads 1 byte at a time)
-  - `agnsh.cyr:273 var buf[4096]` (4096 i64s = 32 KB; reads up to 4096 bytes)
-  - `interpreter.cyr:528 var cmd_out[1]` (8B; cstring ptr)
-  - `approval.cyr:85 var buf[64]` (512B; reads up to 63 bytes)
-  - `security.cyr:86 var stat_buf[18]` (144B = exact `struct stat` size on x86_64)
-  - Plus 7 more in deferred modules (ui/prompt/session); all within size limits, all escape-paths now str_cloned.
-  
-  Verified that Cyrius's `var buf[N]` allocates `N` i64 *words* (8N bytes), not N raw bytes — confirmed against `lib/process.cyr`'s `var status_buf[1]` for waitpid (kernel writes 4 bytes; [1] = 8 bytes available, safe). The CI security-scan's `"%d bytes"` warn message under-counts by 8× but the 8 KB / 64 KB thresholds still bracket the actual hard limits sensibly.
-- **No live-binary impact** — all 5 escape-pattern fixes are in modules not currently linked into `agnsh`. Binary size unchanged at 293,792 B (x86) / 337,032 B (aarch64). Tests stay at 301/301; smoke at 58/58.
-
-### Slice 2 — cstring/Str type-mismatch linter (committed)
-
-#### Fixed
-The linter caught two real bugs on its first run, both in modules deferred to v1.4.0 wire-up but reachable through future test_core inclusion:
-- **session.cyr:101** — `str_starts_with(trimmed, "mode ")`. `str_starts_with` is Str-typed in both args and has NO `_cstr` overload (verified in `lib/str.cyr` — there's `str_starts_with` Str+Str only). Pre-fix this would have made the interactive-session mode-switch builtin silently never match. Wrapped the cstring with `str_from`.
-- **checkpoint.cyr:22** — `syscall(SYS_CHMOD, ...)` — same aarch64-broken pattern as the audit/history/security fixes from v1.3.0 closeout. SYS_CHMOD doesn't exist in aarch64's generic syscall table (only `fchmodat`). Switched to the `sys_chmod` wrapper from `lib/io.cyr`.
-
-A third hit at `main.cyr:32` (`syscall(SYS_OPEN, ...)`) was marked with the `# lint:cstr-ok` escape hatch — `src/main.cyr` is the v1.0 pre-port entry, never linked into any binary's include graph.
-
-#### Added
-- **scripts/lint-cstr-str.sh** — static analyzer for the Cyrius cstring/Str mismatch class. Greps for known-bad patterns in 8 categories:
-  - First-arg cstring literals: `str_len("...")`, `str_data("...")`, `str_cat("...", *)`, `str_starts_with("...", *)`, `str_ends_with("...", *)`
-  - Second-arg cstring literals: `str_cat(*, "...")`, `str_starts_with(*, "...")`, `str_ends_with(*, "...")`
-  - Cross-arch-broken raw syscalls: `syscall(SYS_OPEN, ...)`, `syscall(SYS_CHMOD, ...)`, `syscall(SYS_STAT, ...)`
-  
-  Coverage rationale documented inline: only flags fns that DON'T have a `_cstr` overload variant in `lib/str.cyr` (so `str_contains` / `str_eq` / `str_split` are intentionally not flagged — Cyrius's name-mangling dispatch routes them to the `_cstr` form automatically). The five distinct runtime bugs the linter retroactively catches: `str_len(cstring)` from v1.2.0 slice 1, `str_cat(cstring, *)` from slice 7 of v1.2.0 + slice 8 of v1.3.0, `str_cat(*, cstring)` from slice 2 of v1.3.0, `is_safe_path(Str)` from slice 3 of v1.3.0 (silent translate_unknown for every NL filesystem op since v1.0), and the v1.3.0 closeout's aarch64 syscall break. Each was discovered the hard way (probe / SIGSEGV / first-use crash) — the linter catches them at lint time.
-- **CI wire-up** — `.github/workflows/ci.yml` runs `scripts/lint-cstr-str.sh` after the coverage gate. Below-clean state now fails CI like fmt / lint / capacity drift.
-- **Escape hatch** — trailing `# lint:cstr-ok` comment on a specific line marks an intentional use (used once: `src/main.cyr:32` for the legacy pre-port entry).
-
-### Slice 1 — Cyrius toolchain bump 5.10.34 → 5.10.44 (committed)
-
-#### Changed
-- **Cyrius toolchain pin 5.10.34 → 5.10.44** (`cyrius.cyml`). 10-patch bump along the 5.10 line, no major / minor changes. `cyrius deps` repopulated `./lib/` from the 5.10.44 snapshot. All gates clean on the bumped pin: check, capacity, fmt, lint, test_core 301/301, test_security 26/26, smoke 58/58, coverage 86%, both arches build (x86_64 293,792 B / aarch64 337,032 B).
-
-#### Performance
-- Bracketed benchmarks before+after the pin bump (recorded in `bench-history.csv`). All 10 benchmark averages unchanged to the microsecond resolution — parse path stays in the 3-13us band, translate stays at 1us, sanitize stays at 1us. Codegen drift on x86_64 was −32 bytes (293,824 → 293,792 B); aarch64 binary size unchanged at 337,032 B. No regression, no measurable performance change in either direction.
+### Notes
+- **Test count** stays at **301** through P(-1) (no new feature work). Smoke 58. Coverage 86%. Both arches build (x86_64 293,920 B / aarch64 337,168 B — small growth from chmod-warning strings and history audit log changes).
+- **CI gate count** grew: new `lint-cstr-str` step runs after `check-coverage`. Failing the new gate fails CI like fmt / lint / capacity drift.
+- **Bug-class history** documented in ADR-006 §Context: seven distinct variants, each linked to its discovery slice. Six of seven took a probe / SIGSEGV / first-use crash to find; all seven are now lint-caught.
 
 ## [1.3.0] - 2026-05-11
 

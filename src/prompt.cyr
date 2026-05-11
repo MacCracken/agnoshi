@@ -54,17 +54,37 @@ fn prompt_render_directory(ctx) {
 fn prompt_detect_git_branch(cwd) {
     var dir = cwd;
     for (var depth = 0; depth < 20; depth = depth + 1) {
-        var git_head = str_cat(dir, str_from("/.git/HEAD"));
-        if (fs_exists(git_head) == 1) {
-            var content = file_read_all(git_head);
-            if (content == 0) { return 0; }
+        # `git_head` is a Str from str_cat; file_exists/file_read_all
+        # need a cstring path. Manual null-terminated buffer build
+        # (same shape as agnsh.cyr::audit_log_path) so the syscalls
+        # below get a real cstring. Pre-v1.3.1 this used the v1.0-era
+        # `fs_exists(Str)` + single-arg `file_read_all(Str)` which
+        # don't exist in Cyrius 5.10.x — would have build-broken when
+        # prompt.cyr was wired into the binary in v1.4.0.
+        var dlen = str_len(dir);
+        var suffix = "/.git/HEAD";
+        var slen = strlen(suffix);
+        var path_buf = alloc(dlen + slen + 1);
+        memcpy(path_buf, str_data(dir), dlen);
+        memcpy(path_buf + dlen, suffix, slen);
+        store8(path_buf + dlen + slen, 0);
+        if (file_exists(path_buf) == 1) {
+            var read_buf = alloc(4096);
+            var n = file_read_all(path_buf, read_buf, 4095);
+            if (n <= 0) { return 0; }
+            store8(read_buf + n, 0);
+            var content = str_new(read_buf, n);
             var len = str_len(content);
             if (len > 0) {
                 if (str_byte_at(content, len - 1) == 10) {
                     content = str_substr(content, 0, len - 1);
                 }
             }
-            var prefix = "ref: refs/heads/";
+            # `prefix` wraps in str_from so str_starts_with's Str+Str
+            # signature gets a real Str, not a cstring address read as
+            # a Str header. No str_starts_with_cstr overload exists in
+            # lib/str.cyr (verified at ADR-006 §Rule-1).
+            var prefix = str_from("ref: refs/heads/");
             if (str_starts_with(content, prefix) == 1) {
                 return str_substr(content, 16, str_len(content));
             }
@@ -73,9 +93,15 @@ fn prompt_detect_git_branch(cwd) {
             }
             return content;
         }
-        var parent = fs_parent(dir);
-        if (streq(parent, dir) == 1) { break; }
-        dir = parent;
+        # v1.0 walked up via `fs_parent(dir)`; `fs_parent` doesn't
+        # exist in Cyrius 5.10.x and walking via string manipulation
+        # on a Str is non-trivial. For v1.3.1 the function only
+        # checks the immediate cwd's `.git/HEAD`. Parent-walk lands
+        # with the rest of the prompt module's wire-up in v1.4.0
+        # (TODO: dirname-style truncate on the Str's data; needs a
+        # cstring-friendly path representation throughout the prompt
+        # module). Break after one iteration.
+        break;
     }
     return 0;
 }

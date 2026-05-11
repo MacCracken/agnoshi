@@ -48,7 +48,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 | `CONTRIBUTING.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `cyrius deps` step added, cleanliness gate command list inlined, cc3-era warnings (`//`-with-colons mis-parse, 40-arm per-fn limit) purged, Cyrius 5.10.x trailing-comma rule carried in from CHANGELOG. |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
-| `VERSION` | 2026-05-11 | ✅ Fresh | `1.3.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-05-11 | ✅ Fresh | `1.3.1` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -92,7 +92,7 @@ Date-stamped, frozen by design. Each P(-1) hardening pass per CLAUDE.md cadence 
 | File | Date | Status | Notes |
 |---|---|---|---|
 | `2026-04-13.md` | 2026-04-13 | 📦 Frozen | 1.0.0 P(-1) — 21 findings (5 critical, 7 high, 9 medium), all closed in the same cycle. Historical record. |
-| `2026-05-11-pminus1.md` | 2026-05-11 | ✅ Fresh (in progress) | v1.3.1 P(-1) pass. Running tally: 0 CRITICAL / 8 HIGH (all fixed — 5 static-buf escape, 2 chmod, 1 str_starts_with) / 3 MEDIUM (getcwd × 3, deferred to v1.4.0) / 11 LOW (triaged, not fixed). 14 lint patterns added across 5 categories — all 7 historical bug variants now CI-caught. Updated as P(-1) slices land. |
+| `2026-05-11-pminus1.md` | 2026-05-11 | 📦 Frozen | v1.3.1 P(-1) pass — closed. Final tally: 0 CRITICAL / 8 HIGH (all fixed) / 5 MEDIUM (deferred to v1.4.0: getcwd × 3 + str_data(Str)→syscall × 2) / 12 LOW (triaged). 14 lint patterns across 5 categories. All 7 historical bug variants CI-caught. Eight slices documented §1-§8 plus summary. |
 
 Next audit slot: 2.0.0 cut OR sooner if a new CVE pattern surfaces in agnoshi's parser surfaces / sanitize predicates / Cyrius itself. v1.3.1's audit closes out the v1.2.0/v1.3.0 bug-class arc; v1.4.0 exec wire-up may surface a new surface area (real fork+exec error handling, sudo-escalation edge cases) but those are exec-side concerns, not parser-side.
 
