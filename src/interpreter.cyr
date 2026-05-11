@@ -346,6 +346,60 @@ fn parse_admin_ops(trimmed) {
     }
     return 0;
 }
+fn token_count(input) {
+    var hlen = str_len(input);
+    var hd = str_data(input);
+    var count = 0;
+    var in_token = 0;
+    for (var i = 0; i < hlen; i = i + 1) {
+        var c = load8(hd + i);
+        if (c == 32) {
+            in_token = 0;
+        } elif (c == 9) {
+            in_token = 0;
+        } else {
+            if (in_token == 0) {
+                count = count + 1;
+                in_token = 1;
+            }
+        }
+    }
+    return count;
+}
+fn parse_service_action(trimmed) {
+    # Imperative service control: "start nginx", "stop sshd", "restart cron",
+    # "reload nginx", "enable nginx", "disable nginx". Gated on (a) input
+    # opens with the imperative verb at token 0 and (b) exactly two tokens
+    # — keeps "start a new project" / "stop wasting time" / "enable cron
+    # service" from getting hijacked. parse_admin_ops runs first so
+    # "enable firewall" / "disable ufw" still route to FIREWALL_ENABLE /
+    # FIREWALL_DISABLE (those carry the firewall keyword and never reach
+    # this branch). Multi-arg or flag-laden invocations should use the
+    # existing `service`/`systemctl` prefix which routes through
+    # parse_system_ops.
+    if (token_count(trimmed) != 2) { return 0; }
+    var action = 0;
+    if (input_starts_with(trimmed, "start ") == 1) {
+        action = "start";
+    } elif (input_starts_with(trimmed, "stop ") == 1) {
+        action = "stop";
+    } elif (input_starts_with(trimmed, "restart ") == 1) {
+        action = "restart";
+    } elif (input_starts_with(trimmed, "reload ") == 1) {
+        action = "reload";
+    } elif (input_starts_with(trimmed, "enable ") == 1) {
+        action = "enable";
+    } elif (input_starts_with(trimmed, "disable ") == 1) {
+        action = "disable";
+    }
+    if (action == 0) { return 0; }
+    var name = extract_last_arg(trimmed);
+    if (name == 0) { return 0; }
+    var intent = Intent_new(IntentTag.SERVICE_CONTROL);
+    store64(intent + 8, action);
+    store64(intent + 16, name);
+    return intent;
+}
 fn parse_service_query(trimmed) {
     # "is X running" / "is X active" / "is X enabled" — interrogative form
     # only (input must start with "is "), so statements like "the
@@ -455,6 +509,8 @@ fn Interpreter_parse(self, input) {
     }
     var r5 = parse_admin_ops(trimmed);
     if (r5 != 0) { return r5; }
+    var r_sa = parse_service_action(trimmed);
+    if (r_sa != 0) { return r_sa; }
     var r_sq = parse_service_query(trimmed);
     if (r_sq != 0) { return r_sq; }
     var r6 = parse_state_queries(trimmed);

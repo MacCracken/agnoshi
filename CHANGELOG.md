@@ -6,9 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.0 "deeper intent parsing" work. Slice 1 (committed) fixed two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions that had left the parser routing **every NL input to `SHELL_COMMAND`**. Slice 2 (committed) retired the substring-trap class structurally with a word-prefix matcher (`is_word_prefix`), so "remove" stopped grabbing the MOVE branch and "file" still matches "files" without false positives. Slice 3 (this cut) extends NL coverage to service-status queries — `"is nginx running"`, `"is sshd active"`, `"status of nginx"` now route to `SERVICE_CONTROL` instead of falling to `SHELL_COMMAND`.
+v1.2.0 "deeper intent parsing" work. Slice 1 (committed) fixed two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions that had left the parser routing **every NL input to `SHELL_COMMAND`**. Slice 2 (committed) retired the substring-trap class with a word-prefix matcher. Slice 3 (committed) added service-status NL (`"is X running/active/enabled"`, `"status of X"`). Slice 4 (this cut) adds the imperative service-action form — bare `"start nginx"` / `"stop sshd"` / `"restart cron"` now route to `SERVICE_CONTROL` instead of trying to exec `start` / `stop` as shell commands.
 
-### Slice 3 — service-status NL (this cut)
+### Slice 4 — imperative service actions (this cut)
+
+#### Added
+- **interpreter.cyr: `token_count(input)`** — counts whitespace-delimited tokens in a Str. Used as a sanity gate by `parse_service_action` to require exactly `<verb> <name>` and reject multi-word phrasings like `"start a new project"` or `"stop wasting time"`.
+- **interpreter.cyr: `parse_service_action`** — catches bare imperative service control: `"start X"`, `"stop X"`, `"restart X"`, `"reload X"`, `"enable X"`, `"disable X"`. Gated on (a) `input_starts_with(verb)` at token 0 and (b) `token_count == 2`. Maps to `SERVICE_CONTROL` with `field1=action` (verb), `field2=name`, flowing through the existing `translate_service_control` (emits `systemctl <action> <name>` at ADMIN). Slotted in `Interpreter_parse` between `parse_admin_ops` and `parse_service_query` — `parse_admin_ops` runs first so `"enable firewall"` / `"disable ufw"` still correctly route to `FIREWALL_ENABLE` / `FIREWALL_DISABLE` (they carry the firewall keyword and never reach this branch).
+- **tests/test_core.tcyr** — 9 new assertions: each of the 6 service-action verbs routes correctly, the multi-word gate rejects `"start a new project"`, and the parse-order invariant holds (`"enable firewall"` stays `FIREWALL_ENABLE`, `"disable ufw"` stays `FIREWALL_DISABLE`). Test count 102 → 111, all passing.
+
+### Slice 3 — service-status NL (committed)
 
 #### Added
 - **sanitize.cyr: `input_starts_with(input, prefix_cstr)`** — case-insensitive prefix check on a Str input against a cstring prefix. Used by the parser to gate interrogative form: parse only fires when the input opens with `"is "`, so a statement like `"the application is running"` doesn't get hijacked into `SERVICE_CONTROL`.

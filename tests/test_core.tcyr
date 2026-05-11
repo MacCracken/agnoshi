@@ -238,6 +238,31 @@ fn main() {
     check("statement falls through service-query gate",
     load64(Interpreter_parse(interp, str_from("the application is running"))) != IntentTag.SERVICE_CONTROL);
 
+    # Imperative service actions — "start nginx" / "stop sshd" / etc. all
+    # map to SERVICE_CONTROL. Gated on exactly two tokens.
+    check("start X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("start nginx"))) == IntentTag.SERVICE_CONTROL);
+    check("stop X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("stop sshd"))) == IntentTag.SERVICE_CONTROL);
+    check("restart X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("restart cron"))) == IntentTag.SERVICE_CONTROL);
+    check("reload X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("reload nginx"))) == IntentTag.SERVICE_CONTROL);
+    check("enable X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("enable cron"))) == IntentTag.SERVICE_CONTROL);
+    check("disable X routes to SERVICE_CONTROL",
+    load64(Interpreter_parse(interp, str_from("disable apache"))) == IntentTag.SERVICE_CONTROL);
+    # Negative: multi-token NL ("start a new project") falls through —
+    # the 2-token gate keeps statements from getting hijacked.
+    check("start multi-word falls through",
+    load64(Interpreter_parse(interp, str_from("start a new project"))) != IntentTag.SERVICE_CONTROL);
+    # Negative: "enable firewall" must keep routing to FIREWALL_ENABLE via
+    # parse_admin_ops (which runs before parse_service_action).
+    check("enable firewall stays FIREWALL_ENABLE",
+    load64(Interpreter_parse(interp, str_from("enable firewall"))) == IntentTag.FIREWALL_ENABLE);
+    check("disable ufw stays FIREWALL_DISABLE",
+    load64(Interpreter_parse(interp, str_from("disable ufw"))) == IntentTag.FIREWALL_DISABLE);
+
     println("");
     str_print(str_from("Passed: "));
     print_num(pass_count);
