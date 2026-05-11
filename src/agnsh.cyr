@@ -71,21 +71,21 @@ fn audit_log_path() {
     store8(buf + hlen + slen, 0);
     return buf;
 }
-fn audit_one_shot(input_cstr, cmd_cstr, perm) {
+fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr) {
     # Every -c invocation produces one audit line. `approved` is 1 for
     # auto-runnable (SAFE/READ_ONLY/USER_WRITE), 0 for anything that
     # would require an interactive approval prompt (SYSTEM_WRITE/ADMIN)
     # or is outright blocked. `result` is "proposed" since -c mode
     # prints the translation but doesn't execute it yet — the exec
-    # wire-up is part of the interactive-shell slice. Once that lands
-    # the result field flips to "executed" / "denied" / "error".
+    # wire-up is the next slice. Once that lands the result field
+    # flips to "executed" / "denied" / "error".
     var approved = 0;
     if (perm == PermissionLevel.SAFE) { approved = 1; }
     elif (perm == PermissionLevel.READ_ONLY) { approved = 1; }
     elif (perm == PermissionLevel.USER_WRITE) { approved = 1; }
     var entry = AuditEntry_new(
     str_from("user"),
-    str_from("auto"),
+    str_from(mode_label_cstr),
     str_from(input_cstr),
     str_from(cmd_cstr),
     approved,
@@ -94,7 +94,7 @@ fn audit_one_shot(input_cstr, cmd_cstr, perm) {
     var logger = AuditLogger_new(audit_log_path());
     AuditLogger_log(logger, entry);
 }
-fn print_intent_result(input_cstr) {
+fn print_intent_result(input_cstr, mode_label_cstr) {
     var s = str_from(input_cstr);
     var interp = Interpreter_new();
     var intent = Interpreter_parse(interp, s);
@@ -138,42 +138,129 @@ fn print_intent_result(input_cstr) {
         println("  Approval required (interactive prompt in shell mode)");
     }
 
-    audit_one_shot(input_cstr, cmd, perm);
+    audit_one_shot(input_cstr, cmd, perm, mode_label_cstr);
     return 0;
 }
 
+fn read_line(buf, maxlen) {
+    # Read stdin one byte at a time until newline or EOF. Returns the
+    # byte count (excluding the newline), 0 for an empty line, or -1 on
+    # EOF before any data. Necessary because piped input arrives in
+    # multi-line blobs; a single `syscall(SYS_READ, ..., maxlen)` would
+    # swallow several user "lines" in one buffer and the loop's line-
+    # oriented dispatch (streq against builtins, etc.) would fail. In a
+    # real terminal the tty's line discipline serves each line under a
+    # newline, so byte-by-byte reads still get one line per cycle.
+    var i = 0;
+    var b[1];
+    while (i < maxlen - 1) {
+        var r = syscall(SYS_READ, 0, &b, 1);
+        if (r <= 0) {
+            if (i == 0) { return 0 - 1; }
+            break;
+        }
+        var ch = load8(&b);
+        if (ch == 10) { break; }
+        store8(buf + i, ch);
+        i = i + 1;
+    }
+    store8(buf + i, 0);
+    return i;
+}
+fn try_mode_switch(mgr, arg_cstr) {
+    # Maps a CLI mode name to the enum and switches the ModeManager.
+    # Returns 1 on success, 0 on unknown name. Names match the four
+    # `mode_display` labels lowercased (auto / assist / human / strict).
+    if (streq(arg_cstr, "auto") == 1) {
+        ModeManager_switch(mgr, Mode.AI_AUTONOMOUS);
+        return 1;
+    }
+    if (streq(arg_cstr, "assist") == 1) {
+        ModeManager_switch(mgr, Mode.AI_ASSISTED);
+        return 1;
+    }
+    if (streq(arg_cstr, "human") == 1) {
+        ModeManager_switch(mgr, Mode.HUMAN);
+        return 1;
+    }
+    if (streq(arg_cstr, "strict") == 1) {
+        ModeManager_switch(mgr, Mode.STRICT);
+        return 1;
+    }
+    return 0;
+}
 fn interactive_loop() {
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
+    println("Built-ins: help, version, mode [auto|assist|human|strict], clear, exit");
     println("");
 
     var buf[4096];
     var interp = Interpreter_new();
+    # ShellConfig_default sets Mode.AI_ASSISTED — same starting point
+    # as the v1.0 design intent. ModeManager owns the "allow_switching"
+    # bit; 1 means the user can change modes at runtime.
+    var mode_mgr = ModeManager_new(Mode.AI_ASSISTED, 1);
 
     while (1 == 1) {
-        str_print(str_from("> "));
-        var n = syscall(SYS_READ, 0, &buf, 4095);
-        if (n <= 0) { break; }
-
-        if (n > 0) {
-            if (load8(&buf + n - 1) == 10) { n = n - 1; }
-        }
+        # Prompt carries the current mode prefix so the user always
+        # knows the AI-autonomy level before typing. Pre-v1.2.1 the
+        # prompt was a bare `> ` regardless of mode.
+        var cur_mode = ModeManager_current(mode_mgr);
+        str_print(str_from(mode_prompt_prefix(cur_mode)));
+        str_print(str_from(" > "));
+        var n = read_line(&buf, 4096);
+        if (n < 0) { break; }
         if (n == 0) { continue; }
-        store8(&buf + n, 0);
 
         if (streq(&buf, "exit") == 1) { break; }
         if (streq(&buf, "quit") == 1) { break; }
         if (streq(&buf, "help") == 1) {
-            println("Commands: exit, quit, help, version");
-            println("Or type a natural language shell command.");
+            println("Built-ins:");
+            println("  help                                 show this help");
+            println("  version                              show version");
+            println("  mode                                 show current mode");
+            println("  mode auto|assist|human|strict        switch mode");
+            println("  clear                                clear screen");
+            println("  exit, quit                           leave shell");
+            println("Or type a natural-language command.");
             continue;
         }
         if (streq(&buf, "version") == 1) {
             print_version();
             continue;
         }
+        if (streq(&buf, "clear") == 1) {
+            # ANSI ED + CUP — clear screen + cursor to home (0,0).
+            str_print(str_from("\x1b[2J\x1b[H"));
+            continue;
+        }
+        if (streq(&buf, "mode") == 1) {
+            str_print(str_from("Current mode: "));
+            str_print(str_from(mode_display(cur_mode)));
+            println("");
+            println("Available: auto, assist, human, strict");
+            continue;
+        }
+        if (cstr_starts_with(&buf, "mode ") == 1) {
+            var arg = &buf + 5;
+            if (try_mode_switch(mode_mgr, arg) == 1) {
+                str_print(str_from("Mode -> "));
+                str_print(str_from(mode_display(ModeManager_current(mode_mgr))));
+                println("");
+            } else {
+                str_print(str_from("Unknown mode: "));
+                println(arg);
+                println("Available: auto, assist, human, strict");
+            }
+            continue;
+        }
 
-        print_intent_result(&buf);
+        # Audit entry carries the actual session mode (vs `-c`'s
+        # hardcoded "auto"); a downstream filter on `"mode":"HUMAN"`
+        # can now distinguish interactive-human sessions from
+        # interactive-auto.
+        print_intent_result(&buf, mode_display(cur_mode));
     }
     println("bye");
     return 0;
@@ -202,7 +289,9 @@ fn main() {
             println("Error: -c requires a command argument");
             return 1;
         }
-        print_intent_result(argv(2));
+        # -c is one-shot non-interactive; the audit `mode` field
+        # stays "auto" to distinguish from sessioned invocations.
+        print_intent_result(argv(2), "auto");
         return 0;
     }
 

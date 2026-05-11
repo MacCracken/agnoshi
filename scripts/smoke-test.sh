@@ -97,6 +97,25 @@ check "blocked warning line" "WARNING: BLOCKED" "$out"
 out=$("$BIN" -c "show me files" 2>&1)
 check "command field has ls" "Command: ls" "$out"
 
+# Interactive mode -- drive via stdin pipe and check that the mode-
+# switching builtins flow correctly and the prompt updates. Each line
+# of input is one user turn (the read_line helper accepts byte-by-byte
+# stdin so piped multi-line blobs no longer collapse into one buffer).
+INT_OUT=$(printf 'mode\nmode human\nmode\nmode strict\nshow files\nexit\n' | "$BIN" 2>&1)
+check "interactive shows assist start" "\[ASSIST\] >" "$INT_OUT"
+check "interactive mode reports current" "Current mode: AI-ASSIST" "$INT_OUT"
+check "interactive mode switch to human" "Mode -> HUMAN" "$INT_OUT"
+check "interactive prompt updates after switch" "\[HUMAN\] >" "$INT_OUT"
+check "interactive mode switch to strict" "Mode -> STRICT" "$INT_OUT"
+check "interactive parses NL under mode" "Intent:" "$INT_OUT"
+check "interactive exits cleanly" "bye" "$INT_OUT"
+
+# Interactive negative -- unknown mode name should error, not crash,
+# and the available list must surface for discoverability.
+BAD_OUT=$(printf 'mode wibble\nexit\n' | "$BIN" 2>&1)
+check "unknown mode error" "Unknown mode: wibble" "$BAD_OUT"
+check "unknown mode suggests list" "Available: auto, assist, human, strict" "$BAD_OUT"
+
 # Audit log -- every -c invocation appends a JSON line to
 # $HOME/.agnsh_audit.log. Point HOME at a clean temp dir, run two
 # commands, verify the log has well-formed lines with the expected

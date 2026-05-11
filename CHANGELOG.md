@@ -6,9 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.1 work, slices 1-4 (committed) landed approval coverage, runtime risk-print, Str-aware safety predicates, and the audit-log wire-up. Slice 5 (this cut) finishes the third sub-bullet of "approval workflow battle-tested interactively" — **sudo re-verification timing** — by repairing `src/security.cyr` for Cyrius 5.10.x (it had been carrying four latent 4.5→5.10 stdlib breaks since v1.0, all silent since the module wasn't in any include graph), refactoring the escalation path into a testable `verify_sudo_path` seam that re-checks existence + root-ownership at the call site, and locking the gated-state matrix + the re-verification contract with 11 new unit assertions.
+v1.2.1 work, slices 1-5 (committed) closed out the entire "approval workflow battle-tested interactively" item (decision UI risk-print, audit-log shape, sudo re-verification timing). Slice 6 (this cut) opens the **second** v1.2.1 lead-item — "interactive shell end-to-end" — by wiring `ModeManager` into `interactive_loop`, adding mode-aware prompts, mode-switching + clear builtins, fixing the multi-line-blob stdin read that was making the loop hostile to scripted invocation, and threading the actual session mode through to the audit log instead of hardcoding "auto".
 
-### Slice 5 — security.cyr: sudo re-verification timing (this cut)
+### Slice 6 — interactive shell: mode switching + line-oriented stdin (this cut)
+
+#### Added
+- **agnsh.cyr: `read_line(buf, maxlen)`** — byte-by-byte stdin reader that delivers one line per call. The previous `syscall(SYS_READ, 0, &buf, 4095)` worked in a real terminal (line discipline serves one line per read) but collapsed multi-line piped input into a single buffer, so the loop's line-oriented dispatch (`streq` against builtins) failed under any kind of scripted invocation. Byte-by-byte is slow per char but correct for both modes; terminal users see no difference (the tty's local echo handles visible feedback before \n arrives).
+- **agnsh.cyr: mode-aware interactive_loop** — owns a `ModeManager` starting at `Mode.AI_ASSISTED` (matches `ShellConfig_default`'s default_mode). The prompt now carries the current mode prefix (`[ASSIST] >`, `[HUMAN] >`, `[STRICT] >`, `[AUTO] >`) via `mode_prompt_prefix`, so the AI-autonomy level is visible before every input. Pre-slice-6 the prompt was a bare `> ` regardless of mode.
+- **agnsh.cyr: `mode` builtin** — no-arg form prints current mode + the available list; `mode <name>` switches when name ∈ `{auto, assist, human, strict}`. Unknown names error with the available list (surface vs silent failure). Bookkeeping helper `try_mode_switch(mgr, arg_cstr)` maps the CLI names to enum values and pulls `ModeManager_switch`.
+- **agnsh.cyr: `clear` builtin** — emits the ANSI ED (`\x1b[2J`) + CUP (`\x1b[H`) pair to clear screen + home cursor. Matches the man-page entry that had been undocumented in the actual code.
+- **agnsh.cyr: `help` expanded** — now lists every builtin with its arg shape (was a 2-line summary that omitted mode/clear).
+- **agnsh.cyr: mode-aware audit entries** — `print_intent_result` now takes a `mode_label_cstr` and threads it into `audit_one_shot`. Interactive invocations write the actual `mode_display` label (`"AI-ASSIST"`, `"HUMAN"`, etc.) into the audit JSON's `mode` field; `-c` continues to log as `"auto"` (one-shot non-interactive). Downstream audit filters can now distinguish interactive-human sessions from interactive-auto from script-driven `-c`.
+- **scripts/smoke-test.sh — 9 new interactive-loop assertions** driving the binary via piped stdin: assist start, `mode` reports current, switch to human, prompt updates after switch, switch to strict, NL parses under mode, exit clean, unknown-mode errors deterministically, unknown-mode lists the available set. Smoke 31 → **40**.
+
+#### Notes
+- **Binary size**: 288,040 → 289,896 B (+1.8 KB) — mode-prompt helper + read_line byte-loop + builtin parsing.
+- **Coverage** holds at **86%**; the new helpers (`read_line`, `try_mode_switch`) gain transitive coverage through the smoke tests but are also reachable directly through the agnsh include graph.
+- **Remaining v1.2.1 interactive-shell sub-items**: history (recall previous commands), completion (tab), error recovery loop, streaming LLM responses. History + error recovery are the next natural slices; completion + streaming both need bigger infrastructure (terminal raw mode for completion, hoosh wire-up for streaming).
+
+### Slice 5 — security.cyr: sudo re-verification timing (committed)
 
 #### Fixed
 - **src/security.cyr — Cyrius 5.10.x stdlib alignment**. Four latent breaks accumulated since v1.0 because the module isn't (yet) in any binary's include graph, so the build never tripped on them:
