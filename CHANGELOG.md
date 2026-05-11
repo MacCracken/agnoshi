@@ -6,9 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.1 work continues. Slices 1-3 (committed) landed approval-workflow unit coverage, second-position `str_cat` bug-class sweep, runtime approval risk-print, and Str-aware safety predicates. Slice 4 (this cut) tackles the second v1.2.1 lead-item sub-bullet — "audit-log shape" — by wiring `src/audit.cyr` into the binary's include graph, switching the chrono stub to real wall-clock time via `lib/chrono.cyr::iso8601_now`, logging every `-c` invocation to `$HOME/.agnsh_audit.log` as one JSON line, and locking the line shape with 11 new field-level test assertions plus 4 new end-to-end smoke checks.
+v1.2.1 work, slices 1-4 (committed) landed approval coverage, runtime risk-print, Str-aware safety predicates, and the audit-log wire-up. Slice 5 (this cut) finishes the third sub-bullet of "approval workflow battle-tested interactively" — **sudo re-verification timing** — by repairing `src/security.cyr` for Cyrius 5.10.x (it had been carrying four latent 4.5→5.10 stdlib breaks since v1.0, all silent since the module wasn't in any include graph), refactoring the escalation path into a testable `verify_sudo_path` seam that re-checks existence + root-ownership at the call site, and locking the gated-state matrix + the re-verification contract with 11 new unit assertions.
 
-### Slice 4 — audit-log wire-up + JSON-shape coverage (this cut)
+### Slice 5 — security.cyr: sudo re-verification timing (this cut)
+
+#### Fixed
+- **src/security.cyr — Cyrius 5.10.x stdlib alignment**. Four latent breaks accumulated since v1.0 because the module isn't (yet) in any binary's include graph, so the build never tripped on them:
+  - `fs_exists` (5 call sites in `security_check_sudo` + `execute_with_privileges`) — renamed to `file_exists` (per `lib/io.cyr` 5.10.x).
+  - `file_read_all("/etc/passwd")` single-arg form in `security_get_username` — Cyrius 5.10.x's `file_read_all(path, buf, maxlen): i64` is buffer-based; reworked to alloc a 64 KB heap buffer (lifetime survives the function return so the `vec_get(fields, 0)` Str's data pointer stays valid), call file_read_all with it, null-terminate, wrap as Str for str_split.
+  - `process_exec(cmd, argv)` in `execute_command` — function doesn't exist in 5.10.x's `lib/process.cyr`. Replaced with `exec_vec(argv)` (the 5.10.x form that handles fork + execve + waitpid internally with cmd at argv[0]).
+  - `str_data("/usr/bin/sudo")` in `execute_with_privileges` — same Cyrius 4.5 → 5.10 type-confusion class that bit slices 1/7/8/3: `str_data` reads `load64(s)` expecting a Str fat pointer, but the cstring literal there means it returned garbage as the path. The stat() syscall now takes the cstring directly.
+  - **Plus** `streq(field_uid, uid_str)` — both sides are Str (from `str_split` + `str_from_int`), but `streq` is cstring-typed. Replaced with `str_eq` (lib/str.cyr's Str variant). Cyrius 5.10.x's new type-warning hint flagged this on build — same shape as the earlier Str/cstring mismatches but caught by the toolchain this time.
+
+#### Added
+- **`verify_sudo_path` extraction** — the inline existence-check + stat-based ownership-check in `execute_with_privileges` is now a named helper. Re-verifies at the escalation moment (not at session init) that `sudo_path` (cstring) **(a) exists on disk now** AND **(b) is owned by uid 0**. Closes the TOCTOU window between session-start cache and actual escalation: a long-running session may survive a sudo binary swap, deletion, or ownership flip; trusting `SecurityContext.sudo_available` alone would let the binary attempt sudo against a now-untrustworthy path. Caller `execute_with_privileges` now tries `/usr/bin/sudo` then `/bin/sudo` through `verify_sudo_path`, returning `-3` (sudo present but not root-owned) vs `-2` (sudo missing) so the failure mode is actionable.
+- **Return-code contract documented** — `execute_with_privileges` return codes now have an inline contract block: `0+` exit code, `-1` restricted mode, `-2` sudo unavailable, `-3` sudo present but not root-owned. Pre-v1.2.1 the return codes were undocumented; downstream callers had to read the body to disambiguate.
+- **tests/test_core.tcyr — 11 new security assertions** (and `_mock_sec` helper to compose a `SecurityContext` by hand, sidestepping the runtime UID dependency):
+  - `SecurityContext_is_root` — yes / no paths.
+  - `SecurityContext_is_restricted` — yes / no paths.
+  - `SecurityContext_can_escalate` — full gate matrix: normal user OK; restricted blocked; sudo missing blocked; root blocked. **This is the v1.2.1 contract**: three independent guards, all must pass.
+  - `verify_sudo_path` — happy path against `/usr/bin/sudo` (gated by `file_exists` so containers without sudo skip cleanly); deterministic negative against `/nonexistent/sudo/path`.
+  - `security_check_sudo` — at-init coarse check agrees with the per-call `verify_sudo_path` (the integration invariant between cache and re-verifier).
+  - Test count 290 → **301**.
+- **`src/security.cyr` now in tests/test_core.tcyr's include graph** — was unreferenced previously. Future stdlib drift in security.cyr now surfaces as a build failure, not a runtime crash on first escalation attempt.
+
+#### Notes
+- **Not wired into `agnsh.cyr`** — security.cyr stays test-only this slice because the binary's `-c` mode still prints translations without executing them. When the exec wire-up lands (interactive-shell slice or later v1.2.1), the `agnsh.cyr` include + `SecurityContext_new` at startup is one additional line. The fixes here just make sure security.cyr is *ready* — a v1.2.x interactive-shell slice can trust the module to compile + behave on first wire-up rather than discovering the four bugs at integration time.
+- **Bug-class lesson** — five Cyrius 4.5 → 5.10 stdlib regressions surfaced over the v1.2.0+v1.2.1 arc: `str_len(cstring)`, `str_sub(start, end)` semantics, `str_cat` first-arg cstring, `str_cat` second-arg cstring, `is_safe_path(Str)`, and now `process_exec` rename / `file_read_all` arity / `fs_exists` rename. The `streq(Str, Str)` case in this slice WAS caught by Cyrius 5.10.x's new type-warning hint — first time the toolchain caught one of these. Other variants are still silent; the queued static-analysis slice remains warranted.
+- **Coverage** — denominator grew (security.cyr added 9 fns to the in-binary-scope set since it's now included by test_core); coverage held at **86%** (107/124). Capacity, fmt, lint, build, smoke all clean.
+
+### Slice 4 — audit-log wire-up + JSON-shape coverage (committed)
 
 #### Added
 - **agnsh.cyr: `audit_one_shot` + `audit_log_path`** — every `-c` invocation now appends one JSON line to `$HOME/.agnsh_audit.log` (falls back to `/tmp/agnsh_audit.log` when `HOME` is unset for test harnesses / restricted envs). Path is constructed as a null-terminated cstring (manual buffer + `memcpy` because `lib/str.cyr::str_cat` returns a length-prefixed buffer with no trailing zero, and `syscall(SYS_OPEN)` wants cstring). The audit entry carries `user="user"`, `mode="auto"`, `input=<raw NL input>`, `action=<translated command>`, `approved={0,1}` derived from permission level (SAFE/READ_ONLY/USER_WRITE auto-approved; SYSTEM_WRITE/ADMIN/BLOCKED not), `result="proposed"` (will flip to `executed`/`denied`/`error` when the exec wire-up lands in the interactive-shell slice).

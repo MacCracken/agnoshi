@@ -16,6 +16,8 @@ fn ui_show_error(m) { return 0; }
 fn ui_show_warning(m) { return 0; }
 fn chrono_now_rfc3339() { return str_from("2026-01-01T00:00:00Z"); }
 
+include "lib/process.cyr"
+
 include "src/sanitize.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
@@ -26,9 +28,25 @@ include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
 include "src/audit.cyr"
+include "src/security.cyr"
 
 var pass_count = 0;
 var fail_count = 0;
+
+# Compose a SecurityContext (56 bytes — uid, gid, euid, username,
+# is_root, restricted, sudo_available) by hand for the security tests
+# so each gated state can be exercised independently of the runtime UID.
+fn _mock_sec(is_root, restricted, sudo_available) {
+    var p = alloc(56);
+    store64(p, 1000);
+    store64(p + 8, 1000);
+    store64(p + 16, 1000);
+    store64(p + 24, str_from("alice"));
+    store64(p + 32, is_root);
+    store64(p + 40, restricted);
+    store64(p + 48, sudo_available);
+    return p;
+}
 
 fn check(name, condition) {
     if (condition == 1) {
@@ -869,6 +887,62 @@ fn main() {
     var ae_ej = AuditEntry_to_json(ae_esc);
     check("audit json escapes inner quotes",
     str_contains_ci(ae_ej, "\"input\":\"echo \\\"hi\\\"\"") == 1);
+
+    # === SecurityContext + sudo re-verification (src/security.cyr) ===
+    # v1.2.1 lead-item sub-bullet "sudo re-verification timing":
+    #   (1) The decision-time gate `SecurityContext_can_escalate` must
+    #       deny when restricted=1, when sudo_available=0, or when
+    #       is_root=1 — locks the three guarded states.
+    #   (2) The escalation-time helper `verify_sudo_path` must re-check
+    #       both existence AND root-ownership at the call site rather
+    #       than trusting the session-init cache. The test pins one
+    #       happy-path against the real `/usr/bin/sudo` and one
+    #       negative against a known-missing path so a regression in
+    #       the verifier itself surfaces here.
+
+    # SecurityContext_is_root / is_restricted / username — pure accessors
+    var sec_r = _mock_sec(1, 0, 1);
+    check("SecurityContext_is_root yes", SecurityContext_is_root(sec_r) == 1);
+    var sec_nr = _mock_sec(0, 0, 1);
+    check("SecurityContext_is_root no", SecurityContext_is_root(sec_nr) == 0);
+    var sec_rstr = _mock_sec(0, 1, 1);
+    check("SecurityContext_is_restricted yes",
+    SecurityContext_is_restricted(sec_rstr) == 1);
+    check("SecurityContext_is_restricted no",
+    SecurityContext_is_restricted(sec_nr) == 0);
+
+    # can_escalate gate — the v1.2.1 contract: deny if restricted=1,
+    # OR sudo unavailable, OR running as root.
+    check("can_escalate normal user OK",
+    SecurityContext_can_escalate(_mock_sec(0, 0, 1)) == 1);
+    check("can_escalate restricted blocked",
+    SecurityContext_can_escalate(_mock_sec(0, 1, 1)) == 0);
+    check("can_escalate sudo missing blocked",
+    SecurityContext_can_escalate(_mock_sec(0, 0, 0)) == 0);
+    check("can_escalate root blocked",
+    SecurityContext_can_escalate(_mock_sec(1, 0, 1)) == 0);
+
+    # verify_sudo_path — re-verification helper. Pin against
+    # /usr/bin/sudo if it's actually installed root-owned on this
+    # host (true on every standard Linux); fall through gracefully
+    # when running in a container without sudo. Either way the
+    # "missing path" negative case stays deterministic.
+    if (file_exists("/usr/bin/sudo") == 1) {
+        check("verify_sudo_path /usr/bin/sudo verifies",
+        verify_sudo_path("/usr/bin/sudo") == 1);
+    }
+    check("verify_sudo_path nonexistent rejected",
+    verify_sudo_path("/nonexistent/sudo/path") == 0);
+
+    # security_check_sudo — at-init coarse availability check. The
+    # cached form `SecurityContext.sudo_available` is set from this
+    # at SecurityContext_new; later escalations re-check via
+    # verify_sudo_path. The fact that both paths agree on "sudo
+    # available" on this host is the integration invariant.
+    var sudo_init = security_check_sudo();
+    if (file_exists("/usr/bin/sudo") == 1) {
+        check("security_check_sudo finds installed sudo", sudo_init == 1);
+    }
 
     # AuditLogger_new / log — write a line to a temp file and read it
     # back. Verifies the file is created with append-mode and a

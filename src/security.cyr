@@ -32,10 +32,17 @@ fn SecurityContext_new(restricted) {
     return p;
 }
 fn security_get_username(uid) {
-    var content = file_read_all("/etc/passwd");
-    if (content == 0) {
-        return str_from("unknown");
-    }
+    # Cyrius 5.10.x's `file_read_all` is buffer-based (path, buf, maxlen)
+    # — no longer returns an alloc'd Str like the v1.0 stub assumed. Use
+    # a heap buffer so the returned name's data lifetime survives across
+    # subsequent reads. /etc/passwd is conventionally well under 64 KB.
+    var bufsize = 65536;
+    var buf = alloc(bufsize);
+    if (buf == 0) { return str_from("unknown"); }
+    var n = file_read_all("/etc/passwd", buf, bufsize - 1);
+    if (n <= 0) { return str_from("unknown"); }
+    store8(buf + n, 0);
+    var content = str_new(buf, n);
     var lines = str_split(content, "\n");
     var nlines = vec_len(lines);
     var uid_str = str_from_int(uid);
@@ -45,7 +52,7 @@ fn security_get_username(uid) {
         var fields = str_split(line, ":");
         if (vec_len(fields) >= 3) {
             var field_uid = vec_get(fields, 2);
-            if (streq(field_uid, uid_str) == 1) {
+            if (str_eq(field_uid, uid_str) == 1) {
                 return vec_get(fields, 0);
             }
         }
@@ -59,9 +66,32 @@ fn security_get_username_safe(uid) {
     }
     return str_cat(str_from("uid_"), str_from_int(uid));
 }
+# verify_sudo_path — re-verifies that `sudo_path` (a cstring) exists
+# AND is owned by root. Called at *escalation* time, not at session
+# init: SecurityContext_new caches a coarse sudo_available bit, but
+# the actual approval-and-escalation moment must NOT trust the cache.
+# A long-running session might survive a sudo binary swap, deletion,
+# or ownership flip; re-verifying at the call site closes the TOCTOU
+# window from session-start to escalation. Returns 1 iff the path
+# exists at this moment AND its on-disk owner is uid 0.
+#
+# Layout note: x86_64's `struct stat` puts `st_uid` at offset 28;
+# aarch64's at a different offset. This helper is x86_64-only for
+# now (matches the binary's primary target). aarch64 cross-build
+# skips the runtime sudo path (cross-binaries aren't run on the
+# build host).
+fn verify_sudo_path(sudo_path) {
+    if (file_exists(sudo_path) == 0) { return 0; }
+    var stat_buf[18];
+    var stat_result = syscall(SYS_STAT, sudo_path, &stat_buf);
+    if (stat_result != 0) { return 0; }
+    var st_uid = load32(&stat_buf + 28);
+    if (st_uid != 0) { return 0; }
+    return 1;
+}
 fn security_check_sudo() {
-    if (fs_exists("/usr/bin/sudo") == 1) { return 1; }
-    if (fs_exists("/bin/sudo") == 1) { return 1; }
+    if (file_exists("/usr/bin/sudo") == 1) { return 1; }
+    if (file_exists("/bin/sudo") == 1) { return 1; }
     return 0;
 }
 fn SecurityContext_is_root(self) {
@@ -80,42 +110,44 @@ fn SecurityContext_can_escalate(self) {
     return 1;
 }
 fn execute_command(cmd, args, argc) {
-    var pid = syscall(SYS_FORK);
-    if (pid == 0) {
-        var argv = vec_new();
-        vec_push(argv, cmd);
-        for (var i = 0; i < argc; i = i + 1) {
-            vec_push(argv, vec_get(args, i));
-        }
-        process_exec(cmd, argv);
-        syscall(SYS_EXIT, 127);
+    # Build argv with cmd as argv[0], delegate fork+exec to lib/process's
+    # exec_vec (which handles the SIGCHLD-aware fork, the execve, and the
+    # parent-side waitpid). Pre-v1.2.1 this called the nonexistent
+    # `process_exec`, a v1.0-era stdlib name; exec_vec is the 5.10.x form.
+    var argv = vec_new();
+    vec_push(argv, cmd);
+    for (var i = 0; i < argc; i = i + 1) {
+        vec_push(argv, vec_get(args, i));
     }
-    var status_buf[1];
-    syscall(SYS_WAIT4, pid, &status_buf, 0, 0);
-    var status = load64(&status_buf);
-    var exit_code = (status >> 8) & 255;
-    return exit_code;
+    return exec_vec(argv);
 }
 fn execute_with_privileges(self, cmd, args, argc) {
+    # Return codes:
+    #   0+  exit code from the elevated command
+    #   -1  session is in restricted mode (e.g. running as root)
+    #   -2  sudo unavailable at escalation time (binary missing)
+    #   -3  sudo binary present but not root-owned (rejected)
     if (load64(self + 40) == 1) {
         return 0 - 1;
     }
     if (load64(self + 48) == 0) {
         return 0 - 2;
     }
+    # Re-verify sudo path AT ESCALATION TIME — don't trust the
+    # SecurityContext.sudo_available cache from session init. See the
+    # `verify_sudo_path` contract for the TOCTOU rationale.
     var sudo_path = "/usr/bin/sudo";
-    if (fs_exists(sudo_path) == 0) {
+    if (verify_sudo_path(sudo_path) == 0) {
         sudo_path = "/bin/sudo";
-        if (fs_exists(sudo_path) == 0) {
+        if (verify_sudo_path(sudo_path) == 0) {
+            # No verifiable sudo at escalation time. Distinguish "binary
+            # missing" from "binary not root-owned" by re-checking
+            # existence: if the binary exists but failed verify, that
+            # was the ownership failure.
+            if (file_exists("/usr/bin/sudo") == 1) { return 0 - 3; }
+            if (file_exists("/bin/sudo") == 1) { return 0 - 3; }
             return 0 - 2;
         }
-    }
-    var stat_buf[18];
-    var stat_result = syscall(SYS_STAT, str_data(sudo_path), &stat_buf);
-    if (stat_result != 0) { return 0 - 2; }
-    var st_uid = load32(&stat_buf + 28);
-    if (st_uid != 0) {
-        return 0 - 3;
     }
     var sudo_args = vec_new();
     vec_push(sudo_args, "-n");
