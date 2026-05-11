@@ -197,6 +197,28 @@ fn main() {
     check("shell fallback raw",
     load64(Interpreter_parse(interp, str_from("foo bar baz"))) == IntentTag.SHELL_COMMAND);
 
+    # Substring-trap immunity: "remove" must NOT route to MOVE (today's
+    # input_has_word is word-prefix, not substring containment, so the
+    # embedded "move" inside "remove" is invisible to the MOVE check).
+    check("remove file routes to REMOVE",
+    load64(Interpreter_parse(interp, str_from("remove the file foo.txt"))) == IntentTag.REMOVE);
+    check("rm at token start routes to REMOVE",
+    load64(Interpreter_parse(interp, str_from("rm foo.txt"))) == IntentTag.REMOVE);
+    check("delete routes to REMOVE",
+    load64(Interpreter_parse(interp, str_from("delete the temp dir"))) == IntentTag.REMOVE);
+    check("move actual routes to MOVE",
+    load64(Interpreter_parse(interp, str_from("move foo to bar"))) == IntentTag.MOVE);
+    check("rename routes to MOVE",
+    load64(Interpreter_parse(interp, str_from("rename foo to bar"))) == IntentTag.MOVE);
+    # Plural-tolerance: "file" needle must still match "files", "process"
+    # must match "processes". Word-prefix matching gives us this for free.
+    check("plural files via show",
+    load64(Interpreter_parse(interp, str_from("show me the files"))) == IntentTag.LIST_FILES);
+    check("plural processes via state-query",
+    load64(Interpreter_parse(interp, str_from("running processes"))) == IntentTag.SHOW_PROCESSES);
+    check("plural directories via show",
+    load64(Interpreter_parse(interp, str_from("show me the directories"))) == IntentTag.LIST_FILES);
+
     println("");
     str_print(str_from("Passed: "));
     print_num(pass_count);

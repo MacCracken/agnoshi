@@ -5,7 +5,40 @@ fn Interpreter_new() {
     return p;
 }
 fn input_has_word(input, word) {
-    return str_contains_ci(input, word);
+    # Compound phrases (internal whitespace, e.g. "go to", "contents of",
+    # " in ") match as case-insensitive substrings — their interior
+    # spaces naturally anchor at word boundaries in the input. Single-
+    # token keywords (e.g. "move", "rm", "file", "ip") go through
+    # is_word_prefix so "file" finds "files" but "move" does NOT find
+    # "remove". Auto-dispatch by inspecting the needle for internal
+    # whitespace after trimming any leading/trailing space.
+    var wlen = strlen(word);
+    var w_start = 0;
+    var w_end = wlen;
+    while (w_start < w_end) {
+        var c = load8(word + w_start);
+        if (c != 32) {
+            if (c != 9) { break; }
+        }
+        w_start = w_start + 1;
+    }
+    while (w_end > w_start) {
+        var c = load8(word + w_end - 1);
+        if (c != 32) {
+            if (c != 9) { break; }
+        }
+        w_end = w_end - 1;
+    }
+    var has_internal_space = 0;
+    for (var k = w_start; k < w_end; k = k + 1) {
+        var c = load8(word + k);
+        if (c == 32) { has_internal_space = 1; }
+        if (c == 9) { has_internal_space = 1; }
+    }
+    if (has_internal_space == 1) {
+        return str_contains_ci(input, word);
+    }
+    return is_word_prefix(input, word);
 }
 fn extract_last_arg(input) {
     var len = str_len(input);
@@ -159,27 +192,22 @@ fn parse_file_ops(trimmed) {
         store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
-    # REMOVE is checked before MOVE because input_has_word is a
-    # substring containment check (not a tokenizer): "remove" contains
-    # "move", so a naive "move"-first order routes deletions to MOVE.
-    # Word-boundary tokenization is part of the larger v1.2.0 parser
-    # rework; for now, ordering disambiguates.
+    if (input_has_word(trimmed, "move") == 1 || input_has_word(trimmed, "rename") == 1) {
+        var intent = Intent_new(IntentTag.MOVE);
+        store64(intent + 8, extract_between(trimmed, "move ", " to "));
+        if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "rename ", " to ")); }
+        store64(intent + 16, extract_after(trimmed, " to "));
+        return intent;
+    }
     if (input_has_word(trimmed, "remove") == 1
     || input_has_word(trimmed, "delete") == 1
-    || input_has_word(trimmed, "rm ") == 1) {
+    || input_has_word(trimmed, "rm") == 1) {
         var intent = Intent_new(IntentTag.REMOVE);
         store64(intent + 8, extract_last_arg(trimmed));
         store64(intent + 40, 0);
         if (input_has_word(trimmed, "recursive") == 1 || input_has_word(trimmed, "-r") == 1) {
             store64(intent + 40, 1);
         }
-        return intent;
-    }
-    if (input_has_word(trimmed, "move ") == 1 || input_has_word(trimmed, "rename ") == 1) {
-        var intent = Intent_new(IntentTag.MOVE);
-        store64(intent + 8, extract_between(trimmed, "move ", " to "));
-        if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "rename ", " to ")); }
-        store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
     return 0;

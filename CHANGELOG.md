@@ -6,15 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-First slice of the v1.2.0 "deeper intent parsing" work. Headline: before this cut, **every NL input fell through to `SHELL_COMMAND`** because the parser was carrying two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions the v1.1.0 migration missed. Both fixed, parser actually routes now.
+v1.2.0 "deeper intent parsing" work. Slice 1 (committed) fixed two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions that had left the parser routing **every NL input to `SHELL_COMMAND`**. Slice 2 (this cut) retires the substring-trap class structurally with a real word-prefix matcher, so "remove" stops grabbing the MOVE branch, "file" still matches "files" (plural-tolerance), and the previous "rm "/"move "/"remove first" ordering hacks are gone.
 
-### Fixed
+### Slice 2 — word-prefix matching (this cut)
+
+#### Added
+- **sanitize.cyr: `is_word_prefix(input, word)`** — case-insensitive matcher that returns 1 iff `word` (cstring; leading/trailing whitespace stripped) is a prefix of any whitespace-delimited token in `input` (Str). Designed for keyword intent parsing: gives plural-tolerance ("file" → "files", "process" → "processes", "directory" → "directories") AND substring-trap immunity ("move" never matches inside "remove", "rm" never matches inside "warm") in one helper. The strict whole-token alternative would kill plurals; raw substring matching has the trap class; token-prefix lands in the right middle for shell NL.
+- **interpreter.cyr: `input_has_word` auto-dispatch** — single-token needles (`"move"`, `"ip"`, `"file"`) route to `is_word_prefix`; compound phrases with internal whitespace (`"go to"`, `"contents of"`, `"running process"`, `" in "`) keep substring matching (the interior space already anchors at word boundaries in the input). Selection happens by inspecting the needle after a leading/trailing-space trim — preserves backward-compatibility with existing call sites that have trailing-space anchors (`"rm "`, `"cd "`, `"named "`) without needing to rewrite every needle.
+- **tests/test_core.tcyr** — 8 new assertions covering the trap-immunity and plural-tolerance invariants: `"remove the file foo.txt"` → REMOVE (not MOVE), `"rm foo.txt"` → REMOVE, `"warm the soup"` → SHELL_COMMAND (not REMOVE), `"move foo to bar"` → MOVE, `"rename foo to bar"` → MOVE, `"show me the files"` → LIST_FILES (plural), `"show me the directories"` → LIST_FILES (irregular plural), `"running processes"` → SHOW_PROCESSES (plural). Test count 88 → 96, all passing.
+
+#### Changed
+- **interpreter.cyr: MOVE / REMOVE ordering** — the prior ordering hack (REMOVE checked first so it could grab "remove the file" before the MOVE substring trap fired) is retired. With word-prefix matching the order doesn't matter; restored the natural MOVE → REMOVE flow. The `"move "` / `"rm "` trailing-space anchors are dropped (now `"move"` / `"rm"`) since they were defenses against the substring trap and the trap is gone.
+
+### Slice 1 — Cyrius 4.5.0 → 5.10.x stdlib regressions (already committed)
+
+#### Fixed
 - **sanitize.cyr (CI helpers)** — `str_contains_ci`, `str_find_ci`, `str_find_ci_from`, `str_split_ci` all called `str_len(needle)` / `str_data(needle)` where `needle` was a cstring literal. `lib/str.cyr`'s `str_len` reads `load64(s + 8)` as a Str length header — applied to a raw cstring address, that's whatever 8 bytes sit past the literal. Garbage length, every `input_has_word()` match silently false, every parsed intent fell through to `SHELL_COMMAND`. Helpers now use `strlen()` for the cstring side and raw pointer arithmetic off the needle. Single root cause behind virtually every "agnoshi can't parse NL" symptom on Cyrius 5.10.x.
-- **str_sub → str_substr migration** — `lib/str.cyr`'s `str_sub(s, start, len)` takes a *length*, but the parser/translator/prompt/audit/aliases/commands/session/sanitize call sites all pass an *end-position* (4.5.0 semantics, where the third arg was the end index). The mismatch let calls like `str_sub(input, idx + sep_len, str_len(input))` over-read past the buffer and SIGSEGV on the second parse call. Global rename to `str_substr` (which is the (start, end) variant in 5.10.x) across `aliases.cyr`, `audit.cyr`, `commands.cyr`, `prompt.cyr`, `session.cyr`, `sanitize.cyr`, `interpreter.cyr`. 19 call sites updated.
-- **interpreter.cyr (extract_after / extract_between)** — same `str_len(cstring keyword)` bug pattern as the sanitize helpers; replaced with `strlen(keyword)` / `strlen(before_kw)`. Without this, even a passing CI helper would compute the wrong post-match offset and produce a misaligned `start` for the substring extraction.
-- **REMOVE / MOVE substring collision** — `input_has_word` is a substring containment check, not a tokenizer, so "remove the file foo.txt" matched `"move"` first and routed to `MOVE` (Intent 7) instead of `REMOVE` (Intent 8). Reordered so the REMOVE check runs before MOVE in `parse_file_ops`; added a comment flagging that proper word-boundary tokenization is the larger v1.2.0 parser-rework item.
+- **str_sub → str_substr migration** — `lib/str.cyr`'s `str_sub(s, start, len)` takes a *length*, but the parser/translator/prompt/audit/aliases/commands/session/sanitize call sites all pass an *end-position* (4.5.0 semantics, where the third arg was the end index). The mismatch let calls like `str_sub(input, idx + sep_len, str_len(input))` over-read past the buffer and SIGSEGV on the second parse call. Global rename to `str_substr` (the (start, end) variant in 5.10.x) across `aliases.cyr`, `audit.cyr`, `commands.cyr`, `prompt.cyr`, `session.cyr`, `sanitize.cyr`, `interpreter.cyr`. 19 call sites updated.
+- **interpreter.cyr (extract_after / extract_between)** — same `str_len(cstring keyword)` bug pattern as the sanitize helpers; replaced with `strlen(keyword)` / `strlen(before_kw)`.
 
-### Added
+#### Added
 - **parse_state_queries** (`src/interpreter.cyr`) — new noun-phrase pass that runs after the existing parse_X chain and before the QUESTION fallback. Catches NL phrasings that today fell to QUESTION/SHELL_COMMAND:
   - `NETWORK_INFO` ← "ip address", "my ip", "ip route", "network status", "network info"
   - `SYSTEM_INFO` ← "uptime", "load average", "kernel version", "system info", "memory usage", "free memory", "hostname"
@@ -23,8 +34,8 @@ First slice of the v1.2.0 "deeper intent parsing" work. Headline: before this cu
 - **tests/test_core.tcyr** — first parse-coverage pass for the unit-test suite. Pulls in `src/translate.cyr` + `src/interpreter.cyr` and exercises `Interpreter_parse` directly. 31 new assertions covering: opener-routed paths (LIST_FILES via show/list, CHANGE_DIR via cd / "go to", FIND_FILES, SEARCH_CONTENT, CREATE_DIR, REMOVE, INSTALL_PACKAGE, GIT_STATUS, GIT_COMMIT, FIREWALL_LIST, PIPELINE), every `parse_state_queries` arm, QUESTION fall-through on bare interrogatives ("what year is it"), and the SHELL_COMMAND last-resort. Test count 57 → 88, all passing.
 
 ### Notes
-- **Performance**: parse benchmarks moved from 1-2us (everything-falls-to-fallback fast path) to 3-12us (parser actually walking the branches). Still well under interactive-latency thresholds; the prior numbers were misleading because the parser was effectively a no-op.
-- **Remaining v1.2.0 parser-depth work** (not in this cut): word-boundary tokenizer to retire the substring trap class entirely (today addressed case-by-case — "move " ordering, "remove" ordering); broader NL opener vocabulary ("tell me about", "describe", "check"); deeper coverage report (the roadmap target is 80%+ — currently no coverage instrumentation wired in).
+- **Performance**: parse benchmarks moved from 1-2us (everything-falls-to-fallback fast path) to 3-12us (parser actually walking the branches). Slice 2's word-prefix matcher added a per-needle trim+scan loop; benchmarks stayed in the 3-12us band, so the structural improvement is free at this scale. Prior numbers were misleading because the parser was effectively a no-op.
+- **Remaining v1.2.0 parser-depth work** (not in this cut): broader NL opener vocabulary ("tell me about", "describe", "check"); service-status NL ("is nginx running"); coverage report wired into CI (roadmap target 80%+). The substring-trap structural fix that was deferred in slice 1 landed in slice 2.
 
 ## [1.1.0] - 2026-05-10
 
