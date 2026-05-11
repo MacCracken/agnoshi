@@ -22,23 +22,143 @@ All v1.3.x items shipped. Next anchor is v1.4.0 below.
 
 ## v1.4.0 — Exec wire-up + hoosh modernization
 
-The remaining v1.2.1-scoped items that needed broader infrastructure, plus the deferred MEDIUM findings from v1.3.1 P(-1):
+The cycle has two headlines (exec wire-up + LLM streaming) and gathers everything that's been blocked on broader infrastructure plus the v1.3.1 P(-1) deferred MEDIUM findings. The order below is the **suggested slice path** for the next agent — it groups by dependency so you can pick the next non-blocked slice without re-thinking the graph each time.
 
-### Core
-- [ ] **Exec wire-up for SAFE / READ_ONLY commands** — `print_intent_result` currently *proposes* the command and audits with `result=proposed`; v1.4.0 adds actual `exec_vec(argv)` and flips `result` to `executed` / `denied` / `error` at the call site. Per-session SecurityContext on startup; sudo-escalation path through `execute_with_privileges` already wired in `src/security.cyr` (v1.3.0 slice 5).
-- [ ] **`undo` builtin** — wires `src/checkpoint.cyr` (already stdlib-aligned + chmod-return-checked in v1.3.1 slice 4) for destructive-op rollback. Needs exec wire-up first.
-- [ ] **LLM response streaming** — requires hoosh modernization (hoosh itself is still on the pre-Cyrius API; that work happens in the hoosh repo first, then agnoshi consumes the modernized surface).
-- [ ] **Tab completion** — terminal raw mode (`tcsetattr` + termios), tty escape sequence handling, completion engine wired to `src/completion.cyr` (will need its own Cyrius 4.5 → 5.10 sweep first per the v1.3.0 slice-5 / -7 / -8 pattern).
+### Dependency map
 
-### Packaging
-- [ ] **ark install path reconciliation** — match the `ark install --group shell` install convention (was scoped for v1.3.2; moved here to land alongside exec wire-up since both touch the binary's runtime contract).
+```
+hoosh-side modernization (external, user-owned)
+                                                          ─┐
+                                                           ▼
+[1] security.cyr wire   →   [5] exec wire SAFE/READ_ONLY     [12] hoosh client wire-up
+        │                            │                              │
+        ▼                            ▼                              ▼
+[2] session.cyr wire   →   [6] exec wire higher perms   →   [13] LLM streaming wire-up
+        │  (fixes 5 MEDIUM)          │ (approval flow)              (QUESTION + revision)
+        ▼                            ▼
+[3] ui.cyr wire        →   [7] `undo` builtin
+        │                            (needs exec to roll back)
+        ▼
+[4] checkpoint.cyr wire
+   (fixes 1 MEDIUM)
 
-### v1.3.1 P(-1) deferred findings
-Carry-overs from `docs/audit/2026-05-11-pminus1.md` §6-§8 that need wire-up to land:
-- [ ] **session.cyr `SYS_CHDIR(str_data(Str))`** — non-null-terminated buffer to kernel. MEDIUM. Build a cstring path the same way `agnsh.cyr::audit_log_path` does (or add a `str_to_cstring(s)` helper in `lib/io.cyr`). 2 sites.
-- [ ] **checkpoint.cyr `sys_chmod(str_data(Str))`** — same shape. MEDIUM. 1 site.
-- [ ] **session.cyr `SYS_GETCWD` returns unchecked** — 3 sites. MEDIUM. Needs fallback-path policy (display "?" / use last-known cwd / fail-loudly).
-- [ ] **O_NOFOLLOW on audit/history opens** — LOW. Per-arch flag value (`0o400000` x86 vs `0o100000` aarch64) needs a constant + `lib/io.cyr` API extension to thread custom flags through `file_write_all`.
+(independent, can land any time)
+[8] completion.cyr stdlib sweep (lint pre-flight)
+[9] tab completion raw-mode infra (depends on [8])
+[10] O_NOFOLLOW hardening (per-arch flag, lib/io.cyr API extension)
+[11] ark install-path reconciliation (touches release.yml, no source impact)
+```
+
+**Suggested first bite**: Slice 1 — `security.cyr` wire-up. No dependencies; small; gets the SecurityContext scaffolding in place so the exec slices (5/6) have a real per-session context to query at the approval moment. See §Slice 1 below for the exact diff shape.
+
+### Slice 1 — Wire `src/security.cyr` into agnsh binary
+**Deps**: none. **Risk**: low. **Bite size**: small.
+- Add `include "src/security.cyr"` to `src/agnsh.cyr` (after `src/audit.cyr`).
+- In `main()`, after `alloc_init()` / `args_init()`, construct `var sec = SecurityContext_new(0);` (`restricted=0` for non-interactive; SecurityContext_new auto-detects root via euid and sets restricted=1 if so, emitting the existing stderr warning).
+- Thread `sec` into a global or pass it to `interactive_loop()` and `print_intent_result()` — these don't *use* it yet (exec wire-up is slice 5), but having the construction in place validates the security.cyr include graph in the live binary.
+- Smoke probe: run as non-root → no warning + clean exit. Run as root → "WARNING: Shell running as root" on stderr.
+- **CI**: lint-cstr-str + capacity gate may shift slightly (security.cyr brings in ~9 fns and the /etc/passwd 64 KB read buffer). Verify coverage gate still ≥ 80%.
+
+### Slice 2 — Wire `src/session.cyr` into agnsh + fix 5 deferred MEDIUM findings
+**Deps**: slice 1 (SecurityContext available). **Risk**: medium (session.cyr brings in ~15 fns + builtin dispatch + chdir paths). **Bite size**: medium-large.
+- Drop the `interactive_loop()` body in `src/agnsh.cyr` in favor of `Session_run_interactive(sec, config)` from `src/session.cyr` (or keep the agnsh-side loop and selectively call into Session_* helpers — there's a design choice here; the lighter touch is to keep agnsh's loop and reach in for cd/mode/history dispatch).
+- **Fix `SYS_CHDIR(str_data(Str))` × 2** (audit §7 MEDIUM): the two chdir call sites pass `str_data(dir)` where `dir` is a Str. `str_data` returns a non-null-terminated buffer; the kernel reads past the buffer until it finds a zero. Build a cstring path the same way `agnsh.cyr::audit_log_path` does (manual `alloc + memcpy + store8(buf + len, 0)`), or add a `str_to_cstring(s): cstring` helper in `lib/io.cyr` and use it at both call sites.
+- **Fix `SYS_GETCWD` returns unchecked × 3** (audit §6 MEDIUM): each `syscall(SYS_GETCWD, &cwd_buf, 4095)` needs `if (rc < 0) { ... fallback ... }`. Policy decision required: display "?" / use last-known cwd / fail-loudly. Recommend: "?" with a one-line stderr warning, matching the chmod-failure pattern from v1.3.1 slice 4.
+- Run the lint shield; should be clean (the str_data(Str) → syscall pattern isn't lint-flagged today; consider adding it as Category F in slice 4 since checkpoint has the same shape).
+- **Smoke**: extend `scripts/smoke-test.sh` interactive section with `cd` round-trip probes (`cd /tmp; pwd; exit`) once `pwd` exists.
+
+### Slice 3 — Wire `src/ui.cyr` into agnsh binary
+**Deps**: slice 2 (session.cyr may use ui_show_*). **Risk**: low. **Bite size**: small.
+- Drop the three `ui_show_*` / `chrono_now_rfc3339` stubs at the top of `src/agnsh.cyr` (the chrono one is already real via `lib/chrono.cyr::iso8601_now`).
+- Add `include "src/ui.cyr"` after the other src includes.
+- ui.cyr brings welcome/goodbye/help banner helpers + colored output paths. Verify the existing interactive banner in agnsh.cyr doesn't double-print.
+- Watch for ui_show_* signature mismatches with existing call sites in session/approval — if any, adjust at the call site (don't rewrite ui.cyr).
+
+### Slice 4 — Wire `src/checkpoint.cyr` into agnsh + fix 1 deferred MEDIUM finding
+**Deps**: slice 3. **Risk**: low (single fn delta). **Bite size**: small.
+- Add `include "src/checkpoint.cyr"` to `src/agnsh.cyr`.
+- **Fix `sys_chmod(str_data(dir), 448)`** (audit §7 MEDIUM): same shape as the session.cyr chdir fix in slice 2. Build a cstring path for the checkpoint directory. The CheckpointManager_new comment in `src/checkpoint.cyr` already TODO-flags this — slice 4 is its natural home.
+- **Optional**: extend `scripts/lint-cstr-str.sh` with a Category F catching `syscall(SYS_*, str_data(...))` and `sys_X(str_data(...), ...)` patterns. Decided against this in v1.3.1 §7 because of FP risk on `sys_write` (which legitimately takes `data, len`); now that we have a concrete bug pattern to anchor on, the regex can target `sys_chmod` / `SYS_CHDIR` / `SYS_STAT` / `sys_open` specifically (these all expect a cstring path, not a buffer).
+
+### Slice 5 — Exec wire-up for SAFE / READ_ONLY commands
+**Deps**: slice 1 (SecurityContext). **Risk**: medium-high (first real exec; new fail modes). **Bite size**: medium.
+- In `print_intent_result()` and `interactive_loop()`'s command dispatch, after `Risk:` / `Hint:` print, **if** `perm == SAFE || perm == READ_ONLY`, call `execute_command(cmd, args, argc)` from `src/security.cyr`. `exec_vec` already wraps fork + execve + waitpid; security.cyr's `execute_command` is the agnoshi-side wrapper that builds argv with `cmd` as `argv[0]`.
+- Update `audit_one_shot` to take an `exec_result` parameter (positive = exit code, negative = error). Update `classify_audit_result` to flip `"proposed"` → `"executed"` (rc == 0) / `"failed"` (rc > 0) / `"error"` (rc < 0). The other five labels (`needs_approval`, `blocked`, `needs_llm`, `needs_exec`, `rejected_safety`) stay as-is — they're parse-time decisions, not runtime outcomes.
+- Smoke probe additions: `agnsh -c "show files"` should actually run `ls` and print directory listing; audit log shows `"result":"executed"`.
+- **Watch out**: stdout/stderr from the child process now appears in agnoshi's output. The existing `Intent: / Command: / Risk:` lines may want to move to stderr to keep stdout clean for downstream piping. Design decision; recommend stderr for the metadata, stdout passes through.
+
+### Slice 6 — Exec wire-up for higher perms (approval flow)
+**Deps**: slice 5. **Risk**: high (interactive UI, sudo escalation). **Bite size**: medium.
+- For `perm == USER_WRITE / SYSTEM_WRITE / ADMIN`, invoke `ApprovalManager_request(am, cmd, args, argc, risk)` from `src/approval.cyr` before executing.
+- ApprovalManager_request today does `syscall(SYS_READ, 0, &buf, 63)` for the approve/deny/modify single-char input. This works in interactive but not in `-c` mode (no stdin). For `-c`, decline by default (current behavior — print "Approval required" and don't execute).
+- For ADMIN commands, after approval, route through `execute_with_privileges(sec, cmd, args, argc)` which prepends `sudo -n` and re-verifies sudo path via `verify_sudo_path` (already implemented v1.3.0 slice 5; the TOCTOU window is the gap, documented in ADR-006).
+- BLOCKED commands stay blocked — the `WARNING: BLOCKED` line is the final word. No approval flow for BLOCKED.
+- Audit: result becomes `"approved_executed"` (or just `"executed"` with `approved=1`), `"denied"` (user pressed d), `"timed_out"` (no input within `ApprovalManager.timeout_seconds`).
+
+### Slice 7 — `undo` builtin
+**Deps**: slice 6 (exec must be wired so checkpoint can run *before* exec). **Risk**: low (CheckpointManager logic exists). **Bite size**: small-medium.
+- Before each REMOVE/MOVE exec, call `CheckpointManager_checkpoint(cm, intent)` to back up the source file(s) into `$HOME/.agnoshi/checkpoints/`.
+- Add `undo` to the interactive_loop builtin dispatch: calls `CheckpointManager_undo(cm)` which pops the last checkpoint and restores.
+- Watch the auto-prune: CheckpointManager keeps the most-recent 100 entries; older ones are deleted to keep disk usage bounded.
+- Tests: round-trip in a tempdir — `mkdir foo; touch foo/a; agnsh -c "remove foo/a"; agnsh -c "undo"; ls foo/a` should succeed.
+
+### Slice 8 — `src/completion.cyr` stdlib sweep
+**Deps**: none (lint pre-flight). **Risk**: low. **Bite size**: small-medium.
+- `src/completion.cyr` is the v1.0-era completion engine, not yet wired into any binary. Per the v1.3.0 slice-5/-7/-8 pattern (security/history/audit), modules wired into the binary's include graph after v1.1.0 typically need a Cyrius 4.5 → 5.10 stdlib alignment sweep.
+- Run `cyrius check src/completion.cyr` standalone to surface any undefined references.
+- Run the lint shield (`sh scripts/lint-cstr-str.sh src`) — it'll flag the obvious cstring/Str mismatches.
+- Manually grep for: `fs_exists` (→ `file_exists`), single-arg `file_read_all` (→ buffer-based), `str_cat(cstring, *)` / `str_cat(*, cstring)`, `str_starts_with(*, cstring)`, `str_data(cstring)`, raw `syscall(SYS_OPEN|CHMOD|STAT, ...)`.
+- This slice produces NO live-binary change — it's a pre-flight to clear completion.cyr so slice 9 can wire it without doubling as a bug-discovery slice.
+
+### Slice 9 — Tab completion: raw-mode terminal infra
+**Deps**: slice 8 (completion.cyr clean). **Risk**: medium-high (termios is its own footgun universe). **Bite size**: large.
+- Terminal raw mode via `tcgetattr` / `tcsetattr` — disable `ICANON` (line buffering) + `ECHO` (auto-print), set `VMIN=1` / `VTIME=0` for byte-at-a-time reads.
+- Needs syscall wrappers in `lib/io.cyr` for `tcgetattr` / `tcsetattr` if not already there (they're typically `ioctl(fd, TCGETS, ...)` / `TCSETS, ...` on Linux). Both arches need the same constants — check `lib/syscalls_{x86,aarch64}_linux.cyr` first.
+- Tab completion engine in `src/completion.cyr` already has a trie / prefix-match design (v1.0-era); slice 9 wires it to the raw-mode read loop.
+- ANSI escape handling: arrow keys (`\x1b[A` / `B` / `C` / `D`) for history navigation come along with raw mode. Worth doing in the same slice since the read-loop shape changes anyway.
+- **Watch out**: raw mode breaks the existing `read_line` byte-by-byte path; need a clean restore-on-exit (trap signals to put terminal back in cooked mode). Otherwise a crashed agnsh leaves the terminal unusable.
+
+### Slice 10 — O_NOFOLLOW hardening
+**Deps**: none. **Risk**: low. **Bite size**: small.
+- Per-arch O_NOFOLLOW constant: `0o400000` on x86_64 (`asm-generic/fcntl.h` defines this via the x86-specific override), `0o100000` on aarch64-generic. Add to `lib/syscalls_{x86,aarch64}_linux.cyr` if not present (likely needs an upstream cyrius bump, OR define inline with `#ifdef CYRIUS_ARCH_X86 / AARCH64`).
+- Extend `lib/io.cyr::file_write_all` to take an optional flags parameter, OR add a `file_write_all_with_flags(path, buf, len, flags)` variant. agnoshi's `audit_one_shot` uses an explicit open + write + close already (in `audit.cyr::AuditLogger_log`); just OR `O_NOFOLLOW` into the flags arg there. For history.cyr's `file_write_all` call site, switch to the new variant.
+- Smoke: pre-place a symlink at `$HOME/.agnsh_audit.log → /tmp/decoy`, run agnsh, verify the symlink is *not* followed (audit log isn't created → check stderr for the EOPENERROR; OR the open fails and audit_one_shot returns -1 silently).
+
+### Slice 11 — ark install-path reconciliation
+**Deps**: none. **Risk**: low (release-side only). **Bite size**: small.
+- The `ark install --group shell` convention expects specific install paths. Today `scripts/install.sh` installs to `/usr/local/bin/agnsh` + `/usr/local/share/man/man1/agnsh.1` + `/usr/local/share/agnoshi/` (README/CHANGELOG/LICENSE per `docs/guides/getting-started.md`).
+- Reconcile against the ark `--group shell` install layout. May need to add `/etc/agnoshi/` for system config (currently agnoshi has no system config; the ShellConfig is built in code).
+- The zugot recipe at `~/Repos/zugot/marketplace/agnoshi.cyml` already uses `$PKG/usr/bin/agnsh` — verify that matches the ark install convention. If not, update both.
+
+### Slice 12 — hoosh client wire-up (post-hoosh modernization)
+**Deps**: external hoosh modernization complete. **Risk**: medium. **Bite size**: medium.
+- New file `src/llm.cyr` (per the v1.0-era `rust-old/src/llm.rs` which had the reference shape — see also v1.3.2 removal notes and git history).
+- Connect to hoosh's modernized API surface (likely at `http://127.0.0.1:8088` per the v1.0 default; confirm with the hoosh-side work).
+- Includes prompt-injection sanitization (the v1.0 `sanitize_llm_input` helper) — port from `rust-old/src/llm.rs:sanitize_llm_input` via git history (`git log --all --diff-filter=D -- rust-old/src/llm.rs`).
+- Watch out: HTTP client needs JSON serialization. `lib/json.cyr` is present and was used by audit_view in v1.3.0 (though the read-side AuditViewer_query was stubbed; this is the time to revisit). Bone up on `json_parse` / `json_get` / `json_get_int`.
+
+### Slice 13 — LLM streaming wire-up (QUESTION + revision)
+**Deps**: slice 12 (LLM client). **Risk**: medium. **Bite size**: medium.
+- Replace `translate_question`'s "needs LLM" echo with an actual streaming call into the LLM client from slice 12.
+- Revision workflow: when intent is UNKNOWN (parser couldn't classify) AND the input looks like NL (not a bare shell command), query the LLM with the original input + recent history + cwd + last exit code for a suggested command. The v0.90.0 CHANGELOG describes this — `suggest_command_with_context` was the v1.0-era name.
+- Audit: when LLM is the action, `result` becomes `"llm_suggested"` (new label, document in ADR if it becomes architectural — likely a 7th class for the result vocabulary).
+- Tests: with hoosh mocked, verify the streaming output appears progressively (not buffered to completion before display).
+
+### Closeout
+- VERSION 1.3.2 → 1.4.0
+- CHANGELOG `[Unreleased]` → `[1.4.0]` with consolidated release summary
+- Roadmap: move v1.4.0 to Shipped, advance to v1.5.x bucket
+- doc-health row refresh
+- ADR slot if any: candidates are exec-side approval-vs-execute split, or the LLM result-class addition
+
+### Notes for the next agent
+- **Suggested first bite**: slice 1 (security.cyr wire-up). Smallest, no dependencies, gets the SecurityContext scaffolding in place. Reading time vs work-to-do ratio is best here.
+- **Parallelism opportunity**: slices 8 (completion lint pre-flight), 10 (O_NOFOLLOW), 11 (ark) are all independent and can interleave with the 1→7 sequence if you hit a hoosh-blocked moment.
+- **Don't skip slice 8** before slice 9. The v1.3.0 slice-5/-7/-8 pattern showed every newly-wired deferred module needed a stdlib sweep first; wiring completion.cyr without it would surface 3-5 build breaks at the worst moment (mid-raw-mode-debug).
+- **Watch the lint shield** (`scripts/lint-cstr-str.sh`) as new modules come online — the 14 patterns across 5 categories will catch the known bug class; new patterns surfaced during wire-up should land as Category F/G/H additions, not as one-off fixes.
+- **Honor ADR-006** for any new Str/cstring boundary: explicit `_in_str` suffix, per-arch syscall wrappers, `str_clone` for static-buf escape, every cstring path null-terminated.
+- **bench-history.csv**: rerun benchmarks after slice 5 (exec wire-up) and slice 13 (LLM); both add genuinely new code paths and may shift parse/translate timings.
+- **Coverage**: every new wire-up brings more fns into the in-binary scope (denominator grows); add test_core anchors for new modules' pure-logic fns (per v1.2.0 slice 9 + v1.3.0 slice 5 patterns). 80% gate is enforced by CI.
 
 ## v1.5.x and beyond — Demand-gated
 
