@@ -6,9 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.3.1 P(-1) audit/review work. Slices 1-2 (committed): Cyrius 5.10.34 → 5.10.44 toolchain bump (zero codegen drift) + cstring/Str static analyzer wired into CI. Slice 3 (this cut): buffer-safety sweep — extends the linter to catch the static-buffer-escape pattern that bit history.cyr in slice 7 of v1.3.0, plus 5 dormant copies of the same shape across deferred modules.
+v1.3.1 P(-1) audit/review. Slices 1-3 (committed): toolchain bump, cstring/Str linter, buffer-safety sweep. Slice 4 (this cut): **syscall return-value handling sweep** — walked all 35+ syscall sites, found two HIGH-severity unchecked `sys_chmod` returns (live in `history.cyr`, deferred in `checkpoint.cyr`) where a silent chmod failure leaves user-private files at the umask default and leaks data to other users on a multi-user system. Fixed + linter category added. Also wrote up the consolidated P(-1) audit report.
 
-### Slice 3 — buffer-safety sweep + static-buf-escape linter (this cut)
+### Slice 4 — syscall return-value handling (this cut)
+
+#### Fixed
+- **history.cyr:112 — `sys_chmod` return unchecked** on `$HOME/.agnsh_history`. **HIGH severity**: if chmod fails (race / NFS / unusual filesystem), the history file stays at the umask default (typically 0644), leaking every shell command the user has ever typed to other users on a multi-user system. **Live in agnsh** (saved on every `exit` / `quit`). Captured the return; writes a one-line stderr warning on non-zero result so the operator sees a visible signal without escalating the write failure (the file itself was already written successfully).
+- **checkpoint.cyr:29 — `sys_chmod` return unchecked** on `$HOME/.agnoshi/checkpoints/`. **HIGH severity**: directory holds pre-destructive-op backups; same multi-user data-leak shape. Same fix applied. Deferred module today; ready for v1.4.0 exec wire-up.
+
+#### Added
+- **scripts/lint-cstr-str.sh — Category E: unchecked sys_chmod**. Pattern `^\s*sys_chmod\(` flags any chmod statement where the result isn't captured into a variable or an `if` condition. Catches bare `sys_chmod(path, mode);` but allows `var rc = sys_chmod(...)` and `if (sys_chmod(...) != 0)`. Closes the security-critical syscall-return-handling class.
+- **docs/audit/2026-05-11-pminus1.md** — consolidated P(-1) audit report covering all four slices so far (toolchain bump, cstring/Str linter, buffer-safety sweep, syscall return audit). Records every finding by severity, the fix applied, and the forward-shield (lint pattern) added. Per AGNOS first-party-standards convention.
+
+#### Notes
+- **Syscall site catalog** in the audit report: 35+ sites categorized. 19 sites verified clean (return-checked or "never fails" syscalls like getuid). 8 stdout/stderr writes intentionally ignored (LOW severity — terminal/pipe failures rare; conventional). 2 sys_chmod fixed (HIGH). 3 SYS_GETCWD return-unchecked sites in `session.cyr` flagged as MEDIUM and deferred to the v1.4.0 wire-up slice (the fix involves a fallback-path policy decision: display "?" / use last-known cwd / fail-loudly).
+- **Chmod-failure probe**: deliberately tried to trigger chmod failure (`chmod 000` on the history file then re-running agnsh) didn't fire — Linux grants chmod on user-owned files regardless of current mode. The code path is correct; symptoms would surface on NFS / SELinux denials / AppArmor / read-only FS. The linter prevents future regressions.
+- **Cumulative shield count**: 14 lint patterns across 5 categories. **All 7 distinct bug variants** that surfaced over v1.2.0/v1.3.0 (cstring/Str type mismatches, semantic drift, aarch64 syscalls, static-buf escape, unchecked chmod) are now CI-caught at lint time. The 8th audit class (sys_write return) is NOT linted; logging best-effort is the consensus default.
+
+### Slice 3 — buffer-safety sweep + static-buf-escape linter (committed)
 
 #### Fixed
 Five sites in deferred modules carried the static-buffer-escape pattern — `str_from(&buf)` wrapping a `var buf[N]` static buffer, with the resulting Str either *returned* or *stored in a long-lived struct*. Each call to the same fn would overwrite the buffer and silently invalidate every earlier returned Str. The fix is `str_clone(str_from(&buf))` to deep-copy into a heap buffer the Str owns. Same pattern that bit `CommandHistory_add` in slice 7 of v1.3.0 (every history entry's data aliased to whatever was last typed).

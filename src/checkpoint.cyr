@@ -26,7 +26,13 @@ fn CheckpointManager_new() {
     # which lands when checkpoint.cyr gets wired into the binary in
     # v1.4.0's exec wire-up slice. For now this matches the original
     # v1.0 contract; the cross-arch fix here is what the linter requires.
-    sys_chmod(str_data(dir), 448);
+    # Check the return so a silent chmod failure can't leave the
+    # checkpoint dir world-readable (contains pre-destructive-op
+    # backups — meaningful security exposure).
+    var chmod_rc = sys_chmod(str_data(dir), 448);
+    if (chmod_rc != 0) {
+        sys_write(2, "agnsh: warning: chmod 0700 failed on checkpoint dir\n", 53);
+    }
     var p = alloc(24);
     store64(p, vec_new());
     store64(p + 8, dir);

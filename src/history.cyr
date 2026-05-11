@@ -109,7 +109,16 @@ fn CommandHistory_save(self) {
     file_write_all(load64(self + 24), str_data(content), str_len(content));
     # Use the lib/io.cyr `sys_chmod` wrapper — aarch64 has no bare
     # SYS_CHMOD (the generic syscall table only exposes fchmodat).
-    sys_chmod(load64(self + 24), 384);
+    # Check the return: if chmod fails, the history file stays at
+    # the umask default (typically 0644 = world-readable). On a
+    # multi-user system that leaks every shell command the user has
+    # ever typed. Surface the failure via stderr; the file write
+    # itself already succeeded so we don't return an error from
+    # save() — but the operator can react.
+    var chmod_rc = sys_chmod(load64(self + 24), 384);
+    if (chmod_rc != 0) {
+        sys_write(2, "agnsh: warning: chmod 0600 failed on history file\n", 52);
+    }
     return 0;
 }
 fn CommandHistory_len(self) {

@@ -129,6 +129,16 @@ scan "syscall(SYS_STAT) — aarch64-broken"  'syscall\(\s*SYS_STAT\b'
 scan "str_from(&buf) escape via return" 'return\s+str_from\(&'
 scan "str_from(&buf) escape via store"  'store64\([^,]+,\s*str_from\(&'
 
+# Category E — security-critical syscall returns left unchecked.
+# `sys_chmod` is the canary: failures leave files at umask-default
+# permissions (typically 0644 / 0755 instead of 0600 / 0700), so a
+# silent chmod failure on a $HOME-owned history file or checkpoint
+# dir is a real multi-user data leak. The linter flags any
+# `sys_chmod(...)` statement where the result isn't captured into a
+# variable or an `if` condition. Caught one live (history.cyr) and
+# one deferred (checkpoint.cyr) site in v1.3.1 slice 4.
+scan "sys_chmod return unchecked" '^\s*sys_chmod\('
+
 if [ $FAIL -eq 0 ]; then
     echo "lint-cstr-str: clean (no Str/cstring antipatterns in $SRC_DIRS/)"
     exit 0
