@@ -97,6 +97,24 @@ check "blocked warning line" "WARNING: BLOCKED" "$out"
 out=$("$BIN" -c "show me files" 2>&1)
 check "command field has ls" "Command: ls" "$out"
 
+# Error-recovery hints -- when the parse succeeds but the translation
+# isn't actually runnable (LLM not wired, pipeline exec not wired,
+# safety check rejected), surface a Hint: line so the user knows the
+# echo+Risk:[LOW] output isn't a real run.
+out=$("$BIN" -c "what is dns" 2>&1)
+check "question hint surfaces" "Hint: question intent" "$out"
+out=$("$BIN" -c "ls | grep foo" 2>&1)
+check "pipeline hint surfaces" "Hint: pipeline intent" "$out"
+out=$("$BIN" -c "remove ../etc/passwd" 2>&1)
+check "safety-reject hint surfaces" "Hint: translator safety check rejected" "$out"
+# Happy-path inputs should NOT carry a hint line.
+out=$("$BIN" -c "show me files" 2>&1)
+case "$out" in
+  *"Hint:"*) FAIL=$((FAIL+1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: happy-path output should not have Hint:";;
+  *) PASS=$((PASS+1));;
+esac
+
 # Interactive mode -- drive via stdin pipe and check that the mode-
 # switching builtins flow correctly and the prompt updates. Each line
 # of input is one user turn (the read_line helper accepts byte-by-byte

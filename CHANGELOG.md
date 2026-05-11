@@ -6,9 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.1 work, slices 1-6 (committed) closed out the approval-workflow item and started the interactive-shell roadmap (prompt + mode switching). Slice 7 (this cut) lands command history: persistent across sessions, recall via the `history` builtin, plus a Cyrius 4.5 → 5.10 stdlib repair of `src/history.cyr` that had been carrying four latent build breaks since v1.0 (never tripped because the module wasn't in any include graph).
+v1.2.1 work, slices 1-7 (committed) landed approval coverage, risk-print, audit, sudo timing, mode switching, history. Slice 8 (this cut) adds the **error-recovery loop** sub-bullet — when parse succeeds but translation isn't actually runnable (QUESTION needs an LLM that isn't wired; PIPELINE has no translator arm; any translator's safety check rejected the input), the binary used to print `Command: echo / Risk: [LOW]` and the user reasonably believed something ran. A new `Hint:` line surfaces each case so the user can rephrase.
 
-### Slice 7 — interactive shell: command history (this cut)
+### Slice 8 — interactive shell: error-recovery hints (this cut)
+
+#### Added
+- **agnsh.cyr: post-translation `Hint:` line** in `print_intent_result`. Three classes:
+  - **QUESTION (tag 42)** — LLM streaming isn't wired; the parser classified the input as a question but agnoshi can only echo. Hint: `question intent -- LLM streaming arrives in a later slice`.
+  - **PIPELINE (tag 41)** — no `translate_pipeline` arm in `translate_core` / `translate_extended`, so the dispatch falls to `translate_unknown` (echo, SAFE). Hint: `pipeline intent -- auto-exec arrives with the exec wire-up`.
+  - **Safety-rejected translation** — any tag whose `translate_X` called `is_safe_path_str` / `is_safe_arg_str` / `is_valid_pid` / `is_safe_commit_message` on a parser-extracted field and the predicate rejected. Detected by the `"Unknown intent"` description that `translate_unknown` stamps. Hint: `translator safety check rejected this input -- try rephrasing`. This is the actual v1.2.1 error-recovery sub-bullet: pre-slice-8 a user typing `remove ../etc/passwd` saw `Command: echo / Risk: [LOW]` and could plausibly believe the deletion was queued; now the rejection is surfaced.
+- **scripts/smoke-test.sh — 4 new hint assertions**: each of the three hint classes appears for a matching input; happy-path inputs (`show me files`) do *not* carry a `Hint:` line (negative check, no false-positive). Smoke 48 → **52**.
+
+#### Notes
+- **Binary size**: 292,920 → 293,312 B (+0.4 KB) — three println strings and one streq.
+- **Order of output** preserved: Risk line still shows the technical classification first (some callers / scripts may want the raw permission level even on echo-only translations); the Hint follows. BLOCKED warnings still print before the Hint (a BLOCKED translation that's also safety-rejected gets both lines, which is the correct surface area).
+- **Audit unchanged this slice** — the audit entry still records `action="echo"` for these cases. A future slice could enrich audit with a separate `result` field value like `"rejected_safety"` / `"needs_llm"` / `"needs_exec"` to distinguish from real echo invocations, but the user-facing print is the higher-leverage fix and stands alone.
+- **Remaining v1.2.1 interactive-shell sub-items**: completion (tab) and streaming LLM responses. Both need bigger infrastructure (completion: terminal raw mode + tty escape handling; streaming: hoosh wire-up). At this point the interactive shell is fully usable end-to-end for the parse-and-classify use case; the remaining items light up *execution* paths.
+
+### Slice 7 — interactive shell: command history (committed)
 
 #### Fixed
 - **src/history.cyr — Cyrius 5.10.x stdlib alignment**. Same shape as slice-5's security.cyr repair: four latent bugs that compile-broke any wire-up attempt.

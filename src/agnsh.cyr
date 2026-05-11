@@ -154,6 +154,30 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
         println("  Approval required (interactive prompt in shell mode)");
     }
 
+    # Error-recovery hints. Three "parse succeeded but translation isn't
+    # actually runnable" classes — without a hint the user sees
+    # `Command: echo / Risk: [LOW]` and reasonably believes their input
+    # ran. Surface what actually happened so they can rephrase.
+    #
+    # 1. QUESTION (tag 42) — LLM-routed; streaming not wired yet.
+    # 2. PIPELINE (tag 41) — no translate_pipeline arm; falls to
+    #    translate_unknown. Pipeline auto-exec arrives with the exec
+    #    wire-up.
+    # 3. Safety-rejected translation — any tag whose translate_X called
+    #    is_safe_path_str / is_safe_arg_str on a parser-extracted field
+    #    and rejected (path traversal, shell metachars, leading dash,
+    #    null PID, etc.). Detected by the "Unknown intent" description
+    #    that translate_unknown stamps. Surfacing this is the actual
+    #    v1.2.1 "error recovery loop" sub-bullet: tell the user the
+    #    translator refused so they can rephrase.
+    if (tag == IntentTag.QUESTION) {
+        println("  Hint: question intent -- LLM streaming arrives in a later slice");
+    } elif (tag == IntentTag.PIPELINE) {
+        println("  Hint: pipeline intent -- auto-exec arrives with the exec wire-up");
+    } elif (streq(load64(translation + 16), "Unknown intent") == 1) {
+        println("  Hint: translator safety check rejected this input -- try rephrasing");
+    }
+
     audit_one_shot(input_cstr, cmd, perm, mode_label_cstr);
     return 0;
 }
