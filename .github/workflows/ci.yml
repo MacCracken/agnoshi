@@ -11,6 +11,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # `cyrius deps` populates ./lib/ from the version-pinned snapshot.
+  # The toolchain then notes that ./lib/ shadows its own version cache —
+  # informational, not an error. Silence to keep CI logs clean.
+  CYRIUS_NO_WARN_SHADOW_LIB: "1"
+
 jobs:
   build-and-test:
     name: Build & Test
@@ -54,10 +60,13 @@ jobs:
           fi
 
       - name: Syntax check
-        run: |
-          for f in src/*.cyr; do
-            cyrius check "$f"
-          done
+        # agnoshi modules are stitched together through `src/agnsh.cyr`
+        # (they don't declare their own includes the way agnosys's do),
+        # so per-file `cyrius check` trips on cross-module references
+        # (`PermissionLevel`, etc.) that are only resolvable from the
+        # entry. Walk from the entry — same posture as vet / capacity /
+        # build.
+        run: cyrius check src/agnsh.cyr
 
       - name: Capacity gate
         run: cyrius capacity --check src/agnsh.cyr
@@ -152,6 +161,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Scan for dangerous patterns
         # Matches code lines only — rejects patterns in # comments.
+        # Note: this scan is tuned for agnoshi (userland shell), not
+        # for a kernel-interface library. agnoshi legitimately references
+        # /bin/sudo (sudo invocation) and uses "/bin/" / "/sbin/" prefix
+        # strings to *block* writes — so the agnosys-style "any /bin/
+        # mention is a write" heuristic would all be false positives.
+        # We scan for narrower, agnoshi-specific footguns instead.
         run: |
           FAIL=0
           scan() {
@@ -168,21 +183,33 @@ jobs:
               FAIL=1
             fi
           }
-          # Raw execve(59) outside the security module's seccomp surface
+          # Raw execve(59) — every exec must go through the approval +
+          # sanitize pipeline. Direct syscalls bypass it.
           scan "raw execve"     'syscall( *59'
-          # Direct shadow file access (passwd reads are fine)
+          # Direct shadow file access — passwd reads are fine, shadow is not.
           scan "shadow access"  '"/etc/shadow"'
-          # Writes to system paths a userland shell shouldn't touch
-          scan "writes to /bin"  '"/bin/'
-          scan "writes to /sbin" '"/sbin/'
+          # Sudo invocation outside src/security.cyr — every sudo path
+          # must route through the re-verification + privilege-escalation
+          # gate in security.cyr.
+          stray_sudo=$(grep -rn '"/bin/sudo"\|"/usr/bin/sudo"' src/ 2>/dev/null \
+            | grep -v '^src/security.cyr:' \
+            | awk -F: '{ line=$3; for(i=4;i<=NF;i++) line=line":"$i;
+                sub(/^[[:space:]]+/,"",line);
+                if (substr(line,1,1) != "#") print $1":"$2":"line }')
+          if [ -n "$stray_sudo" ]; then
+            echo "FAIL: stray sudo path (must live in src/security.cyr)"
+            echo "$stray_sudo"
+            FAIL=1
+          fi
           # Unbounded fn-scope buffers — cyrius emits `var buf[N]` inside
-          # functions as STATIC DATA, not stack. Per the agnosys F-5
-          # finding, surface >= 4 KB; >= 64 KB fails the build.
+          # functions as STATIC DATA, not stack; consecutive calls share
+          # the backing memory. 4 KB PATH_MAX buffers are the expected
+          # pattern, so warn only at >= 8 KB; >= 64 KB fails the build.
           awk -F: '
             /var [A-Za-z_][A-Za-z0-9_]*\[[0-9]+\]/ {
               match($0, /\[[0-9]+\]/); s=substr($0,RSTART+1,RLENGTH-2); n=s+0;
               if (n >= 65536) print FILENAME":"NR": FAIL large static buffer ("n" bytes): "$0
-              else if (n >= 4096) print FILENAME":"NR": warn fn-scope buffer ("n" bytes): "$0
+              else if (n >= 8192) print FILENAME":"NR": warn fn-scope buffer ("n" bytes): "$0
             }' src/*.cyr | tee /tmp/bigbuf.txt
           if grep -q "^.*: FAIL " /tmp/bigbuf.txt; then FAIL=1; fi
           # Sanitize module must still exist (security-audit gate).

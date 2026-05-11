@@ -14,7 +14,12 @@ include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 include "lib/args.cyr"
 
-fn getenv(name) { return 0; }
+# cc3-era stubs: `getenv` was removed (lib/io.cyr now ships the real
+# impl — keeping the stub triggered a duplicate-fn linker warning on
+# 5.10.x). `ui_show_*` and `chrono_now_rfc3339` remain as minimal
+# stand-ins because src/ui.cyr and lib/chrono.cyr aren't pulled into
+# this entry's include graph. The fuller src/main.cyr entry that
+# pulls them in is queued for the 1.2.0 deeper-intent-parsing pass.
 fn ui_show_error(m) { return 0; }
 fn ui_show_warning(m) { return 0; }
 fn chrono_now_rfc3339() { return str_from("2026-04-13T00:00:00Z"); }
@@ -27,7 +32,7 @@ include "src/commands.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 
-var VERSION_STR = "agnoshi 1.0.0";
+var VERSION_STR = "agnoshi 1.1.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -79,7 +84,7 @@ fn print_intent_result(input_cstr) {
 }
 
 fn interactive_loop() {
-    println("agnoshi 1.0.0 -- AI-native shell");
+    println("agnoshi 1.1.0 -- AI-native shell");
     println("Type a natural language command or 'exit' to quit.");
     println("");
 
