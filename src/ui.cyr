@@ -2,14 +2,14 @@ fn read_input_line(prompt) {
     str_print(prompt);
     var buf[4096];
     var n = syscall(SYS_READ, 0, &buf, 4095);
-    if (n <= 0) { return 0; } 
+    if (n <= 0) { return 0; }
     if (n > 0) {
         if (load8(&buf + n - 1) == 10) {
             n = n - 1;
         }
     }
     if (n == 0) { return str_from(""); }
-    store8(&buf + n, 0); 
+    store8(&buf + n, 0);
     return str_from(&buf);
 }
 fn ui_show_welcome() {

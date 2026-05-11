@@ -4,26 +4,25 @@
 
 **Agnoshi** (Sanskrit: not-knowing — discovering through inquiry) — AI-native natural language shell for AGNOS
 
-- **Type**: Binary + library crate (binary: `agnsh`)
+- **Type**: Single static binary (`agnsh`)
+- **Language**: Cyrius (pin lives in `cyrius.cyml`)
 - **License**: GPL-3.0-only
-- **MSRV**: 1.89
-- **Version**: SemVer 0.90.0
+- **Version**: SemVer, single source of truth in `VERSION` (manifest pulls via `${file:VERSION}`)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Recipes**: [zugot](https://github.com/MacCracken/zugot) — takumi build recipes
-- **Tests**: 1,109 (all unit via `#[cfg(test)]`)
-- **Benchmarks**: 30 criterion benchmarks across 3 suites
 
 ## Consumers
 
-None yet — standalone shell binary extracted from `agnosticos/userland/ai-shell/`
+None yet — standalone shell binary extracted from `agnosticos/userland/ai-shell/`.
 
 ## Dependency Stack
 
 ```
-agnoshi (AI natural language shell)
-  ├── agnos-common (common types/utilities for AGNOS)
+agnoshi (AI natural language shell, Cyrius)
+  ├── stdlib snapshot (resolved by `cyrius deps` into ./lib/, gitignored)
+  ├── agnos-common (common types/utilities for AGNOS — when wired)
   ├── agnosys (kernel interface — syscalls, Landlock, seccomp, TPM)
   └── bote (MCP core — JSON-RPC 2.0, tool registry, audit)
 ```
@@ -32,31 +31,37 @@ agnoshi (AI natural language shell)
 
 ### P(-1): Scaffold Hardening (before any new features)
 
-0. Read roadmap, CHANGELOG, and open issues — know what was intended before auditing what was built
-1. Test + benchmark sweep of existing code
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
-3. Get baseline benchmarks (`./scripts/bench-history.sh`)
-4. Internal deep review — gaps, optimizations, security, logging/errors, docs
-5. External research — domain completeness, missing capabilities, best practices, world-class accuracy
-6. Cleanliness check — must be clean after review
-7. Additional tests/benchmarks from findings
-8. Post-review benchmarks — prove the wins
-9. Documentation audit — ADRs, source citations, guides, examples (see Documentation Standards in first-party-standards.md)
-10. Repeat if heavy
+0. Read roadmap, CHANGELOG, and `docs/doc-health.md` — know what was intended and what's stale before auditing what was built
+1. `cyrius deps` to repopulate `./lib/` from the pinned stdlib snapshot
+2. Test + benchmark sweep of existing code
+3. Cleanliness gates (match CI):
+   - `cyrius check src/*.cyr` (syntax)
+   - `cyrius fmt <file>` diff against tree (fmt-drift gate)
+   - `cyrius lint <file>` — warn-as-error
+   - `cyrius vet src/agnsh.cyr` (include-graph audit)
+   - `cyrius capacity --check src/agnsh.cyr` (fn-table / code-size headroom)
+4. Get baseline benchmarks (`./scripts/bench-history.sh`)
+5. Internal deep review — gaps, optimizations, security, logging/errors, docs
+6. External research — domain completeness, missing capabilities, best practices
+7. Cleanliness gates — must be clean after review
+8. Additional tests/benchmarks from findings
+9. Post-review benchmarks — prove the wins
+10. Documentation audit — `docs/doc-health.md` refresh, ADRs, source citations, guides, examples
+11. Repeat if heavy
 
-### Work Loop / Working Loop (continuous)
+### Work Loop (continuous)
 
 1. Work phase — new features, roadmap items, bug fixes
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+2. Cleanliness gates (the same 5 from P(-1) step 3)
 3. Test + benchmark additions for new code
 4. Run benchmarks (`./scripts/bench-history.sh`)
-5. Internal review — performance, memory, security, throughput, correctness
-6. Cleanliness check — must be clean after audit
+5. Internal review — performance, memory, security, correctness
+6. Cleanliness gates — must be clean after audit
 7. Deeper tests/benchmarks from audit observations
 8. Run benchmarks again — prove the wins
 9. If audit heavy → return to step 5
-10. Documentation — update CHANGELOG, roadmap, docs, ADRs for design decisions, source citations for algorithms/formulas, update docs/sources.md, guides and examples for new API surface, verify recipe version in zugot
-11. Version check — VERSION, Cargo.toml, recipe (in zugot) all in sync
+10. Documentation — update CHANGELOG, roadmap, doc-health, ADRs for design decisions, guides for new API surface, verify recipe version in zugot
+11. Version sync — `VERSION` is the only file that gets edited; `cyrius.cyml` pulls it via `${file:VERSION}`; the zugot recipe is bumped separately
 12. Return to step 1
 
 ### Task Sizing
@@ -75,15 +80,12 @@ agnoshi (AI natural language shell)
 ### Key Principles
 
 - **Never skip benchmarks.** Numbers don't lie. The CSV history is the proof.
-- **Tests + benchmarks are the way.** Minimum 80%+ coverage target.
+- **Tests + benchmarks are the way.** 80%+ coverage target.
 - **Own the stack.** Use AGNOS ecosystem types, not raw re-exports.
 - **No magic.** Every operation is measurable, auditable, traceable.
-- **`#[non_exhaustive]`** on all public enums.
-- **`#[must_use]`** on all pure functions.
-- **`#[inline]`** on hot-path functions (intent parsing, pattern matching, completion).
-- **`write!` over `format!`** — avoid temporary allocations.
-- **Feature-gate optional deps** — consumers pull only what they need.
-- **tracing on all operations** — structured logging for audit trail.
+- **Single source of truth for version** — `VERSION` file; `cyrius.cyml` pulls via `${file:VERSION}`.
+- **Pin the toolchain in `cyrius.cyml`** — CI reads `cyrius = "..."` from the manifest.
+- **`./lib/` is gitignored** — `cyrius deps` repopulates from the pinned snapshot; never check stdlib stubs into the tree.
 - **Security first** — all commands go through approval workflows and sandbox execution.
 
 ## DO NOT
@@ -91,27 +93,31 @@ agnoshi (AI natural language shell)
 - **Do not commit or push** — the user handles all git operations (commit, push, tag)
 - **NEVER use `gh` CLI** — use `curl` to GitHub API only
 - Do not add unnecessary dependencies — keep it lean
-- Do not `unwrap()` or `panic!()` in library code
 - Do not skip benchmarks before claiming performance improvements
 - Do not bypass the approval/security workflow — every command must be auditable
+- Do not check `./lib/` into the tree — `cyrius deps` repopulates it from the pinned snapshot
+- Do not edit `version = "..."` in `cyrius.cyml` — bump `VERSION` instead
 
 ## Documentation Structure
 
 ```
 Root files (required):
-  README.md, CHANGELOG.md, CLAUDE.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE
+  README.md, CHANGELOG.md, CLAUDE.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE, VERSION
 
 docs/ (required):
-  architecture/overview.md — module map, data flow, consumers
-  development/roadmap.md — completed, backlog, future, v1.0 criteria
+  development/roadmap.md  — shipped, in-flight, future
+  doc-health.md           — living doc-currency ledger (fresh / stale / archived / open-question)
+  audit/                  — dated P(-1) hardening reports
+  agnsh.1                 — man page
 
 docs/ (when earned):
-  adr/ — architectural decision records
-  guides/ — usage guides, integration patterns
-  examples/ — worked examples
-  standards/ — external spec conformance
-  compliance/ — regulatory, audit, security compliance
-  sources.md — source citations for algorithms/formulas (required for science/math crates)
+  architecture/overview.md — module map, data flow, consumers
+  adr/                     — architectural decision records
+  guides/                  — usage guides, integration patterns
+  examples/                — worked examples
+  standards/               — external spec conformance
+  compliance/              — regulatory, audit, security compliance
+  sources.md               — source citations for algorithms/formulas
 ```
 
 ## CHANGELOG Format
@@ -146,14 +152,3 @@ Rules:
 - Breaking changes get a **Breaking** section with migration guide
 - Group by module when multiple changes in one release
 - Link to ADR if a change was driven by an architectural decision
-
-## Known Issues
-
-- **Build error: `undefined variable 'ModeManager'`** — incomplete port, NOT a compiler limit.
-  The code references `ModeManager` which hasn't been defined yet. Fix the port, don't blame cc3.
-- **benchmarks-rust-v-cyrius.md claims "exceeds cc3's function/token limits"** — FALSE.
-  agnoshi has 198 functions (limit: 2048) and ~3050 lines. Nowhere near any limit.
-  The bench fails because the code doesn't compile, not because of capacity.
-- **ADR-002 style decisions based on missing features** — always check the Cyrius stdlib
-  before writing ADRs about missing functionality. `lib/async.cyr`, `lib/thread.cyr`,
-  `lib/http.cyr`, `lib/net.cyr` all exist.

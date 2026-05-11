@@ -2,7 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ['[0-9]*']
+    # Accept both `v1.2.3` and `1.2.3` tag styles. The version-verify
+    # step below enforces semver shape + match against VERSION file.
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: write
@@ -12,8 +16,8 @@ jobs:
     name: CI Gate
     uses: ./.github/workflows/ci.yml
 
-  release:
-    name: Build & Release
+  build:
+    name: Build Release
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
@@ -22,12 +26,18 @@ jobs:
       - name: Verify version
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG_VERSION="${GITHUB_REF_NAME}"
-          test "$FILE_VERSION" = "$TAG_VERSION" || { echo "VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"; exit 1; }
+          TAG="${GITHUB_REF_NAME#v}"   # strip optional leading 'v' so v1.1.0 == 1.1.0
+          echo "$TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "tag ($TAG) is not semver x.y.z"; exit 1; }
+          [ "$FILE_VERSION" = "$TAG" ] || {
+            echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
+          grep -q '^version = "\${file:VERSION}"' cyrius.cyml || {
+            echo "cyrius.cyml version must be \${file:VERSION}"; exit 1; }
+          echo "Version verified: $TAG (cyrius.cyml pulls from VERSION via \${file:VERSION})"
 
       - name: Install Cyrius toolchain
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(cat .cyrius-toolchain | tr -d '[:space:]')}"
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
           echo "Installing Cyrius $CYRIUS_VERSION"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
@@ -39,15 +49,95 @@ jobs:
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
-      - name: Build
-        run: |
-          cyrius deps
-          mkdir -p build
-          cyrius build src/main.cyr build/agnoshi
-          echo "agnoshi: $(wc -c < build/agnoshi) bytes"
+      - name: Verify toolchain
+        run: cc5 --version
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - name: Resolve deps
+        run: cyrius deps
+
+      - name: Verify dep hashes
+        run: |
+          if [ -f cyrius.lock ]; then
+            cyrius deps --verify
+          else
+            echo "::warning::cyrius.lock not committed — skipping hash verification"
+          fi
+
+      - name: Build (DCE)
+        run: |
+          mkdir -p build
+          CYRIUS_DCE=1 cyrius build src/agnsh.cyr build/agnsh
+          echo "agnsh: $(wc -c < build/agnsh) bytes"
+
+      - name: Cross-build aarch64 (best-effort)
+        run: |
+          if [ -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
+            CYRIUS_DCE=1 cyrius build --aarch64 src/agnsh.cyr build/agnsh-aarch64
+            echo "agnsh-aarch64: $(wc -c < build/agnsh-aarch64) bytes"
+          else
+            echo "::warning::cc5_aarch64 not in toolchain — aarch64 binary skipped in release"
+          fi
+
+      - name: Test
+        run: |
+          for t in tests/test_*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            echo "=== $name ==="
+            CYRIUS_DCE=1 cyrius build "$t" "/tmp/ci_$name"
+            "/tmp/ci_$name"
+            rm -f "/tmp/ci_$name"
+          done
+
+      - name: Smoke test
+        run: sh scripts/smoke-test.sh build/agnsh
+
+      - name: Clean toolchain artifacts
+        run: rm -f cyrius-*.tar.gz
+
+      - name: Archive
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="agnoshi-${TAG}/" -o "agnoshi-${TAG}-src.tar.gz" HEAD
+          # Ship prebuilt binaries alongside source so consumers can
+          # grab a statically-linked ELF per arch.
+          if [ -f build/agnsh ]; then
+            cp build/agnsh "agnsh-${TAG}-x86_64-linux"
+          fi
+          if [ -f build/agnsh-aarch64 ]; then
+            cp build/agnsh-aarch64 "agnsh-${TAG}-aarch64-linux"
+          fi
+          sha256sum agnoshi-*.tar.gz agnsh-*-linux 2>/dev/null > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: build/agnoshi
+          name: release-artifacts
+          path: |
+            agnoshi-*.tar.gz
+            agnsh-*-linux
+            cyrius.lock
+            SHA256SUMS
+
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+      - name: Changelog excerpt
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          awk "/^## \\[${TAG}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/body.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "agnoshi ${{ github.ref_name }}"
+          body_path: /tmp/body.md
+          prerelease: ${{ startsWith(github.ref_name, '0.') || startsWith(github.ref_name, 'v0.') }}
+          files: |
+            agnoshi-*.tar.gz
+            agnsh-*-linux
+            cyrius.lock
+            SHA256SUMS

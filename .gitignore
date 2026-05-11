@@ -3,6 +3,12 @@
 *.o
 *.elf
 
+# Vendored stdlib — repopulated by `cyrius deps` from the
+# version-pinned snapshot in cyrius.cyml [deps] stdlib. Keeping
+# this out of the repo prevents stale stubs from a prior cyrius
+# version sitting in tree (matches agnosys/yukti/patra convention).
+/lib/
+
 # Rust legacy (rust-old/)
 rust-old/target/
 rust-old/rust_out

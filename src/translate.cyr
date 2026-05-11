@@ -7,14 +7,26 @@ fn translate_list_files(intent) {
     if (list_options_time(opts) == 1) { vec_push(args, "-t"); }
     if (list_options_recursive(opts) == 1) { vec_push(args, "-R"); }
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("ls", args, "List files and directories", PermissionLevel.READ_ONLY, "ls shows directory contents");
+    return Translation_new(
+    "ls",
+    args,
+    "List files and directories",
+    PermissionLevel.READ_ONLY,
+    "ls shows directory contents"
+    );
 }
 fn translate_show_file(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
     if (is_safe_path(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
-    return Translation_new("cat", args, "Display file contents", PermissionLevel.READ_ONLY, "cat outputs file contents to stdout");
+    return Translation_new(
+    "cat",
+    args,
+    "Display file contents",
+    PermissionLevel.READ_ONLY,
+    "cat outputs file contents to stdout"
+    );
 }
 fn translate_find_files(intent) {
     var args = vec_new();
@@ -31,7 +43,13 @@ fn translate_find_files(intent) {
     } else {
         vec_push(args, "*");
     }
-    return Translation_new("find", args, "Search for files by name", PermissionLevel.READ_ONLY, "find searches directory trees for matching files");
+    return Translation_new(
+    "find",
+    args,
+    "Search for files by name",
+    PermissionLevel.READ_ONLY,
+    "find searches directory trees for matching files"
+    );
 }
 fn translate_search_content(intent) {
     var args = vec_new();
@@ -44,13 +62,25 @@ fn translate_search_content(intent) {
         if (is_safe_path(load64(intent + 16)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 16));
     }
-    return Translation_new("grep", args, "Search file contents", PermissionLevel.READ_ONLY, "grep searches for text patterns in files");
+    return Translation_new(
+    "grep",
+    args,
+    "Search file contents",
+    PermissionLevel.READ_ONLY,
+    "grep searches for text patterns in files"
+    );
 }
 fn translate_change_dir(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
-    return Translation_new("cd", args, "Change directory", PermissionLevel.SAFE, "cd changes the current working directory");
+    return Translation_new(
+    "cd",
+    args,
+    "Change directory",
+    PermissionLevel.SAFE,
+    "cd changes the current working directory"
+    );
 }
 fn translate_create_dir(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
@@ -58,7 +88,13 @@ fn translate_create_dir(intent) {
     var args = vec_new();
     vec_push(args, "-p");
     vec_push(args, load64(intent + 8));
-    return Translation_new("mkdir", args, "Create directory", PermissionLevel.USER_WRITE, "mkdir creates new directories");
+    return Translation_new(
+    "mkdir",
+    args,
+    "Create directory",
+    PermissionLevel.USER_WRITE,
+    "mkdir creates new directories"
+    );
 }
 fn translate_copy(intent) {
     if (load64(intent + 8) == 0 || load64(intent + 16) == 0) { return translate_unknown(intent); }
@@ -67,7 +103,13 @@ fn translate_copy(intent) {
     var args = vec_new();
     vec_push(args, load64(intent + 8));
     vec_push(args, load64(intent + 16));
-    return Translation_new("cp", args, "Copy files", PermissionLevel.USER_WRITE, "cp copies files and directories");
+    return Translation_new(
+    "cp",
+    args,
+    "Copy files",
+    PermissionLevel.USER_WRITE,
+    "cp copies files and directories"
+    );
 }
 fn translate_move(intent) {
     if (load64(intent + 8) == 0 || load64(intent + 16) == 0) { return translate_unknown(intent); }
@@ -76,7 +118,13 @@ fn translate_move(intent) {
     var args = vec_new();
     vec_push(args, load64(intent + 8));
     vec_push(args, load64(intent + 16));
-    return Translation_new("mv", args, "Move/rename files", PermissionLevel.USER_WRITE, "mv moves or renames files and directories");
+    return Translation_new(
+    "mv",
+    args,
+    "Move/rename files",
+    PermissionLevel.USER_WRITE,
+    "mv moves or renames files and directories"
+    );
 }
 fn translate_remove(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
@@ -84,35 +132,71 @@ fn translate_remove(intent) {
     var args = vec_new();
     if (load64(intent + 40) == 1) { vec_push(args, "-r"); }
     vec_push(args, load64(intent + 8));
-    return Translation_new("rm", args, "Remove files", PermissionLevel.BLOCKED, "rm permanently deletes files -- use with caution");
+    return Translation_new(
+    "rm",
+    args,
+    "Remove files",
+    PermissionLevel.BLOCKED,
+    "rm permanently deletes files -- use with caution"
+    );
 }
 fn translate_show_processes(intent) {
     var args = vec_new();
     vec_push(args, "aux");
-    return Translation_new("ps", args, "Show running processes", PermissionLevel.READ_ONLY, "ps shows process information");
+    return Translation_new(
+    "ps",
+    args,
+    "Show running processes",
+    PermissionLevel.READ_ONLY,
+    "ps shows process information"
+    );
 }
 fn translate_kill_process(intent) {
     if (is_valid_pid(load64(intent + 40)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, str_from_int(load64(intent + 40)));
-    return Translation_new("kill", args, "Terminate a process", PermissionLevel.ADMIN, "kill sends a signal to terminate a process");
+    return Translation_new(
+    "kill",
+    args,
+    "Terminate a process",
+    PermissionLevel.ADMIN,
+    "kill sends a signal to terminate a process"
+    );
 }
 fn translate_system_info(intent) {
     var args = vec_new();
     vec_push(args, "-a");
-    return Translation_new("uname", args, "Show system information", PermissionLevel.READ_ONLY, "uname displays system identification");
+    return Translation_new(
+    "uname",
+    args,
+    "Show system information",
+    PermissionLevel.READ_ONLY,
+    "uname displays system identification"
+    );
 }
 fn translate_network_info(intent) {
     var args = vec_new();
     vec_push(args, "addr");
     vec_push(args, "show");
-    return Translation_new("ip", args, "Show network configuration", PermissionLevel.READ_ONLY, "ip addr show displays network interfaces and addresses");
+    return Translation_new(
+    "ip",
+    args,
+    "Show network configuration",
+    PermissionLevel.READ_ONLY,
+    "ip addr show displays network interfaces and addresses"
+    );
 }
 fn translate_disk_usage(intent) {
     var args = vec_new();
     vec_push(args, "-h");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("df", args, "Show disk usage", PermissionLevel.READ_ONLY, "df reports filesystem disk space usage");
+    return Translation_new(
+    "df",
+    args,
+    "Show disk usage",
+    PermissionLevel.READ_ONLY,
+    "df reports filesystem disk space usage"
+    );
 }
 fn translate_install_package(intent) {
     var args = vec_new();
@@ -123,7 +207,13 @@ fn translate_install_package(intent) {
     for (var i = 0; i < npkgs; i = i + 1) {
         vec_push(args, vec_get(pkgs, i));
     }
-    return Translation_new("apt", args, "Install packages", PermissionLevel.ADMIN, "apt install downloads and installs system packages");
+    return Translation_new(
+    "apt",
+    args,
+    "Install packages",
+    PermissionLevel.ADMIN,
+    "apt install downloads and installs system packages"
+    );
 }
 fn translate_shell_command(intent) {
     var args = vec_new();
@@ -147,124 +237,256 @@ fn translate_git_commit(intent) {
         vec_push(args, "-m");
         vec_push(args, load64(intent + 8));
     }
-    return Translation_new("git", args, "Commit changes", PermissionLevel.USER_WRITE, "git commit records changes to the repository");
+    return Translation_new(
+    "git",
+    args,
+    "Commit changes",
+    PermissionLevel.USER_WRITE,
+    "git commit records changes to the repository"
+    );
 }
 fn translate_git_diff(intent) {
     var args = vec_new();
     vec_push(args, "diff");
     if (load64(intent + 40) == 1) { vec_push(args, "--staged"); }
-    return Translation_new("git", args, "Show differences", PermissionLevel.READ_ONLY, "git diff shows changes between commits, trees, or working tree");
+    return Translation_new(
+    "git",
+    args,
+    "Show differences",
+    PermissionLevel.READ_ONLY,
+    "git diff shows changes between commits, trees, or working tree"
+    );
 }
 fn translate_git_branch(intent) {
     var args = vec_new();
     vec_push(args, "branch");
     if (load64(intent + 40) == 1) { vec_push(args, "-d"); }
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("git", args, "Manage branches", PermissionLevel.USER_WRITE, "git branch creates, lists, or deletes branches");
+    return Translation_new(
+    "git",
+    args,
+    "Manage branches",
+    PermissionLevel.USER_WRITE,
+    "git branch creates, lists, or deletes branches"
+    );
 }
 fn translate_git_status(intent) {
     var args = vec_new();
     vec_push(args, "status");
-    return Translation_new("git", args, "Show working tree status", PermissionLevel.READ_ONLY, "git status shows the state of the working tree");
+    return Translation_new(
+    "git",
+    args,
+    "Show working tree status",
+    PermissionLevel.READ_ONLY,
+    "git status shows the state of the working tree"
+    );
 }
 fn translate_git_log(intent) {
     var args = vec_new();
     vec_push(args, "log");
     vec_push(args, "--oneline");
     vec_push(args, "-20");
-    return Translation_new("git", args, "Show commit history", PermissionLevel.READ_ONLY, "git log shows commit history");
+    return Translation_new(
+    "git",
+    args,
+    "Show commit history",
+    PermissionLevel.READ_ONLY,
+    "git log shows commit history"
+    );
 }
 fn translate_git_push(intent) {
     var args = vec_new();
     vec_push(args, "push");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("git", args, "Push commits to remote", PermissionLevel.USER_WRITE, "git push uploads local commits to a remote repository");
+    return Translation_new(
+    "git",
+    args,
+    "Push commits to remote",
+    PermissionLevel.USER_WRITE,
+    "git push uploads local commits to a remote repository"
+    );
 }
 fn translate_git_pull(intent) {
     var args = vec_new();
     vec_push(args, "pull");
-    return Translation_new("git", args, "Pull from remote", PermissionLevel.USER_WRITE, "git pull fetches and merges changes from a remote repository");
+    return Translation_new(
+    "git",
+    args,
+    "Pull from remote",
+    PermissionLevel.USER_WRITE,
+    "git pull fetches and merges changes from a remote repository"
+    );
 }
 fn translate_git_checkout(intent) {
     var args = vec_new();
     vec_push(args, "checkout");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("git", args, "Switch branches", PermissionLevel.USER_WRITE, "git checkout switches branches or restores files");
+    return Translation_new(
+    "git",
+    args,
+    "Switch branches",
+    PermissionLevel.USER_WRITE,
+    "git checkout switches branches or restores files"
+    );
 }
 fn translate_git_merge(intent) {
     var args = vec_new();
     vec_push(args, "merge");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("git", args, "Merge branches", PermissionLevel.USER_WRITE, "git merge joins two or more development histories together");
+    return Translation_new(
+    "git",
+    args,
+    "Merge branches",
+    PermissionLevel.USER_WRITE,
+    "git merge joins two or more development histories together"
+    );
 }
 fn translate_git_stash(intent) {
     var args = vec_new();
     vec_push(args, "stash");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("git", args, "Stash changes", PermissionLevel.USER_WRITE, "git stash temporarily stores modified files");
+    return Translation_new(
+    "git",
+    args,
+    "Stash changes",
+    PermissionLevel.USER_WRITE,
+    "git stash temporarily stores modified files"
+    );
 }
 fn translate_firewall_allow(intent) {
     var args = vec_new();
     vec_push(args, "allow");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("ufw", args, "Allow firewall port", PermissionLevel.ADMIN, "ufw allow opens a port in the firewall");
+    return Translation_new(
+    "ufw",
+    args,
+    "Allow firewall port",
+    PermissionLevel.ADMIN,
+    "ufw allow opens a port in the firewall"
+    );
 }
 fn translate_firewall_deny(intent) {
     var args = vec_new();
     vec_push(args, "deny");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("ufw", args, "Deny firewall port", PermissionLevel.ADMIN, "ufw deny blocks a port in the firewall");
+    return Translation_new(
+    "ufw",
+    args,
+    "Deny firewall port",
+    PermissionLevel.ADMIN,
+    "ufw deny blocks a port in the firewall"
+    );
 }
 fn translate_firewall_list(intent) {
     var args = vec_new();
     vec_push(args, "status");
     vec_push(args, "numbered");
-    return Translation_new("ufw", args, "List firewall rules", PermissionLevel.READ_ONLY, "ufw status shows current firewall rules");
+    return Translation_new(
+    "ufw",
+    args,
+    "List firewall rules",
+    PermissionLevel.READ_ONLY,
+    "ufw status shows current firewall rules"
+    );
 }
 fn translate_firewall_status(intent) {
     var args = vec_new();
     vec_push(args, "status");
-    return Translation_new("ufw", args, "Show firewall status", PermissionLevel.READ_ONLY, "ufw status shows whether the firewall is active");
+    return Translation_new(
+    "ufw",
+    args,
+    "Show firewall status",
+    PermissionLevel.READ_ONLY,
+    "ufw status shows whether the firewall is active"
+    );
 }
 fn translate_firewall_enable(intent) {
     var args = vec_new();
     vec_push(args, "enable");
-    return Translation_new("ufw", args, "Enable firewall", PermissionLevel.ADMIN, "ufw enable activates the firewall");
+    return Translation_new(
+    "ufw",
+    args,
+    "Enable firewall",
+    PermissionLevel.ADMIN,
+    "ufw enable activates the firewall"
+    );
 }
 fn translate_firewall_disable(intent) {
     var args = vec_new();
     vec_push(args, "disable");
-    return Translation_new("ufw", args, "Disable firewall", PermissionLevel.ADMIN, "ufw disable deactivates the firewall");
+    return Translation_new(
+    "ufw",
+    args,
+    "Disable firewall",
+    PermissionLevel.ADMIN,
+    "ufw disable deactivates the firewall"
+    );
 }
 fn translate_firewall_delete(intent) {
     var args = vec_new();
     vec_push(args, "delete");
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("ufw", args, "Delete firewall rule", PermissionLevel.ADMIN, "ufw delete removes a firewall rule");
+    return Translation_new(
+    "ufw",
+    args,
+    "Delete firewall rule",
+    PermissionLevel.ADMIN,
+    "ufw delete removes a firewall rule"
+    );
 }
 fn translate_user_add(intent) {
     var args = vec_new();
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("useradd", args, "Add a user", PermissionLevel.ADMIN, "useradd creates a new user account");
+    return Translation_new(
+    "useradd",
+    args,
+    "Add a user",
+    PermissionLevel.ADMIN,
+    "useradd creates a new user account"
+    );
 }
 fn translate_user_delete(intent) {
     var args = vec_new();
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("userdel", args, "Delete a user", PermissionLevel.ADMIN, "userdel removes a user account");
+    return Translation_new(
+    "userdel",
+    args,
+    "Delete a user",
+    PermissionLevel.ADMIN,
+    "userdel removes a user account"
+    );
 }
 fn translate_passwd(intent) {
     var args = vec_new();
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("passwd", args, "Change password", PermissionLevel.ADMIN, "passwd changes a user password");
+    return Translation_new(
+    "passwd",
+    args,
+    "Change password",
+    PermissionLevel.ADMIN,
+    "passwd changes a user password"
+    );
 }
 fn translate_group_add(intent) {
     var args = vec_new();
     if (load64(intent + 8) != 0) { vec_push(args, load64(intent + 8)); }
-    return Translation_new("groupadd", args, "Add a group", PermissionLevel.ADMIN, "groupadd creates a new group");
+    return Translation_new(
+    "groupadd",
+    args,
+    "Add a group",
+    PermissionLevel.ADMIN,
+    "groupadd creates a new group"
+    );
 }
 fn translate_group_list(intent) {
     var args = vec_new();
-    return Translation_new("groups", args, "List groups", PermissionLevel.READ_ONLY, "groups shows group memberships");
+    return Translation_new(
+    "groups",
+    args,
+    "List groups",
+    PermissionLevel.READ_ONLY,
+    "groups shows group memberships"
+    );
 }
 fn translate_audit_view(intent) {
     var args = vec_new();
@@ -273,8 +495,8 @@ fn translate_audit_view(intent) {
     var mcp_body = str_cat("{\"agent\":\"", agent_str);
     mcp_body = str_cat(mcp_body, "\"}");
     return Translation_with_mcp("echo", args, "View audit log", PermissionLevel.ADMIN,
-        "Query the audit trail for shell actions",
-        "agnos_audit_query", mcp_body);
+    "Query the audit trail for shell actions",
+    "agnos_audit_query", mcp_body);
 }
 fn translate_agent_info(intent) {
     var args = vec_new();
@@ -283,8 +505,8 @@ fn translate_agent_info(intent) {
     var mcp_body = str_cat("{\"agent_id\":\"", agent_str);
     mcp_body = str_cat(mcp_body, "\"}");
     return Translation_with_mcp("echo", args, "View agent info", PermissionLevel.READ_ONLY,
-        "Query agent status and information",
-        "agnos_agent_info", mcp_body);
+    "Query agent status and information",
+    "agnos_agent_info", mcp_body);
 }
 fn translate_service_control(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
@@ -292,13 +514,25 @@ fn translate_service_control(intent) {
     vec_push(args, load64(intent + 8));
     if (load64(intent + 16) != 0) { vec_push(args, load64(intent + 16)); }
     return Translation_new("systemctl", args, "Manage system services", PermissionLevel.ADMIN,
-        "systemctl controls systemd services");
+    "systemctl controls systemd services");
 }
 fn translate_question(intent) {
     var args = vec_new();
-    return Translation_new("echo", args, "Question -- needs LLM", PermissionLevel.SAFE, "This is a question that requires AI assistance to answer");
+    return Translation_new(
+    "echo",
+    args,
+    "Question -- needs LLM",
+    PermissionLevel.SAFE,
+    "This is a question that requires AI assistance to answer"
+    );
 }
 fn translate_unknown(intent) {
     var args = vec_new();
-    return Translation_new("echo", args, "Unknown intent", PermissionLevel.SAFE, "Could not determine what you want to do");
+    return Translation_new(
+    "echo",
+    args,
+    "Unknown intent",
+    PermissionLevel.SAFE,
+    "Could not determine what you want to do"
+    );
 }

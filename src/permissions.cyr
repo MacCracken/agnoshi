@@ -7,7 +7,9 @@ enum PermissionLevel {
     BLOCKED = 5;
 }
 fn perm_requires_approval(level) {
-    return (level == PermissionLevel.SYSTEM_WRITE) || (level == PermissionLevel.ADMIN) || (level == PermissionLevel.BLOCKED);
+    return (level == PermissionLevel.SYSTEM_WRITE)
+    || (level == PermissionLevel.ADMIN)
+    || (level == PermissionLevel.BLOCKED);
 }
 fn perm_ai_allowed(level) {
     return (level != PermissionLevel.BLOCKED);
@@ -22,7 +24,7 @@ fn check_permission(user, required) {
     if (required == PermissionLevel.SYSTEM_WRITE) { return 0; }
     if (required == PermissionLevel.ADMIN) { return 0; }
     if (required == PermissionLevel.BLOCKED) { return 0; }
-    return 0; 
+    return 0;
 }
 fn is_blocked_command(cmd) {
     if (streq(cmd, "dd") == 1) { return 1; }

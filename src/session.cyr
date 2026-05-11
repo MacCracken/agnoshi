@@ -182,7 +182,7 @@ fn Session_execute_shell(self, input) {
     if (streq(cmd, "mv") == 1) {
         if (vec_len(args) >= 2) {
             CheckpointManager_checkpoint_move(load64(self + 32),
-                vec_get(args, 0), vec_get(args, 1));
+            vec_get(args, 0), vec_get(args, 1));
         }
     }
     var exit_code = execute_command(cmd, args, vec_len(args));
@@ -201,11 +201,11 @@ fn Session_execute_assisted(self, input) {
     }
     var translation = Interpreter_translate(load64(self + 8), intent);
     ui_show_proposed_action(load64(translation), load64(translation + 8),
-        vec_len(load64(translation + 8)), load64(translation + 16));
+    vec_len(load64(translation + 8)), load64(translation + 16));
     if (perm_requires_approval(load64(translation + 24)) == 1) {
         var risk = risk_from_permission(load64(translation + 24));
         var response = ApprovalManager_request(load64(self + 16),
-            load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
+        load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
         if (response != ApprovalResponse.APPROVED && response != ApprovalResponse.APPROVED_ONCE) {
             ui_show_info("Command denied.");
             return 0;
@@ -234,7 +234,7 @@ fn Session_execute_strict(self, input) {
     var translation = Interpreter_translate(load64(self + 8), intent);
     var risk = risk_from_permission(load64(translation + 24));
     var response = ApprovalManager_request(load64(self + 16),
-        load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
+    load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
     if (response != ApprovalResponse.APPROVED && response != ApprovalResponse.APPROVED_ONCE) {
         ui_show_info("Command denied.");
         return 0;

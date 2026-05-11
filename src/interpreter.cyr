@@ -47,7 +47,10 @@ fn extract_between(input, before_kw, after_kw) {
     return str_trim(str_sub(input, start, end_idx));
 }
 fn parse_show_commands(trimmed) {
-    if (input_has_word(trimmed, "file") == 1 || input_has_word(trimmed, "dir") == 1 || input_has_word(trimmed, "folder") == 1 || input_has_word(trimmed, "content") == 1) {
+    if (input_has_word(trimmed, "file") == 1
+    || input_has_word(trimmed, "dir") == 1
+    || input_has_word(trimmed, "folder") == 1
+    || input_has_word(trimmed, "content") == 1) {
         var intent = Intent_new(IntentTag.LIST_FILES);
         var path = extract_after(trimmed, " in ");
         store64(intent + 8, path);
@@ -60,16 +63,24 @@ fn parse_show_commands(trimmed) {
         store64(intent + 40, opts);
         return intent;
     }
-    if (input_has_word(trimmed, "process") == 1 || input_has_word(trimmed, "task") == 1 || input_has_word(trimmed, "running") == 1) {
+    if (input_has_word(trimmed, "process") == 1
+    || input_has_word(trimmed, "task") == 1
+    || input_has_word(trimmed, "running") == 1) {
         return Intent_new(IntentTag.SHOW_PROCESSES);
     }
-    if (input_has_word(trimmed, "system") == 1 || input_has_word(trimmed, "computer") == 1 || input_has_word(trimmed, "machine") == 1) {
+    if (input_has_word(trimmed, "system") == 1
+    || input_has_word(trimmed, "computer") == 1
+    || input_has_word(trimmed, "machine") == 1) {
         return Intent_new(IntentTag.SYSTEM_INFO);
     }
-    if (input_has_word(trimmed, "network") == 1 || input_has_word(trimmed, "ip") == 1 || input_has_word(trimmed, "net") == 1) {
+    if (input_has_word(trimmed, "network") == 1
+    || input_has_word(trimmed, "ip") == 1
+    || input_has_word(trimmed, "net") == 1) {
         return Intent_new(IntentTag.NETWORK_INFO);
     }
-    if (input_has_word(trimmed, "disk") == 1 || input_has_word(trimmed, "space") == 1 || input_has_word(trimmed, "usage") == 1) {
+    if (input_has_word(trimmed, "disk") == 1
+    || input_has_word(trimmed, "space") == 1
+    || input_has_word(trimmed, "usage") == 1) {
         var intent = Intent_new(IntentTag.DISK_USAGE);
         store64(intent + 8, extract_after(trimmed, " in "));
         return intent;
@@ -88,7 +99,9 @@ fn parse_show_commands(trimmed) {
     return 0;
 }
 fn parse_file_ops(trimmed) {
-    if (input_has_word(trimmed, "read") == 1 || input_has_word(trimmed, "cat") == 1 || input_has_word(trimmed, "open") == 1) {
+    if (input_has_word(trimmed, "read") == 1
+    || input_has_word(trimmed, "cat") == 1
+    || input_has_word(trimmed, "open") == 1) {
         var intent = Intent_new(IntentTag.SHOW_FILE);
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
@@ -98,8 +111,12 @@ fn parse_file_ops(trimmed) {
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
-    if (input_has_word(trimmed, "find") == 1 || input_has_word(trimmed, "locate") == 1 || input_has_word(trimmed, "search for") == 1) {
-        if (input_has_word(trimmed, "file") == 1 || input_has_word(trimmed, "named") == 1 || input_has_word(trimmed, "called") == 1) {
+    if (input_has_word(trimmed, "find") == 1
+    || input_has_word(trimmed, "locate") == 1
+    || input_has_word(trimmed, "search for") == 1) {
+        if (input_has_word(trimmed, "file") == 1
+        || input_has_word(trimmed, "named") == 1
+        || input_has_word(trimmed, "called") == 1) {
             var intent = Intent_new(IntentTag.FIND_FILES);
             store64(intent + 8, extract_after(trimmed, "named "));
             if (load64(intent + 8) == 0) { store64(intent + 8, extract_after(trimmed, "called ")); }
@@ -109,7 +126,9 @@ fn parse_file_ops(trimmed) {
         }
     }
     if (input_has_word(trimmed, "search") == 1 || input_has_word(trimmed, "grep") == 1) {
-        if (input_has_word(trimmed, " in ") == 1 || input_has_word(trimmed, "within") == 1 || input_has_word(trimmed, "inside") == 1) {
+        if (input_has_word(trimmed, " in ") == 1
+        || input_has_word(trimmed, "within") == 1
+        || input_has_word(trimmed, "inside") == 1) {
             var intent = Intent_new(IntentTag.SEARCH_CONTENT);
             store64(intent + 8, extract_between(trimmed, "for ", " in "));
             if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "search ", " in ")); }
@@ -118,7 +137,10 @@ fn parse_file_ops(trimmed) {
             return intent;
         }
     }
-    if (input_has_word(trimmed, "go to") == 1 || input_has_word(trimmed, "change to") == 1 || input_has_word(trimmed, "cd ") == 1 || input_has_word(trimmed, "switch to") == 1) {
+    if (input_has_word(trimmed, "go to") == 1
+    || input_has_word(trimmed, "change to") == 1
+    || input_has_word(trimmed, "cd ") == 1
+    || input_has_word(trimmed, "switch to") == 1) {
         var intent = Intent_new(IntentTag.CHANGE_DIR);
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
@@ -144,7 +166,9 @@ fn parse_file_ops(trimmed) {
         store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
-    if (input_has_word(trimmed, "remove") == 1 || input_has_word(trimmed, "delete") == 1 || input_has_word(trimmed, "rm ") == 1) {
+    if (input_has_word(trimmed, "remove") == 1
+    || input_has_word(trimmed, "delete") == 1
+    || input_has_word(trimmed, "rm ") == 1) {
         var intent = Intent_new(IntentTag.REMOVE);
         store64(intent + 8, extract_last_arg(trimmed));
         store64(intent + 40, 0);
@@ -258,12 +282,16 @@ fn parse_admin_ops(trimmed) {
             return intent;
         }
     }
-    if (input_has_word(trimmed, "useradd") == 1 || input_has_word(trimmed, "add user") == 1 || input_has_word(trimmed, "create user") == 1) {
+    if (input_has_word(trimmed, "useradd") == 1
+    || input_has_word(trimmed, "add user") == 1
+    || input_has_word(trimmed, "create user") == 1) {
         var intent = Intent_new(IntentTag.USER_ADD);
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
-    if (input_has_word(trimmed, "userdel") == 1 || input_has_word(trimmed, "delete user") == 1 || input_has_word(trimmed, "remove user") == 1) {
+    if (input_has_word(trimmed, "userdel") == 1
+    || input_has_word(trimmed, "delete user") == 1
+    || input_has_word(trimmed, "remove user") == 1) {
         var intent = Intent_new(IntentTag.USER_DELETE);
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
@@ -273,7 +301,9 @@ fn parse_admin_ops(trimmed) {
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
-    if (input_has_word(trimmed, "groupadd") == 1 || input_has_word(trimmed, "add group") == 1 || input_has_word(trimmed, "create group") == 1) {
+    if (input_has_word(trimmed, "groupadd") == 1
+    || input_has_word(trimmed, "add group") == 1
+    || input_has_word(trimmed, "create group") == 1) {
         var intent = Intent_new(IntentTag.GROUP_ADD);
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
@@ -298,7 +328,9 @@ fn Interpreter_parse(self, input) {
         store64(intent + 56, parts);
         return intent;
     }
-    if (input_has_word(trimmed, "show") == 1 || input_has_word(trimmed, "list") == 1 || input_has_word(trimmed, "display") == 1) {
+    if (input_has_word(trimmed, "show") == 1
+    || input_has_word(trimmed, "list") == 1
+    || input_has_word(trimmed, "display") == 1) {
         var r = parse_show_commands(trimmed);
         if (r != 0) { return r; }
     }
@@ -312,7 +344,11 @@ fn Interpreter_parse(self, input) {
     }
     var r5 = parse_admin_ops(trimmed);
     if (r5 != 0) { return r5; }
-    if (input_has_word(trimmed, "what") == 1 || input_has_word(trimmed, "how") == 1 || input_has_word(trimmed, "why") == 1 || input_has_word(trimmed, "when") == 1 || input_has_word(trimmed, "explain") == 1) {
+    if (input_has_word(trimmed, "what") == 1
+    || input_has_word(trimmed, "how") == 1
+    || input_has_word(trimmed, "why") == 1
+    || input_has_word(trimmed, "when") == 1
+    || input_has_word(trimmed, "explain") == 1) {
         var intent = Intent_new(IntentTag.QUESTION);
         store64(intent + 8, trimmed);
         return intent;

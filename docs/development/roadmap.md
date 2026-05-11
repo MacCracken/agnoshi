@@ -1,39 +1,48 @@
 # Development Roadmap
 
-## Completed
+## Shipped
 
-- **v0.1.0** — Initial extraction from agnosticos/userland/ai-shell (2026-04-01)
-- **v0.2.0** — Standalone hardening: P(-1) pass, CI workflows, full cleanliness gates (2026-04-02)
-- **v0.90.0** — Core shell domains, explain coverage, parser ordering fixes, API stabilization, ark integration, error recovery, revision workflow, richer LLM context, checkpoint/rollback, stiva container intents (2026-04-02)
-- **Cyrius port** — Full port from Rust (27K lines) to Cyrius (4K lines), 21 modules (2026-04-13)
-- **Security audit** — 21 findings (5 critical, 7 high, 9 medium), all fixed (2026-04-13)
-- **v1.0.0** — Release candidate: tests passing, benchmarks showing 32× parse speedup vs Rust (2026-04-13)
+- **v0.1.0** (2026-04-01) — Initial extraction from agnosticos/userland/ai-shell
+- **v0.2.0** (2026-04-02) — Standalone hardening: P(-1) pass, CI workflows, cleanliness gates
+- **v0.90.0** (2026-04-02) — Core shell domains, explain coverage, parser ordering, API stabilization, ark integration, error recovery, revision workflow, richer LLM context, checkpoint/rollback, stiva container intents
+- **Cyrius port** (2026-04-13) — Rust → Cyrius port (27K → 4K lines, 21 modules), 32× parse speedup, 146 KB static binary
+- **Security audit** (2026-04-13) — 21 findings closed (5 critical, 7 high, 9 medium)
+- **v1.0.0** (2026-04-13) — Release candidate: tests passing, benchmarks proving Cyrius wins
 
-## v1.0.0 — Shipped
+## v1.1.0 — Cyrius 5.10.34 + modernization (in flight)
 
-- [x] Git workflow intents (2026-04-05)
-- [x] User/group management intents (2026-04-05)
-- [x] Firewall intents (2026-04-05)
-- [x] Cyrius port (2026-04-13)
-- [x] Security audit — all findings fixed (2026-04-13)
-- [x] Benchmark suite running (2026-04-13)
-- [x] Unit test suite: test_core.tcyr (57 tests) + test_security.tcyr (26 tests)
-- [x] Smoke test: 20 end-to-end checks on the binary
-- [x] CI pipeline: build + smoke + bench on every push
-- [x] Install script: `sudo sh scripts/install.sh`
-- [x] Man page: `docs/agnsh.1`
-- [x] Static 146KB binary (no dynamic deps)
-- [x] Checkpoint auto-prune (keeps 100 most recent)
+Repair-focused minor. No new features.
 
-## Post-v1.0 — Quality / Polish
+- [ ] Cyrius toolchain bump: 4.5.0 → 5.10.34
+- [ ] Manifest migration: `cyrius.toml` → `cyrius.cyml`; version pulled via `${file:VERSION}`; `.cyrius-toolchain` retired
+- [ ] `lib/` gitignored; `cyrius deps` repopulates from version-pinned stdlib snapshot (matches agnosys/yukti/patra)
+- [ ] CI modernization (agnosys-parity): fmt diff-check, lint (warn-as-error), vet, capacity gate, syntax check, aarch64 best-effort cross-build, security-pattern scan
+- [ ] Release workflow: accept both `vX.Y.Z` and `X.Y.Z` tags, semver shape verification, sha256sums, prebuilt x86_64 + aarch64 binaries
+- [ ] Release entry-point fix: build `src/agnsh.cyr` → `agnsh` (was wrongly `src/main.cyr → agnoshi` in release.yml)
+- [ ] CLAUDE.md: replace Rust-era cleanliness commands (`cargo fmt/clippy/audit/deny/doc`) with Cyrius equivalents; purge stale "ModeManager undefined" Known Issues note
+- [ ] `docs/doc-health.md` debut: agnoshi-shaped doc-currency ledger (lifted from agnosys pattern)
+- [ ] Roadmap rework (this file)
 
-- [ ] Deeper intent parsing (currently classifies most as SHELL_COMMAND, works but doesn't leverage NL)
-- [ ] All core translators production-tested on real commands
-- [ ] Approval workflow battle-tested interactively
-- [ ] Interactive shell end-to-end (history, prompt, mode switching)
-- [ ] zugot recipe bump for packaging in AGNOS
+## v1.2.x — Polish bucket (slotted)
 
-## Future (post-v1.0.0, demand-gated)
+The post-v1.0 quality items are split across three minor cuts so each is small enough to land cleanly without backfilling.
+
+### v1.2.0 — Intent parsing depth + translator hardening
+- [ ] Deeper intent parsing — currently classifies most NL inputs as `SHELL_COMMAND`; expand pattern coverage so the natural-language path is actually leveraged
+- [ ] All core translators production-tested on real commands (filesystem, process, network, git, user/group, firewall, stiva)
+- [ ] Coverage report wired into CI (target: 80%+)
+
+### v1.2.1 — Approval workflow + interactive shell
+- [ ] Approval workflow battle-tested interactively (decision UI, audit-log shape, sudo re-verification timing)
+- [ ] Interactive shell end-to-end: history, prompt, mode switching, completion, error recovery loop
+- [ ] Streaming LLM responses in terminal (already drafted in v0.90 spec — finish wiring)
+
+### v1.2.2 — Packaging + zugot recipe
+- [ ] zugot recipe bump for AGNOS packaging (`agnoshi` 1.2.2)
+- [ ] Install path conventions reconciled with `ark install --group shell`
+- [ ] Man page (`docs/agnsh.1`) regenerated for the 1.2.x command surface
+
+## v1.3.x and beyond — Demand-gated
 
 ### Systems features
 - Docker compatibility layer — translate docker CLI syntax to stiva commands
@@ -45,12 +54,13 @@
 
 ### UX features
 - AI-powered tab completion — project-type-aware suggestions
-- Streaming LLM responses in terminal
 - History fuzzy search (fzf-style)
 - Rich prompt themes
 - Man page integration (`explain <cmd>` pulls from man)
 
-### Consumer app translators (from IntentTag stubs, stubbed for later)
+### Consumer app translators (from IntentTag stubs)
+Stubbed for later — wire up only when the consumer app lands a public surface for agnoshi to translate into.
+
 - Agnostic (QA orchestration)
 - Delta (git hosting)
 - Edge (fleet management)
@@ -65,6 +75,16 @@
 - T-Ron (security monitor)
 - Tarang (media analysis)
 - Jalwa (media player)
-- Stiva (containers)
+- Stiva (containers) — already partially shipped (12 intents in v0.90)
 - Aequi (finance)
 - Photis (tasks/habits)
+
+## v2.0.0 — Future major
+
+No scoped work yet. Candidates that would justify a major cut:
+
+- Breaking change to the public API surface (intent enum, translator trait shape, session contract)
+- Audit-log format break (would require migration tooling)
+- Switch to a different LLM transport (away from hoosh)
+
+Re-evaluate when the v1.2.x bucket is fully shipped.

@@ -31,7 +31,7 @@ fn split_command_line(input, first_word_out, args_out) {
     var wstart = pos;
     while (pos < len) {
         var ch = str_byte_at(input, pos);
-        if (ch == 32 || ch == 9) { break; } 
+        if (ch == 32 || ch == 9) { break; }
         pos = pos + 1;
     }
     var cmd = str_sub(input, wstart, pos);
@@ -45,19 +45,19 @@ fn split_command_line(input, first_word_out, args_out) {
         }
         if (pos >= len) { break; }
         var ch = str_byte_at(input, pos);
-        if (ch == 34 || ch == 39) { 
+        if (ch == 34 || ch == 39) {
             var quote = ch;
             pos = pos + 1;
             var qbuilder = str_builder_new();
             while (pos < len) {
                 var qch = str_byte_at(input, pos);
-                if (qch == 92 && pos + 1 < len) { 
+                if (qch == 92 && pos + 1 < len) {
                     pos = pos + 1;
                     var ech = str_byte_at(input, pos);
                     if (ech == quote) { str_builder_add_byte(qbuilder, quote); }
                     elif (ech == 92) { str_builder_add_byte(qbuilder, 92); }
-                    elif (ech == 110) { str_builder_add_byte(qbuilder, 10); } 
-                    elif (ech == 116) { str_builder_add_byte(qbuilder, 9); }  
+                    elif (ech == 110) { str_builder_add_byte(qbuilder, 10); }
+                    elif (ech == 116) { str_builder_add_byte(qbuilder, 9); }
                     else { str_builder_add_byte(qbuilder, ech); }
                     pos = pos + 1;
                     continue;
@@ -67,7 +67,7 @@ fn split_command_line(input, first_word_out, args_out) {
                 pos = pos + 1;
             }
             var arg = str_builder_build(qbuilder);
-            if (pos < len) { pos = pos + 1; } 
+            if (pos < len) { pos = pos + 1; }
             vec_push(args_out, arg);
             argc = argc + 1;
         } else {
