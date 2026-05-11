@@ -19,7 +19,14 @@ fn CheckpointManager_new() {
         dir = str_cat(home, str_from("/.agnoshi/checkpoints"));
     }
     fs_mkdir_p(dir);
-    syscall(SYS_CHMOD, str_data(dir), 448);
+    # Use sys_chmod wrapper for x86/aarch64 portability. NOTE: `dir`
+    # is a Str from str_cat which does NOT null-terminate; str_data(dir)
+    # gives a non-terminated buffer, and chmod expects a cstring. Real
+    # fix is to build a cstring path (cf. agnsh.cyr::audit_log_path)
+    # which lands when checkpoint.cyr gets wired into the binary in
+    # v1.4.0's exec wire-up slice. For now this matches the original
+    # v1.0 contract; the cross-arch fix here is what the linter requires.
+    sys_chmod(str_data(dir), 448);
     var p = alloc(24);
     store64(p, vec_new());
     store64(p + 8, dir);

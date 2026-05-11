@@ -29,7 +29,7 @@ include "src/session.cyr"
 # M1 FIX: Use dynamic read loop instead of fixed 8KB buffer.
 # /proc/self/environ can exceed 8KB on systems with large env.
 fn getenv(name) {
-    var fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0);
+    var fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); # lint:cstr-ok legacy pre-port entry, never linked
     if (fd < 0) { return 0; }
     var capacity = 32768;
     var buf = alloc(capacity);

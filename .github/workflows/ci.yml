@@ -138,6 +138,18 @@ jobs:
         # Threshold is the v1.2.0 roadmap target.
         run: sh scripts/check-coverage.sh 80
 
+      - name: Cstring/Str type-mismatch lint
+        # Static analyzer for the Cyrius cstring/Str mismatch class
+        # that bit agnoshi five times across v1.2.0/v1.3.0 (silent
+        # runtime fallthroughs and aarch64-only build breaks). Greps
+        # for known antipatterns: Str-typed fns without _cstr overload
+        # (str_cat, str_len, str_data, str_starts_with, str_ends_with)
+        # receiving cstring literals, plus raw syscalls (SYS_OPEN /
+        # CHMOD / STAT) that don't exist in aarch64's generic table.
+        # See scripts/lint-cstr-str.sh for the full pattern list +
+        # rationale. Escape hatch: `# lint:cstr-ok` trailing comment.
+        run: sh scripts/lint-cstr-str.sh
+
       - name: Integration tests
         run: |
           for t in tests/test_*.tcyr; do

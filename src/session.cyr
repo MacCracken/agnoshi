@@ -98,7 +98,7 @@ fn Session_handle_builtin(self, input) {
         ui_show_mode(ModeManager_current(load64(self)));
         return 1;
     }
-    if (str_starts_with(trimmed, "mode ") == 1) {
+    if (str_starts_with(trimmed, str_from("mode ")) == 1) {
         var mode_name = str_substr(trimmed, 5, str_len(trimmed));
         mode_name = str_trim(mode_name);
         var new_mode = 0 - 1;

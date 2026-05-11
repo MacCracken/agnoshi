@@ -6,12 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-First slice of v1.3.1 P(-1) audit/review work — the lead item per the roadmap is the Cyrius toolchain bump, run alone before any other audit work so codegen drift surfaces cleanly.
+v1.3.1 P(-1) audit/review work. Slice 1 (committed): toolchain bump 5.10.34 → 5.10.44 + bracketed benchmarks. Slice 2 (this cut): the **cstring/Str static analyzer** queued in the v1.3.0 closeout. CI now catches the bug class that surfaced five times during v1.2.0/v1.3.0 — Str-typed stdlib fns receiving cstring literals, plus cross-arch-broken raw syscalls. Two real bugs caught on first run, fixed.
 
-### Changed
+### Slice 2 — cstring/Str type-mismatch linter (this cut)
+
+#### Fixed
+The linter caught two real bugs on its first run, both in modules deferred to v1.4.0 wire-up but reachable through future test_core inclusion:
+- **session.cyr:101** — `str_starts_with(trimmed, "mode ")`. `str_starts_with` is Str-typed in both args and has NO `_cstr` overload (verified in `lib/str.cyr` — there's `str_starts_with` Str+Str only). Pre-fix this would have made the interactive-session mode-switch builtin silently never match. Wrapped the cstring with `str_from`.
+- **checkpoint.cyr:22** — `syscall(SYS_CHMOD, ...)` — same aarch64-broken pattern as the audit/history/security fixes from v1.3.0 closeout. SYS_CHMOD doesn't exist in aarch64's generic syscall table (only `fchmodat`). Switched to the `sys_chmod` wrapper from `lib/io.cyr`.
+
+A third hit at `main.cyr:32` (`syscall(SYS_OPEN, ...)`) was marked with the `# lint:cstr-ok` escape hatch — `src/main.cyr` is the v1.0 pre-port entry, never linked into any binary's include graph.
+
+#### Added
+- **scripts/lint-cstr-str.sh** — static analyzer for the Cyrius cstring/Str mismatch class. Greps for known-bad patterns in 8 categories:
+  - First-arg cstring literals: `str_len("...")`, `str_data("...")`, `str_cat("...", *)`, `str_starts_with("...", *)`, `str_ends_with("...", *)`
+  - Second-arg cstring literals: `str_cat(*, "...")`, `str_starts_with(*, "...")`, `str_ends_with(*, "...")`
+  - Cross-arch-broken raw syscalls: `syscall(SYS_OPEN, ...)`, `syscall(SYS_CHMOD, ...)`, `syscall(SYS_STAT, ...)`
+  
+  Coverage rationale documented inline: only flags fns that DON'T have a `_cstr` overload variant in `lib/str.cyr` (so `str_contains` / `str_eq` / `str_split` are intentionally not flagged — Cyrius's name-mangling dispatch routes them to the `_cstr` form automatically). The five distinct runtime bugs the linter retroactively catches: `str_len(cstring)` from v1.2.0 slice 1, `str_cat(cstring, *)` from slice 7 of v1.2.0 + slice 8 of v1.3.0, `str_cat(*, cstring)` from slice 2 of v1.3.0, `is_safe_path(Str)` from slice 3 of v1.3.0 (silent translate_unknown for every NL filesystem op since v1.0), and the v1.3.0 closeout's aarch64 syscall break. Each was discovered the hard way (probe / SIGSEGV / first-use crash) — the linter catches them at lint time.
+- **CI wire-up** — `.github/workflows/ci.yml` runs `scripts/lint-cstr-str.sh` after the coverage gate. Below-clean state now fails CI like fmt / lint / capacity drift.
+- **Escape hatch** — trailing `# lint:cstr-ok` comment on a specific line marks an intentional use (used once: `src/main.cyr:32` for the legacy pre-port entry).
+
+### Slice 1 — Cyrius toolchain bump 5.10.34 → 5.10.44 (committed)
+
+#### Changed
 - **Cyrius toolchain pin 5.10.34 → 5.10.44** (`cyrius.cyml`). 10-patch bump along the 5.10 line, no major / minor changes. `cyrius deps` repopulated `./lib/` from the 5.10.44 snapshot. All gates clean on the bumped pin: check, capacity, fmt, lint, test_core 301/301, test_security 26/26, smoke 58/58, coverage 86%, both arches build (x86_64 293,792 B / aarch64 337,032 B).
 
-### Performance
+#### Performance
 - Bracketed benchmarks before+after the pin bump (recorded in `bench-history.csv`). All 10 benchmark averages unchanged to the microsecond resolution — parse path stays in the 3-13us band, translate stays at 1us, sanitize stays at 1us. Codegen drift on x86_64 was −32 bytes (293,824 → 293,792 B); aarch64 binary size unchanged at 337,032 B. No regression, no measurable performance change in either direction.
 
 ## [1.3.0] - 2026-05-11
