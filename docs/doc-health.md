@@ -48,7 +48,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 | `CONTRIBUTING.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `cyrius deps` step added, cleanliness gate command list inlined, cc3-era warnings (`//`-with-colons mis-parse, 40-arm per-fn limit) purged, Cyrius 5.10.x trailing-comma rule carried in from CHANGELOG. |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
-| `VERSION` | 2026-05-11 | ✅ Fresh | `1.3.1` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-05-11 | ✅ Fresh | `1.3.2` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---

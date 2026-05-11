@@ -37,7 +37,7 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.3.1";
+var VERSION_STR = "agnoshi 1.3.2";
 
 fn print_version() {
     println(VERSION_STR);

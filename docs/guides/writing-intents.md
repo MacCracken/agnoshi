@@ -14,7 +14,10 @@ enum IntentTag {
 }
 ```
 
-Tag numbers must be sequential and < 64 (cc3 global initializer limit).
+Tag numbers must be sequential. The Cyrius 4.5-era cc3 64-entry limit
+on global initializers is gone in 5.10.x; the current `capacity --check`
+gate reports headroom for the fn-table, identifiers, var-table, etc.
+You'll hit the dispatch-split point (ADR-004) before the enum limit.
 
 ## 2. Add a parse rule
 
@@ -53,6 +56,25 @@ fn translate_uptime(intent) {
 
 Remember to use the `alloc + store64` pattern (ADR-002) — `Translation_new`
 handles this internally.
+
+If your translator reads parser-extracted string fields from the intent
+(path, name, etc.), **validate them with the Str-aware safety predicates**
+per [ADR-006](../adr/006-cstr-str-dispatch-discipline.md):
+
+```cyrius
+fn translate_remove(intent) {
+    if (load64(intent + 8) == 0) { return translate_unknown(intent); }
+    # Parser hands a Str — use safe_path_in_str (NOT is_safe_path,
+    # which is cstring-typed and silently fails on Str input).
+    if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
+    # ... build args, return Translation ...
+}
+```
+
+The CI lint shield (`scripts/lint-cstr-str.sh`) catches the bug class
+that surfaced 7 times over v1.2.0/v1.3.0 — including `is_safe_path(Str)`
+mismatches, `str_cat(cstring, *)` errors, and aarch64-broken raw syscalls.
+Run it locally before pushing: `sh scripts/lint-cstr-str.sh`.
 
 ## 4. Wire up dispatch
 

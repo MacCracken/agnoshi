@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-05-11
+
+Doc-staleness sweep + `rust-old/` removal. Per the AGNOS first-party-standards "Delete `rust-old/` only after the Cyrius version has equal or better test coverage and benchmarks" criterion, v1.3.1's CI lint shield + ADR-006 + 301 + 26 + 59 unit/security/smoke tests + bracketed `bench-history.csv` clear the bar. Doc staleness from the v1.1.0/v1.2.0/v1.3.0 cycles also caught up.
+
+### Removed
+- **`rust-old/` directory** — 1.2 MB, 65 .rs files, 21 modules + tests + benches + Cargo metadata. Historical record preserved in `benchmarks-rust-v-cyrius.md` (port-arc benchmark snapshot, frozen by design at Rust 0.90 vs Cyrius 4.5.0), `docs/adr/001-cyrius-port.md` (port rationale), and the git history of the v0.x → v1.0.0 commits. `.gitignore` updated to ignore any restored copy. No live-code impact (rust-old was never linked).
+
+### Documented
+- **rust-old parity audit** — every Rust module catalogued vs current Cyrius `src/`. 18 modules cleanly ported. Six categories of intentionally un-ported Rust modules with documented homes:
+  - `dashboard.rs` (413L) — agent-TUI; separate concern from shell.
+  - `llm.rs` (461L) — deferred → v1.4.0 (needs hoosh modernization first).
+  - `schema_filter.rs` (464L) — MCP infrastructure; belongs in bote/mela.
+  - `sandbox.rs` (187L) — superseded by kavach (per AGNOS "kavach owns the sandbox").
+  - `interpreter/patterns.rs` (851L) — replaced by keyword matching per ADR-003.
+  - `interpreter/explain.rs` (581L) — partial port (per-translator `explanation` field exists; standalone `explain <cmd>` lookup table deferred → v1.5.x+ man-page-integration).
+  - `interpreter/translate/{aequi,bullshift,delta,edge,jalwa,knowledge,marketplace,mneme,photis,phylax,rasa,shruti,synapse,tarang,tazama,tron}` (16 modules) — consumer-app translators deferred → v1.5.x+ (v1.0 pruned IntentTag 211→44; wire up only when each consumer lands its public surface).
+  
+  Verdict: no unintentional gaps; everything missing has a documented home in the roadmap.
+
+### Changed
+- **README.md** — stat-line refreshed (was `1.1.0 · Cyrius 5.10.34 · ... · 272 KB`; now `1.3.1 · Cyrius 5.10.44 · ... · 294 KB static binary (DCE, x86_64) · 337 KB aarch64 · ... · 301 unit + 26 security + 58 smoke tests`). Pin refs bumped to 5.10.44. "Rust Legacy" section rewritten as historical reference pointing at the `benchmarks-rust-v-cyrius.md` + ADR-001 + git history.
+- **CONTRIBUTING.md** — Cyrius pin ref bumped 5.10.34 → 5.10.44.
+- **docs/architecture/overview.md** — pin ref bumped; binary-size line updated with per-arch numbers; "Language Migration" section rewritten now that `rust-old/` is removed.
+- **docs/guides/getting-started.md** — every example output refreshed for the v1.3.0 surface: mode-aware prompt (`[ASSIST] >`), `Risk: [LEVEL]` line in place of `Permission: N`, BLOCKED warning + approval-required hint blocks, `mode` / `history` builtin demos. Audit-log example updated to the six-class `result` vocabulary. Undo section qualified as v1.4.0-pending (today's `-c` and interactive modes propose without executing).
+- **docs/guides/writing-intents.md** — dropped the cc3-era `< 64 enum entries` claim (gone in Cyrius 5.10.x); added a §3 callout pointing to ADR-006 + `safe_path_in_str` / `safe_arg_in_str` for translator safety predicates + the `scripts/lint-cstr-str.sh` lint shield.
+- **docs/guides/security-model.md** — §2 (Argument Sanitization) updated to reference both cstring (`is_safe_arg`) and Str-aware (`safe_arg_in_str`) variants per ADR-006. Added a "Known LOW-severity hardening deferred to v1.4.0" subsection covering the symlink-race-on-state-files finding and the chmod-failure stderr warning from v1.3.1 slice 4. New "Forward Shield (v1.3.1)" section pointing at the 14-pattern lint + ADR-006 + the P(-1) audit report.
+- **docs/examples/scripting.md** — "Programmatic Access" section rewritten with the actual `-c` output shape (Risk / WARNING / Approval / Hint lines), the audit-log six-class `result` vocabulary, and `jq` recipes for filtering on result class.
+
+### Zugot recipe (separate repo)
+- `~/Repos/zugot/marketplace/agnoshi.cyml` updated **locally only** (no agnoshi GH release cut): version `1.0.0 → 1.3.1`, bin name `agnoshi → agnsh`, asset glob `agnsh-*-x86_64-linux` matching `.github/workflows/release.yml`, tags drop stale "rust" → "cyrius", landlock entries added for `~/.agnsh_history` + `~/.agnsh_audit.log`. `sha256` left at the v1.0.0 value with a TODO comment — needs an update when a real v1.3.1+ release lands.
+
+### Notes
+- **No source-code changes in this slice**. Pure docs + deletion + version bump. Binary, test, smoke, coverage, gate sweep all unchanged from v1.3.1 (x86_64 293,920 B / aarch64 337,168 B / test_core 301/301 / test_security 26/26 / smoke 59/59 / coverage 86% / lint-cstr-str clean).
+- **Repo size drop** — 1.2 MB → 580 KB working tree (excluding `lib/` and `build/`). `.git` retains the full history.
+- **v1.3.x bucket** is now empty in the roadmap; v1.4.0 (exec wire-up + hoosh + completion) is the next anchor.
+
 ## [1.3.1] - 2026-05-11
 
 P(-1) audit/review pass per AGNOS first-party standards. Eight slices across the roadmap's P(-1) bullets: toolchain bump (zero codegen drift), cstring/Str static analyzer with **14 patterns across 5 categories** wired into CI (catches 7 distinct bug variants that took 5 separate slices to discover during v1.2.0/v1.3.0), buffer-safety sweep with 5 dormant static-buf-escape fixes, syscall-return audit with 2 HIGH-severity unchecked-chmod fixes (live multi-user data-leak shape on `$HOME/.agnsh_history` and `$HOME/.agnoshi/checkpoints/`), ADR-006 codifying the four operational rules, input-validation sweep clearing 3 stale-stdlib breaks in `prompt.cyr`, path-traversal sweep verifying every file-op site, CVE pattern review.

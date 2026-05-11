@@ -86,8 +86,28 @@ done
 
 ## Programmatic Access
 
-Agnsh currently outputs a minimal "Intent: TAG / Command: CMD / Permission: N"
-format. JSON output is not yet implemented — if you need structured output
-for scripting, parse the text or use the audit log.
+Agnsh `-c` output is line-oriented text:
 
-For future JSON output format see the roadmap.
+```
+Intent: <tag>  Command: <cmd>
+  Risk: [LOW|MED|HIGH|CRIT]
+  [WARNING: BLOCKED -- would not execute without explicit override]
+  [Approval required (interactive prompt in shell mode)]
+  [Hint: <recovery hint when translation isn't directly runnable>]
+```
+
+For structured output, parse `~/.agnsh_audit.log` — every `-c` invocation
+appends one JSON line with `timestamp`, `user`, `mode`, `input`, `action`,
+`approved` (0/1), and `result` (one of `proposed`, `needs_approval`,
+`blocked`, `needs_llm`, `needs_exec`, `rejected_safety`). Downstream:
+
+```sh
+# Find all parser-rejected inputs in this session
+jq 'select(.result == "rejected_safety") | .input' < ~/.agnsh_audit.log
+
+# Count commands by result class
+jq -r '.result' < ~/.agnsh_audit.log | sort | uniq -c
+```
+
+For native JSON-on-stdout `-c` output (rather than going through the
+audit log), see the roadmap.

@@ -9,9 +9,12 @@
 # version sitting in tree (matches agnosys/yukti/patra convention).
 /lib/
 
-# Rust legacy (rust-old/)
-rust-old/target/
-rust-old/rust_out
+# Rust legacy — `rust-old/` removed in v1.3.2 (port-arc + audit cycle
+# complete; ADR-001 + benchmarks-rust-v-cyrius.md + git history of the
+# v0.x→v1.0.0 commits carry the historical record). Build-artifact
+# patterns kept here as safety in case anyone restores the dir from
+# an older commit for benchmark re-runs.
+rust-old/
 
 # IDE
 .idea/

@@ -19,31 +19,46 @@ The install script places:
 ### Verify
 
 ```bash
-agnsh --version    # "agnoshi 1.0.0"
+agnsh --version    # "agnoshi 1.3.1"
 agnsh --help       # usage summary
 man agnsh          # full reference
 ```
 
 ## First Commands
 
-Drop into the interactive shell with no arguments:
+Drop into the interactive shell with no arguments. The prompt carries the
+current mode (default is `[ASSIST]`):
 
 ```
 $ agnsh
-agnoshi 1.0.0 -- AI-native shell
-Type a natural language command or 'exit' to quit.
+agnoshi 1.3.1
+AI-native shell -- type a natural-language command, or 'exit' to quit.
+Built-ins: help, version, mode, history, clear, exit
 
-> show me all files in /tmp
-Intent: 0
-  Command: ls
-  Permission: 1
+[ASSIST] > show me all files in /tmp
+Intent: 0  Command: ls
+  Risk: [LOW]
 
-> git status
-Intent: 22
-  Command: git
-  Permission: 1
+[ASSIST] > install vim
+Intent: 14  Command: apt
+  Risk: [HIGH]
+  Approval required (interactive prompt in shell mode)
 
-> exit
+[ASSIST] > rm -rf /tmp/foo
+Intent: 8  Command: rm
+  Risk: [CRIT]
+  WARNING: BLOCKED -- would not execute without explicit override
+
+[ASSIST] > mode strict
+Mode -> STRICT
+
+[STRICT] > history
+  1  show me all files in /tmp
+  2  install vim
+  3  rm -rf /tmp/foo
+  4  mode strict
+
+[STRICT] > exit
 bye
 ```
 
@@ -52,6 +67,8 @@ Or run a single command:
 ```bash
 agnsh -c "install vim"
 ```
+
+The output carries `Intent: <tag>  Command: <cmd>` plus a `Risk: [LOW|MED|HIGH|CRIT]` line and, when appropriate, a `Hint:` line explaining why a particular input isn't directly runnable (LLM-routed question, pipeline without an exec wire-up yet, or a translator safety-check rejection).
 
 ## Operating Modes
 
@@ -85,19 +102,21 @@ BLOCKED — you can't hide dangerous commands behind absolute paths.
 Every action is recorded as a JSON line in `~/.agnsh_audit.log`:
 
 ```json
-{"timestamp":"2026-04-13T18:00:00Z","user":"alice","mode":"assist","input":"show files","action":"ls","approved":1,"result":"success"}
+{"timestamp":"2026-05-11T18:00:00Z","user":"user","mode":"AI-ASSIST","input":"show files","action":"ls","approved":1,"result":"proposed"}
 ```
+
+The `result` field is one of six labels — `proposed` (auto-runnable), `needs_approval` (HIGH-risk; SYSTEM_WRITE / ADMIN), `blocked` (BLOCKED-perm), `needs_llm` (question; LLM not yet wired), `needs_exec` (pipeline; exec not yet wired), `rejected_safety` (translator caught path traversal / shell metachars / leading-dash arg / invalid pid). Downstream filters can `jq 'select(.result == "rejected_safety")'` to find inputs that need rephrasing.
 
 All fields are JSON-escaped — crafted input cannot forge entries.
 
-## Undo
+## Undo (v1.4.0)
 
-Destructive operations (`rm`, `mv`) are checkpointed to
-`~/.agnoshi/checkpoints/` before execution. Type `undo` in the interactive
-shell to restore the most recent operation.
-
-The checkpoint dir is owner-only (0700) and auto-prunes to the 100 most
-recent entries.
+Destructive operations (`rm`, `mv`) are designed to be checkpointed to
+`~/.agnoshi/checkpoints/` before execution, with an `undo` builtin to
+restore the most recent operation. The `src/checkpoint.cyr` module is in
+place but the wire-up to actual exec lands in v1.4.0 — today's `-c` and
+interactive modes *propose* translations without executing them. The
+audit log shows `result:proposed` for runnable inputs to reflect that.
 
 ## Next Steps
 

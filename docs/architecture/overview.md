@@ -121,20 +121,22 @@ Every command is classified into one of six levels:
 ## Dependencies
 
 **Build-time:**
-- Cyrius 5.10.34 (pinned in `cyrius.cyml`: `cyrius = "5.10.34"`)
+- Cyrius 5.10.44 (pinned in `cyrius.cyml`: `cyrius = "5.10.44"`)
 - Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, json, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step.
 
 **Runtime:**
-- None (statically linked ELF, ~272 KB on Cyrius 5.10.34; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth, not new agnoshi code)
+- None (statically linked ELF, ~294 KB x86_64 / ~337 KB aarch64 on Cyrius 5.10.44; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 
 ## Language Migration
 
-This project was ported from Rust to Cyrius in April 2026. The original Rust
-implementation is preserved in `rust-old/` for reference. See
-`benchmarks-rust-v-cyrius.md` for performance comparison and `docs/adr/`
-for architectural decisions.
+This project was ported from Rust to Cyrius in April 2026. The original
+Rust implementation lived in `rust-old/` through the v1.0–v1.3.1
+port-arc + hardening cycle and was removed in v1.3.2 (see the v1.3.2
+CHANGELOG entry for the parity audit). The historical record stays in
+`benchmarks-rust-v-cyrius.md` (port-arc performance comparison, frozen
+by design) and `docs/adr/001-cyrius-port.md` (port rationale).
 
 Key changes:
 - 27,251 lines Rust → 4,042 lines Cyrius (85% reduction)

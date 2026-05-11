@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.1.0 · Cyrius 5.10.34 · 21 modules · ~4 K src lines · 272 KB static binary (DCE) · 0 runtime deps**
+**1.3.1 · Cyrius 5.10.44 · 21 modules · ~5 K src lines · 294 KB static binary (DCE, x86_64) · 337 KB aarch64 · 0 runtime deps · 301 unit + 26 security + 58 smoke tests**
 
 ## Features
 
@@ -23,7 +23,7 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 
 ```bash
 # Resolve the version-pinned stdlib snapshot into ./lib/ (gitignored).
-# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "5.10.34").
+# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "5.10.44").
 cyrius deps
 
 # Build from source
@@ -89,7 +89,7 @@ src/
 
 ## Security
 
-See `docs/guides/security-model.md` for the deep dive. All 21 audit findings resolved as of v1.0.0.
+See `docs/guides/security-model.md` for the deep dive. v1.0.0 closed 21 audit findings (5 critical, 7 high, 9 medium). v1.3.1 P(-1) added a 14-pattern CI lint shield (see `scripts/lint-cstr-str.sh` + ADR-006) that retroactively catches all seven Cyrius 4.5 → 5.10 stdlib-drift bug variants that surfaced over v1.2.0/v1.3.0.
 
 **Key protections:**
 - Command basename extraction (prevents `/usr/bin/dd` bypass of blocked list)
@@ -111,12 +111,16 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 5.10.34 is 272 KB — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 5.10.x, not from new agnoshi code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 5.10.44 is 294 KB (x86_64) / 337 KB (aarch64) — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 5.10.x plus the v1.2.0/v1.3.0 feature additions (approval, audit, history, security wired in), not from agnoshi-side bloat. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 
-The original Rust implementation is preserved in `rust-old/` as a historical reference for the port.
-27,251 lines, 62 modules, 1,241 unit tests, 30 criterion benchmarks, version 0.90.0.
+The original Rust implementation was preserved in `rust-old/` through the v1.0–v1.3.1 port-arc + hardening cycle (27,251 lines, 62 modules, 1,241 unit tests, 30 criterion benchmarks, version 0.90.0). Removed in v1.3.2 per the AGNOS first-party-standards "Delete `rust-old/` only after the Cyrius version has equal or better test coverage and benchmarks" criterion — v1.3.1's CI lint shield, ADR-006 architectural rigor, 301 + 26 + 59 unit/security/smoke tests, and the bracketed `bench-history.csv` numbers all clear that bar.
+
+The historical record lives in:
+- `benchmarks-rust-v-cyrius.md` — the v1.0.0 port-arc comparison frozen by design (Rust 0.90 vs Cyrius 4.5.0)
+- `docs/adr/001-cyrius-port.md` — the port rationale
+- git history of the v0.x → v1.0.0 commits (`git log --oneline` shows the port slices)
 
 ## License
 
