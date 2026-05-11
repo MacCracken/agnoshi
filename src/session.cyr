@@ -160,7 +160,7 @@ fn Session_execute_shell(self, input) {
                 store64(load64(self + 48), load64(self + 72));
                 store64(load64(self + 48) + 40, 0);
             } else {
-                ui_show_error(str_cat("cd: no such directory: ", dir));
+                ui_show_error(str_cat(str_from("cd: no such directory: "), dir));
                 store64(load64(self + 48) + 40, 1);
             }
         }
@@ -254,7 +254,7 @@ fn Session_execute_translation(self, translation) {
                 store64(load64(self + 48), load64(self + 72));
                 store64(load64(self + 48) + 40, 0);
             } else {
-                ui_show_error(str_cat("cd: no such directory: ", dir));
+                ui_show_error(str_cat(str_from("cd: no such directory: "), dir));
                 store64(load64(self + 48) + 40, 1);
             }
         }

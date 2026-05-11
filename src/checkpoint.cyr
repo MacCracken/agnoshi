@@ -72,14 +72,14 @@ fn CheckpointManager_undo_last(self) {
             var result = fs_copy(load64(cp + 16), load64(cp + 8));
             if (result == 0) {
                 fs_remove(load64(cp + 16));
-                return str_cat("Restored: ", load64(cp + 8));
+                return str_cat(str_from("Restored: "), load64(cp + 8));
             }
             return 0;
         }
         1 => {
             var result = fs_rename(load64(cp + 16), load64(cp + 8));
             if (result == 0) {
-                return str_cat("Reverted move: ", load64(cp + 8));
+                return str_cat(str_from("Reverted move: "), load64(cp + 8));
             }
             return 0;
         }

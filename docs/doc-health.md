@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — agnoshi
 
-> **Last refresh**: 2026-05-10 (1.1.0 closeout pass — five stale doc rows refreshed) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-11 (1.2.0 release cut — `CHANGELOG.md`, `VERSION`, `roadmap.md` all moved to reflect shipped state) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`agnoshi`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md)) — same buckets, agnoshi-shaped tiers.
@@ -43,12 +43,12 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `README.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: Cyrius 5.10.34 stat-line added, install prefixed with `cyrius deps`, "146 KB" headline reframed as a 1.0.0-port-arc snapshot pointing at `benchmarks-rust-v-cyrius.md` + in-tree refresh command, "v1.0 minimal" annotation dropped. |
-| `CHANGELOG.md` | 2026-05-10 | ✅ Fresh | 1.1.0 entry written this pass. Source of truth for shipped work. |
+| `CHANGELOG.md` | 2026-05-11 | ✅ Fresh | 1.2.0 entry cut. Documents all nine slices (deeper intent parsing, full translator coverage, coverage-into-CI, bug-class audits). Source of truth for shipped work. |
 | `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Rust→Cyrius gate commands swapped; stale Known Issues purged; version-discipline note added (VERSION is single SoT). |
 | `CONTRIBUTING.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `cyrius deps` step added, cleanliness gate command list inlined, cc3-era warnings (`//`-with-colons mis-parse, 40-arm per-fn limit) purged, Cyrius 5.10.x trailing-comma rule carried in from CHANGELOG. |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
-| `VERSION` | 2026-05-10 | ✅ Fresh | `1.1.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-05-11 | ✅ Fresh | `1.2.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -57,7 +57,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-05-10 | ✅ Fresh | 1.1.0 moved to Shipped (2026-05-10) with the full modernization summary inline; 1.2.0 / 1.2.1 / 1.2.2 slotted for the polish bucket; v1.3.x+ holds demand-gated systems/UX/consumer-app translators. |
+| `roadmap.md` | 2026-05-11 | ✅ Fresh | 1.2.0 moved to Shipped (2026-05-11) with the full nine-slice summary inline; 1.2.1 / 1.2.2 slotted for the polish bucket; v1.3.x+ holds demand-gated systems/UX/consumer-app translators. |
 
 ---
 

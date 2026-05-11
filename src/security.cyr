@@ -50,14 +50,14 @@ fn security_get_username(uid) {
             }
         }
     }
-    return str_cat("uid_", uid_str);
+    return str_cat(str_from("uid_"), uid_str);
 }
 fn security_get_username_safe(uid) {
     var name = security_get_username(uid);
     if (is_safe_username(name) == 1) {
         return name;
     }
-    return str_cat("uid_", str_from_int(uid));
+    return str_cat(str_from("uid_"), str_from_int(uid));
 }
 fn security_check_sudo() {
     if (fs_exists("/usr/bin/sudo") == 1) { return 1; }

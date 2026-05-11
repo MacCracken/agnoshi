@@ -9,15 +9,9 @@
 - **Security audit** (2026-04-13) — 21 findings closed (5 critical, 7 high, 9 medium)
 - **v1.0.0** (2026-04-13) — Release candidate: tests passing, benchmarks proving Cyrius wins
 - **v1.1.0** (2026-05-10) — Cyrius 5.10.34 + ecosystem-parity modernization. Toolchain pin bumped 4.5.0 → 5.10.34; manifest migrated `cyrius.toml` → `cyrius.cyml` with `version = "${file:VERSION}"` (single source of truth); `.cyrius-toolchain` retired; `./lib/` gitignored + repopulated by `cyrius deps` from the pinned stdlib snapshot (matches agnosys/yukti/patra); CI gate set expanded to syntax check + fmt diff + lint warn-as-error + vet + capacity gate + aarch64 best-effort cross-build + agnoshi-shaped security scan; release workflow accepts both `vX.Y.Z` and `X.Y.Z` tag styles with SHA256SUMS + per-arch prebuilt binaries (also fixed: was building wrong entry `src/main.cyr → agnoshi` instead of `src/agnsh.cyr → agnsh`); `CLAUDE.md` cleanliness gates rewritten Rust → Cyrius (`cargo fmt/clippy/audit/deny/doc` → `cyrius check/fmt/lint/vet/capacity`); `docs/doc-health.md` debut as a living doc-currency ledger; full closeout pass landed the five Stale rows it flagged (`README.md`, `CONTRIBUTING.md`, `docs/architecture/overview.md`, `docs/agnsh.1`, `benchmarks-rust-v-cyrius.md`). Binary 271,912 bytes on Cyrius 5.10.x (up from 146 KB on 4.5.0 — toolchain-side growth, not new agnoshi code). Full detail: `CHANGELOG.md` 1.1.0 entry.
+- **v1.2.0** (2026-05-11) — Intent parsing depth + translator hardening. All three v1.2.0 roadmap items closed across nine slices: (a) **deeper intent parsing** — fixed two Cyrius 4.5 → 5.10 stdlib regressions (str_len/str_data on cstring needles, str_sub end→length semantics) that had silently left every NL input falling to `SHELL_COMMAND`; added `is_word_prefix` token-aware matcher that retires the substring-trap class while preserving plurals (file→files, process→processes); landed `parse_state_queries` (ip/network/system/disk/process noun-phrase queries), `parse_service_query` (`is X running/active/enabled`, `status of X`), and `parse_service_action` (bare imperative `start X` / `stop X` / `restart X` / `reload X` / `enable X` / `disable X`); (b) **translator production tests** — 200 new assertions across 43 translators, every translator now has command + permission-level locks, safety-check fallbacks have explicit negative tests; (c) **coverage report into CI** — `scripts/check-coverage.sh` gates fn-level coverage of the in-binary modules at ≥80% (current 89%). Also swept three latent-bug-class audits: 12 `str_cat(cstring, Str)` sites fixed across translate / prompt / security / checkpoint / sanitize / session. Test count 57 → 257 (4.5×). Full detail: `CHANGELOG.md` 1.2.0 entry.
 
-## v1.2.x — Polish bucket (slotted)
-
-The post-v1.0 quality items are split across three minor cuts so each is small enough to land cleanly without backfilling.
-
-### v1.2.0 — Intent parsing depth + translator hardening
-- [ ] Deeper intent parsing — currently classifies most NL inputs as `SHELL_COMMAND`; expand pattern coverage so the natural-language path is actually leveraged
-- [ ] All core translators production-tested on real commands (filesystem, process, network, git, user/group, firewall, stiva)
-- [ ] Coverage report wired into CI (target: 80%+)
+## v1.2.x — Polish bucket
 
 ### v1.2.1 — Approval workflow + interactive shell
 - [ ] Approval workflow battle-tested interactively (decision UI, audit-log shape, sudo re-verification timing)

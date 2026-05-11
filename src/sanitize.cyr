@@ -292,15 +292,15 @@ fn build_safe_env() {
     vec_push(env, "PATH=/usr/bin:/bin:/usr/sbin:/sbin");
     var home = getenv("HOME");
     if (home != 0) {
-        vec_push(env, str_cat("HOME=", home));
+        vec_push(env, str_cat(str_from("HOME="), home));
     }
     var lang = getenv("LANG");
     if (lang != 0) {
-        vec_push(env, str_cat("LANG=", lang));
+        vec_push(env, str_cat(str_from("LANG="), lang));
     }
     var term = getenv("TERM");
     if (term != 0) {
-        vec_push(env, str_cat("TERM=", term));
+        vec_push(env, str_cat(str_from("TERM="), term));
     }
     return env;
 }

@@ -30,7 +30,7 @@ fn PromptContext_new(cwd, username, ai_mode) {
 fn prompt_abbreviate_home(path, home) {
     if (str_starts_with(path, home) == 1) {
         var rest = str_substr(path, str_len(home), str_len(path));
-        return str_cat("~", rest);
+        return str_cat(str_from("~"), rest);
     }
     return path;
 }

@@ -32,7 +32,7 @@ include "src/commands.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 
-var VERSION_STR = "agnoshi 1.1.0";
+var VERSION_STR = "agnoshi 1.2.0";
 
 fn print_version() {
     println(VERSION_STR);

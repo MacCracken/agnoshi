@@ -130,6 +130,14 @@ jobs:
       - name: Smoke test
         run: sh scripts/smoke-test.sh build/agnsh
 
+      - name: Coverage gate
+        # Cyrius doesn't ship line-coverage instrumentation, so this is
+        # fn-level: counts top-level `fn` defs across the modules linked
+        # into the agnsh binary (per src/agnsh.cyr's include list) and
+        # requires >=80% to be referenced by name in the test files.
+        # Threshold is the v1.2.0 roadmap target.
+        run: sh scripts/check-coverage.sh 80
+
       - name: Integration tests
         run: |
           for t in tests/test_*.tcyr; do

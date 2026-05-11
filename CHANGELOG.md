@@ -6,107 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.0 work. Slices 1-4 (committed) advanced the **deeper intent parsing** roadmap item. Slice 5 (committed) opened the **"all core translators production-tested"** item with 40 assertions across the 16 core filesystem / process / system / network / disk translators. Slices 6-7 (this cut) finish translator coverage — git (10 translators), user/group (5), firewall (7), MCP-routing (audit_view + agent_info), and the SAFE-fallback pair (question + unknown). Tests revealed a real bug: `translate_audit_view` and `translate_agent_info` were doing `str_cat(cstring, Str)` against `lib/str.cyr`'s `(Str, Str)` signature — same Cyrius 4.5 → 5.10 stdlib drift the parser had — and the binary segfaulted on `"show audit"`. Fixed.
+## [1.2.0] - 2026-05-11
 
-### Slices 6-7 — translator coverage: git, user/group, firewall, MCP (this cut)
+The v1.2.0 cycle closed out all three roadmap items: deeper intent parsing (slices 1-4), all-core-translators production-tested (slices 5-7), and a coverage report wired into CI (slice 9, 89% fn-level coverage against an 80% threshold). Slice 8 was a bug-class audit pass that swept `src/` for the same `(cstring, Str)`-where-`(Str, Str)`-expected pattern that bit slices 1 and 7, fixing 10 latent call sites across `prompt.cyr`, `security.cyr`, `checkpoint.cyr`, `sanitize.cyr`, and `session.cyr` — all in modules deferred to the v1.2.x interactive-shell wire-up, but now correct ahead of that work.
 
-#### Fixed
-- **translate.cyr: `translate_audit_view` / `translate_agent_info`** — both built MCP JSON bodies via `str_cat("{\"agent\":\"", agent_str)`. `lib/str.cyr`'s `str_cat` takes `(Str, Str)` on 5.10.x, and passing a cstring as the first arg causes `load64(cstring)` to be read as a Str header (garbage length). Binary segfaulted any time the user asked for an audit view (`"show audit log"`) or queried agent info. Both literals now wrapped in `str_from()`. Verified by the new translator tests AND end-to-end against the binary (`./build/agnsh -c "show audit"` no longer crashes). This is the same bug-class as the slice-1 sanitize-helper fixes; finding it in translate.cyr suggests the migration audit should be re-run more broadly — queued as a roadmap follow-up.
+### Fixed
+- **translate.cyr: `translate_audit_view` / `translate_agent_info`** — both built MCP JSON bodies via `str_cat("{\"agent\":\"", agent_str)`. `lib/str.cyr`'s `str_cat` takes `(Str, Str)` on 5.10.x, and passing a cstring as the first arg causes `load64(cstring)` to be read as a Str header (garbage length). Binary segfaulted any time the user asked for an audit view (`"show audit log"`) or queried agent info. Both literals now wrapped in `str_from()`. Verified by translator tests AND end-to-end against the binary (`./build/agnsh -c "show audit"` no longer crashes).
+- **Bug-class audit pass** — 10 additional `str_cat(cstring, Str)` call sites swept from `src/`: `prompt.cyr` (path `~` abbreviation), `security.cyr` x2 (`uid_` username fallbacks), `checkpoint.cyr` x2 (rollback message formatting), `sanitize.cyr` x3 (`build_safe_env` for `HOME=` / `LANG=` / `TERM=`), `session.cyr` x2 (cd-error message). All in modules not currently linked into the agnsh binary; fixing them ahead of v1.2.x's interactive-shell wire-up keeps the same Cyrius 4.5 → 5.10 stdlib-drift bug class from biting once those modules ship.
+- **sanitize.cyr (slice 1, retained)** — `str_contains_ci`, `str_find_ci`, `str_find_ci_from`, `str_split_ci` were calling `str_len(needle)` / `str_data(needle)` on a cstring needle. Garbage length, every `input_has_word()` match silently false, every parsed intent fell to `SHELL_COMMAND`. Helpers now use `strlen()` for the cstring side and raw pointer arithmetic. Single root cause behind the "agnoshi can't parse NL" symptom on 5.10.x.
+- **str_sub → str_substr migration (slice 1, retained)** — 19 call sites across `aliases.cyr`, `audit.cyr`, `commands.cyr`, `prompt.cyr`, `session.cyr`, `sanitize.cyr`, `interpreter.cyr` were passing end-positions to `str_sub(s, start, len)` (which takes a *length* on 5.10.x). Global rename to `str_substr` (the (start, end) variant).
+- **interpreter.cyr: extract_after / extract_between (slice 1, retained)** — same `str_len(cstring keyword)` bug pattern; replaced with `strlen(keyword)` / `strlen(before_kw)`.
 
-#### Added — Slice 6: git translators (10)
-- `translate_git_commit` — command="git", USER_WRITE; `-a` flag arms; unsafe leading-dash message (`"-rf evil"`) → `translate_unknown` (locks the v1.0 security audit H7 mitigation).
-- `translate_git_diff` — command="git", READ_ONLY; `--staged` flag arm.
-- `translate_git_branch` — command="git", USER_WRITE; `-d` delete flag arm.
-- `translate_git_status` / `translate_git_log` — both READ_ONLY; `log` carries `--oneline -20` (args count locked).
-- `translate_git_push` / `translate_git_pull` / `translate_git_checkout` / `translate_git_merge` / `translate_git_stash` — all USER_WRITE, all `git`-rooted.
+### Added
 
-#### Added — Slice 7: user/group, firewall, MCP, fallbacks (15 translators)
-- `translate_user_add` / `translate_user_delete` / `translate_passwd` / `translate_group_add` — all ADMIN.
-- `translate_group_list` — READ_ONLY (the one query in the user/group set).
-- `translate_firewall_allow` / `translate_firewall_deny` / `translate_firewall_enable` / `translate_firewall_disable` / `translate_firewall_delete` — all `ufw`, all ADMIN.
-- `translate_firewall_list` / `translate_firewall_status` — READ_ONLY (the two query shapes).
-- `translate_service_control` — happy path (command="systemctl", ADMIN) + null-action → `translate_unknown` fallback.
-- `translate_audit_view` / `translate_agent_info` — both echo + MCP-routed; `mcp_tool` field-40 locked non-zero (`Translation_with_mcp` populated correctly). Audit view at ADMIN, agent info at READ_ONLY. Null-field path also covered for audit_view.
-- `translate_question` / `translate_unknown` — both echo + SAFE.
+#### Slices 1-4 — Deeper intent parsing
+- **parse_state_queries** — noun-phrase queries: `"ip address"`, `"my ip"`, `"network status"` → `NETWORK_INFO`; `"uptime"`, `"load average"`, `"kernel version"`, `"memory usage"`, `"hostname"` → `SYSTEM_INFO`; `"disk space"`, `"free space"`, `"how full"`, `"storage usage"` → `DISK_USAGE`; `"running processes"`, `"what's running"`, `"active processes"` → `SHOW_PROCESSES`.
+- **parse_service_query** — `"is X running"` / `"is X active"` / `"is X enabled"` (gated on `input_starts_with("is ")` so statements like `"the application is running"` don't get hijacked) and `"status of X"` → `SERVICE_CONTROL` with action=status, target=X.
+- **parse_service_action** — bare imperative form: `"start nginx"`, `"stop sshd"`, `"restart cron"`, `"reload nginx"`, `"enable cron"`, `"disable apache"` → `SERVICE_CONTROL`. Gated on `input_starts_with(verb)` at token 0 + `token_count == 2` so `"start a new project"` / `"stop wasting time"` keep falling through to `SHELL_COMMAND`. `parse_admin_ops` runs first so `"enable firewall"` / `"disable ufw"` correctly stay `FIREWALL_ENABLE` / `FIREWALL_DISABLE`.
+- **sanitize.cyr: `is_word_prefix(input, word)`** — case-insensitive token-prefix matcher. Gives plural-tolerance (`"file"` matches `"files"`, `"process"` matches `"processes"`, `"directory"` matches `"directories"`) AND substring-trap immunity (`"move"` doesn't match inside `"remove"`, `"rm"` doesn't match inside `"warm"`). The previous trap-defense ordering hack (REMOVE-before-MOVE) is retired; the `"rm "` / `"move "` trailing-space anchors dropped.
+- **sanitize.cyr: `input_starts_with(input, prefix_cstr)`** — case-insensitive prefix check, gates interrogative form for service queries.
+- **interpreter.cyr: `input_has_word` auto-dispatch** — compound phrases (internal whitespace) keep substring matching; single-token needles route through `is_word_prefix`.
+- **interpreter.cyr: `token_count`** — whitespace-delimited token counter, sanity gate for imperative service actions.
 
-#### Notes
-- Test count 151 → **214**, all passing. Every translator in `src/translate.cyr` now has at least command + permission-level assertions; every safety-check fallback has an explicit negative test.
-- **Bug-class follow-up** — slice 1 caught the `str_len(cstring)` and `str_sub` semantics drift in `sanitize.cyr` / `interpreter.cyr` / six other files; slice 7 caught the `str_cat(cstring, Str)` variant in `translate.cyr`. Queueing a broader audit pass for v1.2.0 closeout to grep the rest of `src/` for the same shape (cstring literal passed where Str is expected by a 5.10.x stdlib fn) — probably worth its own slice rather than chasing case-by-case.
+#### Slices 5-7 — Translator production tests
+- **tests/test_core.tcyr — full translator-coverage block** — every `translate_X` in `src/translate.cyr` (43 translators) gets at least command + permission-level assertions; safety-check translators get explicit negative cases (path-traversal → unknown for `translate_show_file`, missing destination → unknown for `translate_copy`, null path → unknown for `translate_change_dir`, pid=0 → unknown for `translate_kill_process`, leading-dash commit message → unknown for `translate_git_commit` locking the v1.0 audit H7 mitigation, null action → unknown for `translate_service_control`). `translate_remove` BLOCKED permission level locked; `translate_shell_command`'s dynamic-permission derivation tested both arms (`"ls"` → READ_ONLY, `"apt"` → ADMIN). MCP-routing translators (`audit_view`, `agent_info`) have `mcp_tool` field-40 non-zero locked.
 
-### Slice 5 — translator coverage: core file/process/system (committed)
-
-#### Added
-- **tests/test_core.tcyr — translator coverage block** — 40 new assertions, one or more per core translator. Each block verifies:
-  - **`translate_list_files`** — command="ls", READ_ONLY, args reflect packed options (long+all+path → 3 args).
-  - **`translate_show_file`** — happy path (cat, READ_ONLY) + safety regressions: unsafe path (`"../etc/passwd"` triggers path-traversal check) AND null field-1 both fall through to `translate_unknown` (command="echo"). Locks in the security audit's path-traversal mitigation.
-  - **`translate_find_files`** — command="find", READ_ONLY with name + path fields set.
-  - **`translate_search_content`** — command="grep", READ_ONLY with pattern + path.
-  - **`translate_change_dir`** — command="cd", SAFE; null field-1 → translate_unknown (locks the existing nil-guard).
-  - **`translate_create_dir`** — command="mkdir", USER_WRITE.
-  - **`translate_copy`** — command="cp", USER_WRITE with both src+dst; missing dst → translate_unknown.
-  - **`translate_move`** — command="mv", USER_WRITE.
-  - **`translate_remove`** — command="rm", `BLOCKED` permission (caller-must-approve is a hard rule); recursive-flag intent gets 2 args (`-r` + path).
-  - **`translate_show_processes`** — command="ps", READ_ONLY (no fields required).
-  - **`translate_kill_process`** — command="kill", ADMIN with a valid pid; pid=0 → translate_unknown (locks the `is_valid_pid` gate).
-  - **`translate_system_info`** — command="uname", READ_ONLY.
-  - **`translate_network_info`** — command="ip", READ_ONLY.
-  - **`translate_disk_usage`** — command="df", READ_ONLY.
-  - **`translate_install_package`** — command="apt", ADMIN with a packages vec at intent+56.
-  - **`translate_shell_command`** — derives permission from `analyze_command_permission`: `"ls"` → READ_ONLY, `"apt"` → ADMIN. This is the only translator whose permission level is dynamic — tests both arms.
-  
-  Test count 111 → 151, all passing. Coverage milestone: every core (non-domain-specific) translator now has at least command + permission assertions; the safety-check fallbacks have explicit negative tests where they exist.
-
-#### Notes
-- **Translator-coverage scope** — slice 5 covers the 16 core translators. Remaining: 10 git translators, 5 user/group, 7 firewall, plus `translate_audit_view` / `translate_agent_info` / `translate_question` / `translate_unknown` / `translate_service_control` (already implicitly covered through the parse-side service tests). Queued for slices 6-7 to keep cuts shippable.
-- **No source changes in this slice** — pure test addition. Build size unchanged at 279,400 B.
-
-### Slice 4 — imperative service actions (committed)
-
-#### Added
-- **interpreter.cyr: `token_count(input)`** — counts whitespace-delimited tokens in a Str. Used as a sanity gate by `parse_service_action` to require exactly `<verb> <name>` and reject multi-word phrasings like `"start a new project"` or `"stop wasting time"`.
-- **interpreter.cyr: `parse_service_action`** — catches bare imperative service control: `"start X"`, `"stop X"`, `"restart X"`, `"reload X"`, `"enable X"`, `"disable X"`. Gated on (a) `input_starts_with(verb)` at token 0 and (b) `token_count == 2`. Maps to `SERVICE_CONTROL` with `field1=action` (verb), `field2=name`, flowing through the existing `translate_service_control` (emits `systemctl <action> <name>` at ADMIN). Slotted in `Interpreter_parse` between `parse_admin_ops` and `parse_service_query` — `parse_admin_ops` runs first so `"enable firewall"` / `"disable ufw"` still correctly route to `FIREWALL_ENABLE` / `FIREWALL_DISABLE` (they carry the firewall keyword and never reach this branch).
-- **tests/test_core.tcyr** — 9 new assertions: each of the 6 service-action verbs routes correctly, the multi-word gate rejects `"start a new project"`, and the parse-order invariant holds (`"enable firewall"` stays `FIREWALL_ENABLE`, `"disable ufw"` stays `FIREWALL_DISABLE`). Test count 102 → 111, all passing.
-
-### Slice 3 — service-status NL (committed)
-
-#### Added
-- **sanitize.cyr: `input_starts_with(input, prefix_cstr)`** — case-insensitive prefix check on a Str input against a cstring prefix. Used by the parser to gate interrogative form: parse only fires when the input opens with `"is "`, so a statement like `"the application is running"` doesn't get hijacked into `SERVICE_CONTROL`.
-- **interpreter.cyr: `parse_service_query`** — catches three NL service patterns and maps each to `SERVICE_CONTROL` with `field1="status"`, `field2=service_name`, flowing through the existing `translate_service_control` (emits `systemctl status <name>` at ADMIN permission):
-  - `"is X running"` — gated on `input_starts_with("is ")` + `"running"` word-present, target extracted via `extract_between("is ", " running")`
-  - `"is X active"` — same shape with `"active"`
-  - `"is X enabled"` — same shape with `"enabled"`
-  - `"status of X"` — substring-anchored `"status of"` trigger, target extracted via `extract_after("status of ")`
-  Slotted in `Interpreter_parse` after `parse_admin_ops` and before `parse_state_queries` — specific service-query patterns take precedence over generic state queries; the existing `"service"` / `"systemctl"` trigger inside `parse_system_ops` is unchanged.
-- **tests/test_core.tcyr** — 6 new assertions covering each NL pattern + target-extraction + the negative-case ("statement falls through service-query gate" — `"the application is running"` must NOT route to `SERVICE_CONTROL`). Test count 96 → 102, all passing.
-
-### Slice 2 — word-prefix matching (committed)
-
-#### Added
-- **sanitize.cyr: `is_word_prefix(input, word)`** — case-insensitive matcher that returns 1 iff `word` (cstring; leading/trailing whitespace stripped) is a prefix of any whitespace-delimited token in `input` (Str). Designed for keyword intent parsing: gives plural-tolerance ("file" → "files", "process" → "processes", "directory" → "directories") AND substring-trap immunity ("move" never matches inside "remove", "rm" never matches inside "warm") in one helper. Strict whole-token would kill plurals; raw substring has the trap class; token-prefix lands in the right middle for shell NL.
-- **interpreter.cyr: `input_has_word` auto-dispatch** — single-token needles (`"move"`, `"ip"`, `"file"`) route to `is_word_prefix`; compound phrases with internal whitespace (`"go to"`, `"contents of"`, `"running process"`, `" in "`) keep substring matching (the interior space already anchors at word boundaries in the input). Selection happens by inspecting the needle after a leading/trailing-space trim — preserves backward-compatibility with existing call sites that have trailing-space anchors (`"rm "`, `"cd "`, `"named "`) without needing to rewrite every needle.
-- **tests/test_core.tcyr** — 8 new assertions covering the trap-immunity and plural-tolerance invariants: `"remove the file foo.txt"` → REMOVE (not MOVE), `"rm foo.txt"` → REMOVE, `"warm the soup"` → SHELL_COMMAND (not REMOVE), `"move foo to bar"` → MOVE, `"rename foo to bar"` → MOVE, `"show me the files"` → LIST_FILES (plural), `"show me the directories"` → LIST_FILES (irregular plural), `"running processes"` → SHOW_PROCESSES (plural). Test count 88 → 96, all passing.
-
-#### Changed
-- **interpreter.cyr: MOVE / REMOVE ordering** — the prior ordering hack (REMOVE checked first so it could grab "remove the file" before the MOVE substring trap fired) is retired. With word-prefix matching the order doesn't matter; restored the natural MOVE → REMOVE flow. The `"move "` / `"rm "` trailing-space anchors are dropped (now `"move"` / `"rm"`) since they were defenses against the substring trap and the trap is gone.
-
-### Slice 1 — Cyrius 4.5.0 → 5.10.x stdlib regressions (already committed)
-
-#### Fixed
-- **sanitize.cyr (CI helpers)** — `str_contains_ci`, `str_find_ci`, `str_find_ci_from`, `str_split_ci` all called `str_len(needle)` / `str_data(needle)` where `needle` was a cstring literal. `lib/str.cyr`'s `str_len` reads `load64(s + 8)` as a Str length header — applied to a raw cstring address, that's whatever 8 bytes sit past the literal. Garbage length, every `input_has_word()` match silently false, every parsed intent fell through to `SHELL_COMMAND`. Helpers now use `strlen()` for the cstring side and raw pointer arithmetic off the needle. Single root cause behind virtually every "agnoshi can't parse NL" symptom on Cyrius 5.10.x.
-- **str_sub → str_substr migration** — `lib/str.cyr`'s `str_sub(s, start, len)` takes a *length*, but the parser/translator/prompt/audit/aliases/commands/session/sanitize call sites all pass an *end-position* (4.5.0 semantics, where the third arg was the end index). The mismatch let calls like `str_sub(input, idx + sep_len, str_len(input))` over-read past the buffer and SIGSEGV on the second parse call. Global rename to `str_substr` (the (start, end) variant in 5.10.x) across `aliases.cyr`, `audit.cyr`, `commands.cyr`, `prompt.cyr`, `session.cyr`, `sanitize.cyr`, `interpreter.cyr`. 19 call sites updated.
-- **interpreter.cyr (extract_after / extract_between)** — same `str_len(cstring keyword)` bug pattern as the sanitize helpers; replaced with `strlen(keyword)` / `strlen(before_kw)`.
-
-#### Added
-- **parse_state_queries** (`src/interpreter.cyr`) — new noun-phrase pass that runs after the existing parse_X chain and before the QUESTION fallback. Catches NL phrasings that today fell to QUESTION/SHELL_COMMAND:
-  - `NETWORK_INFO` ← "ip address", "my ip", "ip route", "network status", "network info"
-  - `SYSTEM_INFO` ← "uptime", "load average", "kernel version", "system info", "memory usage", "free memory", "hostname"
-  - `DISK_USAGE` ← "disk space", "free space", "disk usage", "how full", "storage usage" (with optional ` in /path` / ` on /mount` extraction)
-  - `SHOW_PROCESSES` ← "running processes", "what's running", "what is running", "active processes", "current processes"
-- **tests/test_core.tcyr** — first parse-coverage pass for the unit-test suite. Pulls in `src/translate.cyr` + `src/interpreter.cyr` and exercises `Interpreter_parse` directly. 31 new assertions covering: opener-routed paths (LIST_FILES via show/list, CHANGE_DIR via cd / "go to", FIND_FILES, SEARCH_CONTENT, CREATE_DIR, REMOVE, INSTALL_PACKAGE, GIT_STATUS, GIT_COMMIT, FIREWALL_LIST, PIPELINE), every `parse_state_queries` arm, QUESTION fall-through on bare interrogatives ("what year is it"), and the SHELL_COMMAND last-resort. Test count 57 → 88, all passing.
+#### Slice 9 — Coverage report in CI
+- **scripts/check-coverage.sh** — fn-level coverage gate. Cyrius doesn't ship line-coverage instrumentation, so the script counts top-level `fn` defs in the modules linked into the agnsh binary (`sanitize.cyr`, `mode.cyr`, `permissions.cyr`, `intent.cyr`, `commands.cyr`, `translate.cyr`, `interpreter.cyr`) and requires ≥80% to be referenced by name in `tests/test_core.tcyr` / `tests/test_security.tcyr`. Modules reserved for the v1.2.x interactive-shell wire-up (`session.cyr`, `ui.cyr`, `prompt.cyr`, `checkpoint.cyr`, etc.) are out-of-scope until that work lands. Current: 107 / 120 fns covered (89%), comfortably above the 80% threshold.
+- **CI gate** — `.github/workflows/ci.yml` runs `scripts/check-coverage.sh 80` after the smoke test. Below-threshold coverage now fails CI like fmt / lint / capacity drift.
+- **tests/test_core.tcyr — coverage anchor block** — direct assertions for the helpers that were transitively exercised but never named in the test file: string ops (`str_byte_at`, `str_contains_ci`, `str_find_ci`, `str_find_ci_from`, `str_split_ci`, `strip_control_chars`, `print_str_safe`), the substring-trap matcher (`is_word_prefix`), permission classifiers (`is_blocked_command`, `is_readonly_command`, `is_write_command`, `is_safe_command`, `is_safe_arg`, `is_shell_metachar`), parser dispatch arms (`parse_show_commands`, `parse_file_ops`, `parse_system_ops`, `parse_git_ops`, `parse_admin_ops`, `parse_service_query`, `parse_service_action`, `parse_state_queries`), translator dispatch (`translate_core`, `translate_extended`), mode helpers (`mode_description`, `mode_prompt_prefix`, `ModeManager_toggle`), tokenizer (`token_count`, `split_command_line`, `str_to_int`), env builder (`build_safe_env`), and intent option-pack bit-accessors (`list_options_time`).
 
 ### Notes
-- **Performance**: parse benchmarks moved from 1-2us (everything-falls-to-fallback fast path) to 3-12us (parser actually walking the branches). Slice 2's word-prefix matcher added a per-needle trim+scan loop; benchmarks stayed in the 3-12us band, so the structural improvement is free at this scale. Prior numbers were misleading because the parser was effectively a no-op.
-- **Remaining v1.2.0 parser-depth work** (not in this cut): broader NL opener vocabulary ("tell me about", "describe", "check"); service-status NL ("is nginx running"); coverage report wired into CI (roadmap target 80%+). The substring-trap structural fix that was deferred in slice 1 landed in slice 2.
+- **Test count**: 57 → **257** (4.5× growth). 200 new assertions across parse-side coverage, translator coverage, and coverage-anchor blocks.
+- **Binary size**: 271,832 B (1.1.0) → 280,344 B (+8.5 KB). Growth is the new parser helpers (`is_word_prefix`, `input_starts_with`, `token_count`, `parse_service_query`, `parse_service_action`, `parse_state_queries`) plus the `str_from()` wraps in the bug-class fixes. Still a single statically-linked ELF with zero runtime deps.
+- **Parser performance** — parse benchmarks moved 1-2us (pre-slice-1 fast path was a no-op due to broken CI helpers) → 3-13us (parser walking actual branches with the substring-trap-immune word-prefix matcher). Still well under interactive-latency thresholds.
+- **Bug-class audit findings** — the v1.1.0 toolchain migration left three distinct stdlib-semantics regressions in tree: `str_len(cstring)` (slice 1, sanitize + interpreter), `str_sub(start, end)` → length semantics (slice 1, 19 sites in 7 files), and `str_cat(cstring, Str)` (slices 7 + 8, 12 sites in 6 files). All swept. Recommended for the v1.2.x interactive-shell work: re-audit any module brought into the binary's include graph for the same patterns before wiring it in.
 
 ## [1.1.0] - 2026-05-10
 
