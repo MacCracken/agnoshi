@@ -8,20 +8,7 @@
 - **Cyrius port** (2026-04-13) — Rust → Cyrius port (27K → 4K lines, 21 modules), 32× parse speedup, 146 KB static binary
 - **Security audit** (2026-04-13) — 21 findings closed (5 critical, 7 high, 9 medium)
 - **v1.0.0** (2026-04-13) — Release candidate: tests passing, benchmarks proving Cyrius wins
-
-## v1.1.0 — Cyrius 5.10.34 + modernization (in flight)
-
-Repair-focused minor. No new features.
-
-- [ ] Cyrius toolchain bump: 4.5.0 → 5.10.34
-- [ ] Manifest migration: `cyrius.toml` → `cyrius.cyml`; version pulled via `${file:VERSION}`; `.cyrius-toolchain` retired
-- [ ] `lib/` gitignored; `cyrius deps` repopulates from version-pinned stdlib snapshot (matches agnosys/yukti/patra)
-- [ ] CI modernization (agnosys-parity): fmt diff-check, lint (warn-as-error), vet, capacity gate, syntax check, aarch64 best-effort cross-build, security-pattern scan
-- [ ] Release workflow: accept both `vX.Y.Z` and `X.Y.Z` tags, semver shape verification, sha256sums, prebuilt x86_64 + aarch64 binaries
-- [ ] Release entry-point fix: build `src/agnsh.cyr` → `agnsh` (was wrongly `src/main.cyr → agnoshi` in release.yml)
-- [ ] CLAUDE.md: replace Rust-era cleanliness commands (`cargo fmt/clippy/audit/deny/doc`) with Cyrius equivalents; purge stale "ModeManager undefined" Known Issues note
-- [ ] `docs/doc-health.md` debut: agnoshi-shaped doc-currency ledger (lifted from agnosys pattern)
-- [ ] Roadmap rework (this file)
+- **v1.1.0** (2026-05-10) — Cyrius 5.10.34 + ecosystem-parity modernization. Toolchain pin bumped 4.5.0 → 5.10.34; manifest migrated `cyrius.toml` → `cyrius.cyml` with `version = "${file:VERSION}"` (single source of truth); `.cyrius-toolchain` retired; `./lib/` gitignored + repopulated by `cyrius deps` from the pinned stdlib snapshot (matches agnosys/yukti/patra); CI gate set expanded to syntax check + fmt diff + lint warn-as-error + vet + capacity gate + aarch64 best-effort cross-build + agnoshi-shaped security scan; release workflow accepts both `vX.Y.Z` and `X.Y.Z` tag styles with SHA256SUMS + per-arch prebuilt binaries (also fixed: was building wrong entry `src/main.cyr → agnoshi` instead of `src/agnsh.cyr → agnsh`); `CLAUDE.md` cleanliness gates rewritten Rust → Cyrius (`cargo fmt/clippy/audit/deny/doc` → `cyrius check/fmt/lint/vet/capacity`); `docs/doc-health.md` debut as a living doc-currency ledger; full closeout pass landed the five Stale rows it flagged (`README.md`, `CONTRIBUTING.md`, `docs/architecture/overview.md`, `docs/agnsh.1`, `benchmarks-rust-v-cyrius.md`). Binary 271,912 bytes on Cyrius 5.10.x (up from 146 KB on 4.5.0 — toolchain-side growth, not new agnoshi code). Full detail: `CHANGELOG.md` 1.1.0 entry.
 
 ## v1.2.x — Polish bucket (slotted)
 

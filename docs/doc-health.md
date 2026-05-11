@@ -57,7 +57,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-05-10 | ✅ Fresh | 1.1.0 in flight; 1.2.0 / 1.2.1 / 1.2.2 slotted for the polish bucket; v1.3.x+ holds demand-gated systems/UX/consumer-app translators. |
+| `roadmap.md` | 2026-05-10 | ✅ Fresh | 1.1.0 moved to Shipped (2026-05-10) with the full modernization summary inline; 1.2.0 / 1.2.1 / 1.2.2 slotted for the polish bucket; v1.3.x+ holds demand-gated systems/UX/consumer-app translators. |
 
 ---
 
