@@ -87,25 +87,60 @@ fn audit_log_path() {
     store8(buf + hlen + slen, 0);
     return buf;
 }
-fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr) {
+fn classify_audit_result(tag, perm, desc_cstr) {
+    # Maps the parse+translate outcome to one of six audit-result
+    # labels. Mirrors slice 8's user-facing Hint: lines so a downstream
+    # `jq 'select(.result == "rejected_safety")'` can find exactly the
+    # same input shapes the user saw a Hint for. Order matters:
+    # safety-rejected, needs_llm, and needs_exec are tag/description
+    # properties that supersede the permission-derived classification.
+    #
+    #   rejected_safety  -- translator's safety check rejected (path
+    #                       traversal, shell metachars, leading-dash
+    #                       commit msg, null pid, etc.). Detected by
+    #                       translate_unknown's "Unknown intent" stamp.
+    #   needs_llm        -- QUESTION intent: parser routed to LLM but
+    #                       streaming isn't wired yet.
+    #   needs_exec       -- PIPELINE intent: no translator arm yet.
+    #   blocked          -- BLOCKED permission: caller-must-approve.
+    #   needs_approval   -- HIGH risk (ADMIN / SYSTEM_WRITE): runnable
+    #                       only after an interactive approval prompt
+    #                       (interactive-shell exec wire-up).
+    #   proposed         -- SAFE / READ_ONLY / USER_WRITE: auto-runnable
+    #                       once exec lands; logged as-is today.
+    # QUESTION and PIPELINE tags first — PIPELINE has no translator
+    # arm (`translate_extended` doesn't handle 41) so the dispatch
+    # falls through to translate_unknown, stamping the same "Unknown
+    # intent" description as a real safety-rejected translation.
+    # Without the tag-first order PIPELINE would mis-classify as
+    # rejected_safety.
+    if (tag == IntentTag.QUESTION) { return "needs_llm"; }
+    if (tag == IntentTag.PIPELINE) { return "needs_exec"; }
+    if (streq(desc_cstr, "Unknown intent") == 1) { return "rejected_safety"; }
+    if (perm == PermissionLevel.BLOCKED) { return "blocked"; }
+    if (risk_from_permission(perm) == RiskLevel.HIGH) { return "needs_approval"; }
+    return "proposed";
+}
+fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr, tag, desc_cstr) {
     # Every -c invocation produces one audit line. `approved` is 1 for
     # auto-runnable (SAFE/READ_ONLY/USER_WRITE), 0 for anything that
     # would require an interactive approval prompt (SYSTEM_WRITE/ADMIN)
-    # or is outright blocked. `result` is "proposed" since -c mode
-    # prints the translation but doesn't execute it yet — the exec
-    # wire-up is the next slice. Once that lands the result field
-    # flips to "executed" / "denied" / "error".
+    # or is outright blocked. `result` carries the slice-9 audit-result
+    # vocabulary (see classify_audit_result). When the exec wire-up
+    # lands, "proposed" will be replaced by "executed" / "denied" /
+    # "error" at the exec call site; the other five labels stay.
     var approved = 0;
     if (perm == PermissionLevel.SAFE) { approved = 1; }
     elif (perm == PermissionLevel.READ_ONLY) { approved = 1; }
     elif (perm == PermissionLevel.USER_WRITE) { approved = 1; }
+    var result_label = classify_audit_result(tag, perm, desc_cstr);
     var entry = AuditEntry_new(
     str_from("user"),
     str_from(mode_label_cstr),
     str_from(input_cstr),
     str_from(cmd_cstr),
     approved,
-    str_from("proposed")
+    str_from(result_label)
     );
     var logger = AuditLogger_new(audit_log_path());
     AuditLogger_log(logger, entry);
@@ -178,7 +213,7 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
         println("  Hint: translator safety check rejected this input -- try rephrasing");
     }
 
-    audit_one_shot(input_cstr, cmd, perm, mode_label_cstr);
+    audit_one_shot(input_cstr, cmd, perm, mode_label_cstr, tag, load64(translation + 16));
     return 0;
 }
 

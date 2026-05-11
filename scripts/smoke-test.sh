@@ -181,6 +181,26 @@ lines=$(wc -l < "$LOG" 2>/dev/null || echo 0)
 check "audit log lines match invocations" "2" "$lines"
 rm -rf "$SMOKE_HOME"
 
+# Audit result enrichment -- the `result` field now distinguishes six
+# classes that downstream filters can grep / jq on: proposed,
+# needs_approval, blocked, needs_llm, needs_exec, rejected_safety.
+RES_HOME=$(mktemp -d -t agnsh-result.XXXXXX)
+HOME="$RES_HOME" "$BIN" -c "show files" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" -c "install vim" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" -c "rm /tmp/x" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" -c "what is dns" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" -c "ls | grep foo" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" -c "remove ../etc/passwd" > /dev/null 2>&1
+RES_LOG="$RES_HOME/.agnsh_audit.log"
+res_content=$(cat "$RES_LOG" 2>/dev/null)
+check "result proposed for read-only" '"input":"show files".*"result":"proposed"' "$res_content"
+check "result needs_approval for admin" '"input":"install vim".*"result":"needs_approval"' "$res_content"
+check "result blocked for rm" '"input":"rm /tmp/x".*"result":"blocked"' "$res_content"
+check "result needs_llm for question" '"input":"what is dns".*"result":"needs_llm"' "$res_content"
+check "result needs_exec for pipeline" '"input":"ls | grep foo".*"result":"needs_exec"' "$res_content"
+check "result rejected_safety for traversal" '"input":"remove ../etc/passwd".*"result":"rejected_safety"' "$res_content"
+rm -rf "$RES_HOME"
+
 # Error handling
 out=$("$BIN" -c 2>&1) || true
 check "error on missing -c arg" "Error\|Usage\|required" "$out"

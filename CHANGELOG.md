@@ -6,9 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.2.1 work, slices 1-7 (committed) landed approval coverage, risk-print, audit, sudo timing, mode switching, history. Slice 8 (this cut) adds the **error-recovery loop** sub-bullet — when parse succeeds but translation isn't actually runnable (QUESTION needs an LLM that isn't wired; PIPELINE has no translator arm; any translator's safety check rejected the input), the binary used to print `Command: echo / Risk: [LOW]` and the user reasonably believed something ran. A new `Hint:` line surfaces each case so the user can rephrase.
+Heading to v1.3.0 (not v1.2.1) — the work landed since v1.2.0 is too big for a patch: full approval workflow (decision UI + audit shape + sudo re-verification), three deferred modules unbusted (audit, security, history), interactive shell wired (mode-aware prompt, mode/history/clear builtins, error-recovery hints), and the audit-result vocabulary now mirrors the parse+translate decision space. Slice 9 (this cut) extends slice 8's user-facing Hint: lines into the audit log itself — the `result` field now carries one of six labels (`proposed`, `needs_approval`, `blocked`, `needs_llm`, `needs_exec`, `rejected_safety`) so downstream filters can `jq 'select(.result == "rejected_safety")'` and find exactly the inputs the user got a Hint for.
 
-### Slice 8 — interactive shell: error-recovery hints (this cut)
+### Slice 9 — audit result enrichment (this cut)
+
+#### Added
+- **agnsh.cyr: `classify_audit_result(tag, perm, desc_cstr)`** — maps the parse+translate outcome to one of six audit-result labels. Mirrors slice 8's Hint: lines so the user-facing surface and the audit JSON tell the same story. Order-sensitive: QUESTION / PIPELINE tag checks come first because PIPELINE has no translator arm and falls through to `translate_unknown` (stamping the same `"Unknown intent"` description that a real safety-rejected translation does); without the tag-first order, pipelines would mis-classify as `rejected_safety`. Six labels:
+  - `rejected_safety` — translator safety check rejected the input (path traversal, shell metachars, leading-dash commit message, null PID, etc.)
+  - `needs_llm` — QUESTION tag: LLM streaming not yet wired
+  - `needs_exec` — PIPELINE tag: no translator arm
+  - `blocked` — BLOCKED permission level
+  - `needs_approval` — HIGH risk (SYSTEM_WRITE / ADMIN): would require an interactive approval prompt
+  - `proposed` — SAFE / READ_ONLY / USER_WRITE: auto-runnable, logged as-is until exec wire-up lands (at which point this label flips to `executed` / `denied` / `error` at the exec call site)
+- **agnsh.cyr: `audit_one_shot` extended signature** — now takes `(input, cmd, perm, mode_label, tag, desc)` and delegates the result classification. `print_intent_result` passes `tag` and `load64(translation + 16)` (the description cstring) through.
+- **scripts/smoke-test.sh — 6 new audit-result assertions** — one input per label class, each verified via grep against the on-disk audit log. The `input` prefix in each grep is the parser's deduplication anchor: `'"input":"show files".*"result":"proposed"'` etc. Smoke 52 → **58**.
+
+#### Notes
+- **Binary size**: 293,312 → 293,824 B (+0.5 KB) — six cstring labels + the classifier dispatch.
+- **Probe**: a single `-c` cycle through `show files / install vim / rm /tmp/x / what is dns / ls | grep foo / remove ../etc/passwd` produces six audit lines with all six result labels in order. The `result` field is now the single grep-target for "what did agnoshi actually do".
+- **Coverage** holds at 86%. `classify_audit_result` gains transitive coverage via smoke (each of the six labels exercised end-to-end); the classifier's ordering bug from the first probe (PIPELINE → rejected_safety) was caught by the smoke probe itself, not unit tests — direct unit tests would be a follow-up.
+- **Forward compat**: when exec wires up, `audit_one_shot` will take an additional `exec_result` arg and the `proposed` label will be replaced at the call site with `executed` / `denied` / `error`. The other five labels (`needs_*`, `blocked`, `rejected_safety`) stay — they describe parse-time decisions, not runtime outcomes.
+
+### Slice 8 — interactive shell: error-recovery hints (committed)
 
 #### Added
 - **agnsh.cyr: post-translation `Hint:` line** in `print_intent_result`. Three classes:
