@@ -22,6 +22,8 @@ include "src/permissions.cyr"
 include "src/config.cyr"
 include "src/commands.cyr"
 include "src/intent.cyr"
+include "src/translate.cyr"
+include "src/interpreter.cyr"
 
 var pass_count = 0;
 var fail_count = 0;
@@ -127,6 +129,73 @@ fn main() {
     var t = Translation_new("ls", targs, "List files", PermissionLevel.READ_ONLY, "ls");
     check("translation cmd", streq(load64(t), "ls") == 1);
     check("translation perm", load64(t + 24) == PermissionLevel.READ_ONLY);
+
+    var interp = Interpreter_new();
+    check("parse empty unknown",
+    load64(Interpreter_parse(interp, str_from(""))) == IntentTag.UNKNOWN);
+    check("parse show files",
+    load64(Interpreter_parse(interp, str_from("show me all files"))) == IntentTag.LIST_FILES);
+    check("parse list directory",
+    load64(Interpreter_parse(interp, str_from("list the directory"))) == IntentTag.LIST_FILES);
+    check("parse cd",
+    load64(Interpreter_parse(interp, str_from("cd /tmp"))) == IntentTag.CHANGE_DIR);
+    check("parse go to",
+    load64(Interpreter_parse(interp, str_from("go to /home"))) == IntentTag.CHANGE_DIR);
+    check("parse find named",
+    load64(Interpreter_parse(interp, str_from("find files named foo in /tmp"))) == IntentTag.FIND_FILES);
+    check("parse search content",
+    load64(Interpreter_parse(interp, str_from("search for hello in /tmp"))) == IntentTag.SEARCH_CONTENT);
+    check("parse create dir",
+    load64(Interpreter_parse(interp, str_from("create a directory named foo"))) == IntentTag.CREATE_DIR);
+    check("parse remove",
+    load64(Interpreter_parse(interp, str_from("remove the file foo.txt"))) == IntentTag.REMOVE);
+    check("parse install",
+    load64(Interpreter_parse(interp, str_from("install vim"))) == IntentTag.INSTALL_PACKAGE);
+    check("parse git status",
+    load64(Interpreter_parse(interp, str_from("git status"))) == IntentTag.GIT_STATUS);
+    check("parse git commit",
+    load64(Interpreter_parse(interp, str_from("git commit -m hello"))) == IntentTag.GIT_COMMIT);
+    check("parse firewall list",
+    load64(Interpreter_parse(interp, str_from("firewall list rules"))) == IntentTag.FIREWALL_LIST);
+    check("parse pipeline",
+    load64(Interpreter_parse(interp, str_from("ls | grep foo"))) == IntentTag.PIPELINE);
+
+    check("query ip address NETWORK",
+    load64(Interpreter_parse(interp, str_from("what is my ip address"))) == IntentTag.NETWORK_INFO);
+    check("query my ip NETWORK",
+    load64(Interpreter_parse(interp, str_from("my ip"))) == IntentTag.NETWORK_INFO);
+    check("query ip route NETWORK",
+    load64(Interpreter_parse(interp, str_from("ip route table"))) == IntentTag.NETWORK_INFO);
+    check("query uptime SYSTEM",
+    load64(Interpreter_parse(interp, str_from("uptime"))) == IntentTag.SYSTEM_INFO);
+    check("query load avg SYSTEM",
+    load64(Interpreter_parse(interp, str_from("load average"))) == IntentTag.SYSTEM_INFO);
+    check("query kernel version SYSTEM",
+    load64(Interpreter_parse(interp, str_from("kernel version"))) == IntentTag.SYSTEM_INFO);
+    check("query memory usage SYSTEM",
+    load64(Interpreter_parse(interp, str_from("memory usage"))) == IntentTag.SYSTEM_INFO);
+    check("query disk space DISK",
+    load64(Interpreter_parse(interp, str_from("disk space"))) == IntentTag.DISK_USAGE);
+    check("query free space DISK",
+    load64(Interpreter_parse(interp, str_from("free space"))) == IntentTag.DISK_USAGE);
+    check("query how full DISK",
+    load64(Interpreter_parse(interp, str_from("how full is the disk"))) == IntentTag.DISK_USAGE);
+    check("query running process PROC",
+    load64(Interpreter_parse(interp, str_from("running processes"))) == IntentTag.SHOW_PROCESSES);
+    check("query whats running PROC",
+    load64(Interpreter_parse(interp, str_from("what is running"))) == IntentTag.SHOW_PROCESSES);
+    check("query active process PROC",
+    load64(Interpreter_parse(interp, str_from("active processes"))) == IntentTag.SHOW_PROCESSES);
+
+    check("question what generic falls QUESTION",
+    load64(Interpreter_parse(interp, str_from("what year is it"))) == IntentTag.QUESTION);
+    check("question how generic falls QUESTION",
+    load64(Interpreter_parse(interp, str_from("how does dns work"))) == IntentTag.QUESTION);
+    check("question explain generic falls QUESTION",
+    load64(Interpreter_parse(interp, str_from("explain unix sockets"))) == IntentTag.QUESTION);
+
+    check("shell fallback raw",
+    load64(Interpreter_parse(interp, str_from("foo bar baz"))) == IntentTag.SHELL_COMMAND);
 
     println("");
     str_print(str_from("Passed: "));

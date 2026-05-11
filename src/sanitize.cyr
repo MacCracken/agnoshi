@@ -9,16 +9,24 @@ fn eprint_line(s) {
     eprint_str(s);
     syscall(SYS_WRITE, 2, "\n", 1);
 }
+# Case-insensitive contains/find/split helpers. Haystack is a Str
+# (the parser entry trims input to Str at the top of Interpreter_parse);
+# needle is always a cstring literal at the call sites. Using
+# `str_len(needle)` would read load64(needle+8) as a Str header on the
+# raw cstring address — bogus length, parser never matches anything
+# and every input falls through to SHELL_COMMAND. Reach for `strlen`
+# on the cstring side and pointer-arith directly off the needle.
 fn str_contains_ci(haystack, needle) {
     var hlen = str_len(haystack);
-    var nlen = str_len(needle);
+    var nlen = strlen(needle);
     if (nlen == 0) { return 1; }
     if (nlen > hlen) { return 0; }
+    var hd = str_data(haystack);
     for (var i = 0; i <= hlen - nlen; i = i + 1) {
         var found = 1;
         for (var j = 0; j < nlen; j = j + 1) {
-            var hc = load8(str_data(haystack) + i + j);
-            var nc = load8(str_data(needle) + j);
+            var hc = load8(hd + i + j);
+            var nc = load8(needle + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
             if (hc != nc) { found = 0; }
@@ -29,14 +37,15 @@ fn str_contains_ci(haystack, needle) {
 }
 fn str_find_ci(haystack, needle) {
     var hlen = str_len(haystack);
-    var nlen = str_len(needle);
+    var nlen = strlen(needle);
     if (nlen == 0) { return 0; }
     if (nlen > hlen) { return 0 - 1; }
+    var hd = str_data(haystack);
     for (var i = 0; i <= hlen - nlen; i = i + 1) {
         var found = 1;
         for (var j = 0; j < nlen; j = j + 1) {
-            var hc = load8(str_data(haystack) + i + j);
-            var nc = load8(str_data(needle) + j);
+            var hc = load8(hd + i + j);
+            var nc = load8(needle + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
             if (hc != nc) { found = 0; }
@@ -47,14 +56,15 @@ fn str_find_ci(haystack, needle) {
 }
 fn str_find_ci_from(haystack, needle, from) {
     var hlen = str_len(haystack);
-    var nlen = str_len(needle);
+    var nlen = strlen(needle);
     if (nlen == 0) { return from; }
     if (from + nlen > hlen) { return 0 - 1; }
+    var hd = str_data(haystack);
     for (var i = from; i <= hlen - nlen; i = i + 1) {
         var found = 1;
         for (var j = 0; j < nlen; j = j + 1) {
-            var hc = load8(str_data(haystack) + i + j);
-            var nc = load8(str_data(needle) + j);
+            var hc = load8(hd + i + j);
+            var nc = load8(needle + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
             if (hc != nc) { found = 0; }
@@ -70,8 +80,9 @@ fn str_split_ci(input, sep) {
         vec_push(result, input);
         return result;
     }
-    vec_push(result, str_sub(input, 0, idx));
-    vec_push(result, str_sub(input, idx + str_len(sep), str_len(input)));
+    var sep_len = strlen(sep);
+    vec_push(result, str_substr(input, 0, idx));
+    vec_push(result, str_substr(input, idx + sep_len, str_len(input)));
     return result;
 }
 fn is_shell_metachar(ch) {

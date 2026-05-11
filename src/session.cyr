@@ -99,7 +99,7 @@ fn Session_handle_builtin(self, input) {
         return 1;
     }
     if (str_starts_with(trimmed, "mode ") == 1) {
-        var mode_name = str_sub(trimmed, 5, str_len(trimmed));
+        var mode_name = str_substr(trimmed, 5, str_len(trimmed));
         mode_name = str_trim(mode_name);
         var new_mode = 0 - 1;
         if (streq(mode_name, "human") == 1) { new_mode = Mode.HUMAN; }
@@ -149,7 +149,7 @@ fn Session_execute_shell(self, input) {
             if (str_byte_at(dir, 0) == 126) {
                 var home = getenv("HOME");
                 if (home != 0) {
-                    dir = str_cat(home, str_sub(dir, 1, str_len(dir)));
+                    dir = str_cat(home, str_substr(dir, 1, str_len(dir)));
                 }
             }
             var result = syscall(SYS_CHDIR, str_data(dir));

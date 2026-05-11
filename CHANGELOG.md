@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+First slice of the v1.2.0 "deeper intent parsing" work. Headline: before this cut, **every NL input fell through to `SHELL_COMMAND`** because the parser was carrying two Cyrius 4.5.0 → 5.10.x stdlib-semantics regressions the v1.1.0 migration missed. Both fixed, parser actually routes now.
+
+### Fixed
+- **sanitize.cyr (CI helpers)** — `str_contains_ci`, `str_find_ci`, `str_find_ci_from`, `str_split_ci` all called `str_len(needle)` / `str_data(needle)` where `needle` was a cstring literal. `lib/str.cyr`'s `str_len` reads `load64(s + 8)` as a Str length header — applied to a raw cstring address, that's whatever 8 bytes sit past the literal. Garbage length, every `input_has_word()` match silently false, every parsed intent fell through to `SHELL_COMMAND`. Helpers now use `strlen()` for the cstring side and raw pointer arithmetic off the needle. Single root cause behind virtually every "agnoshi can't parse NL" symptom on Cyrius 5.10.x.
+- **str_sub → str_substr migration** — `lib/str.cyr`'s `str_sub(s, start, len)` takes a *length*, but the parser/translator/prompt/audit/aliases/commands/session/sanitize call sites all pass an *end-position* (4.5.0 semantics, where the third arg was the end index). The mismatch let calls like `str_sub(input, idx + sep_len, str_len(input))` over-read past the buffer and SIGSEGV on the second parse call. Global rename to `str_substr` (which is the (start, end) variant in 5.10.x) across `aliases.cyr`, `audit.cyr`, `commands.cyr`, `prompt.cyr`, `session.cyr`, `sanitize.cyr`, `interpreter.cyr`. 19 call sites updated.
+- **interpreter.cyr (extract_after / extract_between)** — same `str_len(cstring keyword)` bug pattern as the sanitize helpers; replaced with `strlen(keyword)` / `strlen(before_kw)`. Without this, even a passing CI helper would compute the wrong post-match offset and produce a misaligned `start` for the substring extraction.
+- **REMOVE / MOVE substring collision** — `input_has_word` is a substring containment check, not a tokenizer, so "remove the file foo.txt" matched `"move"` first and routed to `MOVE` (Intent 7) instead of `REMOVE` (Intent 8). Reordered so the REMOVE check runs before MOVE in `parse_file_ops`; added a comment flagging that proper word-boundary tokenization is the larger v1.2.0 parser-rework item.
+
+### Added
+- **parse_state_queries** (`src/interpreter.cyr`) — new noun-phrase pass that runs after the existing parse_X chain and before the QUESTION fallback. Catches NL phrasings that today fell to QUESTION/SHELL_COMMAND:
+  - `NETWORK_INFO` ← "ip address", "my ip", "ip route", "network status", "network info"
+  - `SYSTEM_INFO` ← "uptime", "load average", "kernel version", "system info", "memory usage", "free memory", "hostname"
+  - `DISK_USAGE` ← "disk space", "free space", "disk usage", "how full", "storage usage" (with optional ` in /path` / ` on /mount` extraction)
+  - `SHOW_PROCESSES` ← "running processes", "what's running", "what is running", "active processes", "current processes"
+- **tests/test_core.tcyr** — first parse-coverage pass for the unit-test suite. Pulls in `src/translate.cyr` + `src/interpreter.cyr` and exercises `Interpreter_parse` directly. 31 new assertions covering: opener-routed paths (LIST_FILES via show/list, CHANGE_DIR via cd / "go to", FIND_FILES, SEARCH_CONTENT, CREATE_DIR, REMOVE, INSTALL_PACKAGE, GIT_STATUS, GIT_COMMIT, FIREWALL_LIST, PIPELINE), every `parse_state_queries` arm, QUESTION fall-through on bare interrogatives ("what year is it"), and the SHELL_COMMAND last-resort. Test count 57 → 88, all passing.
+
+### Notes
+- **Performance**: parse benchmarks moved from 1-2us (everything-falls-to-fallback fast path) to 3-12us (parser actually walking the branches). Still well under interactive-latency thresholds; the prior numbers were misleading because the parser was effectively a no-op.
+- **Remaining v1.2.0 parser-depth work** (not in this cut): word-boundary tokenizer to retire the substring trap class entirely (today addressed case-by-case — "move " ordering, "remove" ordering); broader NL opener vocabulary ("tell me about", "describe", "check"); deeper coverage report (the roadmap target is 80%+ — currently no coverage instrumentation wired in).
+
 ## [1.1.0] - 2026-05-10
 
 Repair-focused modernization. No new shell features — toolchain bump + scaffolding parity with the rest of the AGNOS ecosystem.

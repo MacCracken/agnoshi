@@ -19,32 +19,32 @@ fn extract_last_arg(input) {
         if (str_byte_at(input, pos) == 32) { break; }
         pos = pos - 1;
     }
-    return str_sub(input, pos + 1, end);
+    return str_substr(input, pos + 1, end);
 }
 fn extract_after(input, keyword) {
     var idx = str_find_ci(input, keyword);
     if (idx < 0) { return 0; }
-    var start = idx + str_len(keyword);
+    var start = idx + strlen(keyword);
     var len = str_len(input);
     while (start < len) {
         if (str_byte_at(input, start) != 32) { break; }
         start = start + 1;
     }
     if (start >= len) { return 0; }
-    return str_trim(str_sub(input, start, len));
+    return str_trim(str_substr(input, start, len));
 }
 fn extract_between(input, before_kw, after_kw) {
     var start_idx = str_find_ci(input, before_kw);
     if (start_idx < 0) { return 0; }
-    var start = start_idx + str_len(before_kw);
+    var start = start_idx + strlen(before_kw);
     var len = str_len(input);
     while (start < len) {
         if (str_byte_at(input, start) != 32) { break; }
         start = start + 1;
     }
     var end_idx = str_find_ci_from(input, after_kw, start);
-    if (end_idx < 0) { return str_trim(str_sub(input, start, len)); }
-    return str_trim(str_sub(input, start, end_idx));
+    if (end_idx < 0) { return str_trim(str_substr(input, start, len)); }
+    return str_trim(str_substr(input, start, end_idx));
 }
 fn parse_show_commands(trimmed) {
     if (input_has_word(trimmed, "file") == 1
@@ -159,13 +159,11 @@ fn parse_file_ops(trimmed) {
         store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
-    if (input_has_word(trimmed, "move") == 1 || input_has_word(trimmed, "rename") == 1) {
-        var intent = Intent_new(IntentTag.MOVE);
-        store64(intent + 8, extract_between(trimmed, "move ", " to "));
-        if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "rename ", " to ")); }
-        store64(intent + 16, extract_after(trimmed, " to "));
-        return intent;
-    }
+    # REMOVE is checked before MOVE because input_has_word is a
+    # substring containment check (not a tokenizer): "remove" contains
+    # "move", so a naive "move"-first order routes deletions to MOVE.
+    # Word-boundary tokenization is part of the larger v1.2.0 parser
+    # rework; for now, ordering disambiguates.
     if (input_has_word(trimmed, "remove") == 1
     || input_has_word(trimmed, "delete") == 1
     || input_has_word(trimmed, "rm ") == 1) {
@@ -175,6 +173,13 @@ fn parse_file_ops(trimmed) {
         if (input_has_word(trimmed, "recursive") == 1 || input_has_word(trimmed, "-r") == 1) {
             store64(intent + 40, 1);
         }
+        return intent;
+    }
+    if (input_has_word(trimmed, "move ") == 1 || input_has_word(trimmed, "rename ") == 1) {
+        var intent = Intent_new(IntentTag.MOVE);
+        store64(intent + 8, extract_between(trimmed, "move ", " to "));
+        if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "rename ", " to ")); }
+        store64(intent + 16, extract_after(trimmed, " to "));
         return intent;
     }
     return 0;
@@ -313,6 +318,45 @@ fn parse_admin_ops(trimmed) {
     }
     return 0;
 }
+fn parse_state_queries(trimmed) {
+    if (input_has_word(trimmed, "ip address") == 1
+    || input_has_word(trimmed, "my ip") == 1
+    || input_has_word(trimmed, "ip route") == 1
+    || input_has_word(trimmed, "network status") == 1
+    || input_has_word(trimmed, "network info") == 1) {
+        return Intent_new(IntentTag.NETWORK_INFO);
+    }
+    if (input_has_word(trimmed, "uptime") == 1
+    || input_has_word(trimmed, "load average") == 1
+    || input_has_word(trimmed, "kernel version") == 1
+    || input_has_word(trimmed, "system info") == 1
+    || input_has_word(trimmed, "system information") == 1
+    || input_has_word(trimmed, "free memory") == 1
+    || input_has_word(trimmed, "memory usage") == 1
+    || input_has_word(trimmed, "hostname") == 1) {
+        return Intent_new(IntentTag.SYSTEM_INFO);
+    }
+    if (input_has_word(trimmed, "disk space") == 1
+    || input_has_word(trimmed, "free space") == 1
+    || input_has_word(trimmed, "disk usage") == 1
+    || input_has_word(trimmed, "how full") == 1
+    || input_has_word(trimmed, "storage usage") == 1) {
+        var intent = Intent_new(IntentTag.DISK_USAGE);
+        store64(intent + 8, extract_after(trimmed, " in "));
+        if (load64(intent + 8) == 0) { store64(intent + 8, extract_after(trimmed, " on ")); }
+        return intent;
+    }
+    if (input_has_word(trimmed, "running process") == 1
+    || input_has_word(trimmed, "running processes") == 1
+    || input_has_word(trimmed, "what's running") == 1
+    || input_has_word(trimmed, "what is running") == 1
+    || input_has_word(trimmed, "whats running") == 1
+    || input_has_word(trimmed, "active process") == 1
+    || input_has_word(trimmed, "current processes") == 1) {
+        return Intent_new(IntentTag.SHOW_PROCESSES);
+    }
+    return 0;
+}
 fn Interpreter_parse(self, input) {
     var trimmed = str_trim(input);
     var len = str_len(trimmed);
@@ -344,6 +388,8 @@ fn Interpreter_parse(self, input) {
     }
     var r5 = parse_admin_ops(trimmed);
     if (r5 != 0) { return r5; }
+    var r6 = parse_state_queries(trimmed);
+    if (r6 != 0) { return r6; }
     if (input_has_word(trimmed, "what") == 1
     || input_has_word(trimmed, "how") == 1
     || input_has_word(trimmed, "why") == 1

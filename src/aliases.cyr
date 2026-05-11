@@ -46,7 +46,7 @@ fn AliasManager_expand(self, input) {
         if (str_byte_at(input, wend) == 32) { break; }
         wend = wend + 1;
     }
-    var first_word = str_sub(input, start, wend);
+    var first_word = str_substr(input, start, wend);
     var expansion = map_get(load64(self), first_word);
     if (expansion == 0) {
         return input;
@@ -59,7 +59,7 @@ fn AliasManager_expand(self, input) {
         if (str_byte_at(input, rest_start) != 32) { break; }
         rest_start = rest_start + 1;
     }
-    var rest = str_sub(input, rest_start, len);
+    var rest = str_substr(input, rest_start, len);
     var result = str_cat(expansion, " ");
     result = str_cat(result, rest);
     return result;

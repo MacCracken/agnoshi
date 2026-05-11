@@ -149,12 +149,12 @@ fn audit_format_table(entries) {
     str_builder_add(builder, "\n");
     for (var i = 0; i < count; i = i + 1) {
         var e = vec_get(entries, i);
-        var ts = str_sub(load64(e), 0, 24);
+        var ts = str_substr(load64(e), 0, 24);
         var approved_str = "NO";
         if (load64(e + 40) == 1) { approved_str = "yes"; }
         var input_display = load64(e + 24);
         if (str_len(load64(e + 24)) > 30) {
-            input_display = str_cat(str_sub(load64(e + 24), 0, 27), "...");
+            input_display = str_cat(str_substr(load64(e + 24), 0, 27), "...");
         }
         str_builder_add(builder, ts);
         str_builder_add(builder, " ");

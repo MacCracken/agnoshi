@@ -34,7 +34,7 @@ fn split_command_line(input, first_word_out, args_out) {
         if (ch == 32 || ch == 9) { break; }
         pos = pos + 1;
     }
-    var cmd = str_sub(input, wstart, pos);
+    var cmd = str_substr(input, wstart, pos);
     store64(first_word_out, cmd);
     var argc = 0;
     while (pos < len) {
@@ -77,7 +77,7 @@ fn split_command_line(input, first_word_out, args_out) {
                 if (ch2 == 32 || ch2 == 9) { break; }
                 pos = pos + 1;
             }
-            var arg = str_sub(input, astart, pos);
+            var arg = str_substr(input, astart, pos);
             vec_push(args_out, arg);
             argc = argc + 1;
         }

@@ -29,7 +29,7 @@ fn PromptContext_new(cwd, username, ai_mode) {
 }
 fn prompt_abbreviate_home(path, home) {
     if (str_starts_with(path, home) == 1) {
-        var rest = str_sub(path, str_len(home), str_len(path));
+        var rest = str_substr(path, str_len(home), str_len(path));
         return str_cat("~", rest);
     }
     return path;
@@ -57,15 +57,15 @@ fn prompt_detect_git_branch(cwd) {
             var len = str_len(content);
             if (len > 0) {
                 if (str_byte_at(content, len - 1) == 10) {
-                    content = str_sub(content, 0, len - 1);
+                    content = str_substr(content, 0, len - 1);
                 }
             }
             var prefix = "ref: refs/heads/";
             if (str_starts_with(content, prefix) == 1) {
-                return str_sub(content, 16, str_len(content));
+                return str_substr(content, 16, str_len(content));
             }
             if (str_len(content) >= 8) {
-                return str_sub(content, 0, 8);
+                return str_substr(content, 0, 8);
             }
             return content;
         }
