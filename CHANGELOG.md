@@ -37,9 +37,10 @@ P(-1) audit/review pass per AGNOS first-party standards. Eight slices across the
 - **Cyrius toolchain pin 5.10.34 → 5.10.44** (`cyrius.cyml`). 10-patch bump along the 5.10 line. Bracketed benchmarks pre/post: all 10 averages unchanged to microsecond resolution. Codegen drift on x86_64: −32 bytes; aarch64 unchanged. No regression.
 
 ### Notes
-- **Test count** stays at **301** through P(-1) (no new feature work). Smoke 58. Coverage 86%. Both arches build (x86_64 293,920 B / aarch64 337,168 B — small growth from chmod-warning strings and history audit log changes).
+- **Test count** stays at **301** through P(-1) (no new feature work). Smoke 58 → **59** (added a cleaner CREATE_DIR-USER_WRITE traversal probe). Coverage 86%. Both arches build (x86_64 293,920 B / aarch64 337,168 B — small growth from chmod-warning strings and history audit log changes).
 - **CI gate count** grew: new `lint-cstr-str` step runs after `check-coverage`. Failing the new gate fails CI like fmt / lint / capacity drift.
 - **Bug-class history** documented in ADR-006 §Context: seven distinct variants, each linked to its discovery slice. Six of seven took a probe / SIGSEGV / first-use crash to find; all seven are now lint-caught.
+- **Smoke check loosened** for the REMOVE-traversal probe — accepts either `result:"rejected_safety"` (translator-side catches the path traversal) OR `result:"blocked"` (BLOCKED-perm classification short-circuits ahead of the safety check on some build envs). Both indicate the command won't auto-execute; the user's safety is preserved either way. Replaced by an additional CREATE_DIR-USER_WRITE traversal probe (no permission-vs-safety ambiguity — must be `rejected_safety`).
 
 ## [1.3.0] - 2026-05-11
 

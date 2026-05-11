@@ -14,17 +14,28 @@
 - **v1.3.1** (2026-05-11) — P(-1) audit/review pass per AGNOS first-party standards. Eight slices: Cyrius 5.10.34 → 5.10.44 toolchain bump (zero codegen drift), cstring/Str static analyzer with 14 patterns across 5 categories wired into CI (catches all 7 bug variants discovered across v1.2.0/v1.3.0), buffer-safety sweep with 5 dormant static-buf-escape fixes, syscall-return audit with 2 HIGH-severity unchecked-`sys_chmod` fixes (live multi-user data-leak on history file + checkpoint dir), ADR-006 codifying the four operational rules (refines ADR-005), input-validation sweep clearing 3 stale-stdlib breaks in `prompt.cyr`, path-traversal sweep verifying every file-op site, known-CVE pattern review. Zero CRITICAL findings; 8 HIGH all fixed; 5 MEDIUM deferred to v1.4.0 (`getcwd` × 3 return-handling + 2 `str_data(Str)` → syscall null-termination, all in modules outside agnsh's include graph); 12 LOW triaged. Full report at `docs/audit/2026-05-11-pminus1.md`. Test count stays at 301; smoke 58; coverage 86%. Binary 293,824 → 293,920 B (chmod warning + history changes).
 
 ## v1.3.x — Polish bucket
-### v1.3.2 — Packaging + zugot recipe
-- [ ] zugot recipe bump for AGNOS packaging (`agnoshi` 1.3.x)
-- [ ] Install path conventions reconciled with `ark install --group shell`
+
+*(empty — packaging items moved to v1.4.0 since ark packaging belongs alongside exec wire-up. zugot recipe is updated in-tree at `/home/macro/Repos/zugot/marketplace/agnoshi.cyml` as the upstream changes land — no release-coupled bumps needed for that.)*
 
 ## v1.4.0 — Exec wire-up + hoosh modernization
 
-The remaining v1.2.1-scoped items that needed broader infrastructure:
-- [ ] Exec wire-up for SAFE / READ_ONLY commands — `print_intent_result` currently *proposes* the command and audits with `result=proposed`; v1.4.0 adds actual `exec_vec(argv)` and flips `result` to `executed` / `denied` / `error` at the call site. Per-session SecurityContext on startup; sudo-escalation path through `execute_with_privileges` already wired in `src/security.cyr` (slice 5 v1.3.0).
-- [ ] `undo` builtin — wires `src/checkpoint.cyr` (already stdlib-aligned in v1.3.0 slice 8) for destructive-op rollback. Needs exec wire-up first.
-- [ ] LLM response streaming — requires hoosh modernization (hoosh itself is still on the pre-Cyrius API; that work happens in the hoosh repo first, then agnoshi consumes the modernized surface).
-- [ ] Tab completion — terminal raw mode (`tcsetattr` + termios), tty escape sequence handling, completion engine wired to `src/completion.cyr` (will need its own Cyrius 4.5 → 5.10 sweep first per the slice-5 / slice-7 / slice-8 pattern).
+The remaining v1.2.1-scoped items that needed broader infrastructure, plus the deferred MEDIUM findings from v1.3.1 P(-1):
+
+### Core
+- [ ] **Exec wire-up for SAFE / READ_ONLY commands** — `print_intent_result` currently *proposes* the command and audits with `result=proposed`; v1.4.0 adds actual `exec_vec(argv)` and flips `result` to `executed` / `denied` / `error` at the call site. Per-session SecurityContext on startup; sudo-escalation path through `execute_with_privileges` already wired in `src/security.cyr` (v1.3.0 slice 5).
+- [ ] **`undo` builtin** — wires `src/checkpoint.cyr` (already stdlib-aligned + chmod-return-checked in v1.3.1 slice 4) for destructive-op rollback. Needs exec wire-up first.
+- [ ] **LLM response streaming** — requires hoosh modernization (hoosh itself is still on the pre-Cyrius API; that work happens in the hoosh repo first, then agnoshi consumes the modernized surface).
+- [ ] **Tab completion** — terminal raw mode (`tcsetattr` + termios), tty escape sequence handling, completion engine wired to `src/completion.cyr` (will need its own Cyrius 4.5 → 5.10 sweep first per the v1.3.0 slice-5 / -7 / -8 pattern).
+
+### Packaging
+- [ ] **ark install path reconciliation** — match the `ark install --group shell` install convention (was scoped for v1.3.2; moved here to land alongside exec wire-up since both touch the binary's runtime contract).
+
+### v1.3.1 P(-1) deferred findings
+Carry-overs from `docs/audit/2026-05-11-pminus1.md` §6-§8 that need wire-up to land:
+- [ ] **session.cyr `SYS_CHDIR(str_data(Str))`** — non-null-terminated buffer to kernel. MEDIUM. Build a cstring path the same way `agnsh.cyr::audit_log_path` does (or add a `str_to_cstring(s)` helper in `lib/io.cyr`). 2 sites.
+- [ ] **checkpoint.cyr `sys_chmod(str_data(Str))`** — same shape. MEDIUM. 1 site.
+- [ ] **session.cyr `SYS_GETCWD` returns unchecked** — 3 sites. MEDIUM. Needs fallback-path policy (display "?" / use last-known cwd / fail-loudly).
+- [ ] **O_NOFOLLOW on audit/history opens** — LOW. Per-arch flag value (`0o400000` x86 vs `0o100000` aarch64) needs a constant + `lib/io.cyr` API extension to thread custom flags through `file_write_all`.
 
 ## v1.5.x and beyond — Demand-gated
 
