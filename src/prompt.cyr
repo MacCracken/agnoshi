@@ -15,7 +15,11 @@ fn PromptContext_new(cwd, username, ai_mode) {
     var hostname = str_from("localhost");
     var result = syscall(SYS_UNAME, &hostname_buf);
     if (result == 0) {
-        hostname = str_from(&hostname_buf + 65);
+        # str_clone to escape the local `var hostname_buf[256]` —
+        # the resulting Str gets stored long-term in the prompt
+        # context (offset 24) and would otherwise alias a stale
+        # buffer once PromptContext_new is called again.
+        hostname = str_clone(str_from(&hostname_buf + 65));
     }
     var p = alloc(56);
     store64(p, cwd);

@@ -6,9 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.3.1 P(-1) audit/review work. Slice 1 (committed): toolchain bump 5.10.34 → 5.10.44 + bracketed benchmarks. Slice 2 (this cut): the **cstring/Str static analyzer** queued in the v1.3.0 closeout. CI now catches the bug class that surfaced five times during v1.2.0/v1.3.0 — Str-typed stdlib fns receiving cstring literals, plus cross-arch-broken raw syscalls. Two real bugs caught on first run, fixed.
+v1.3.1 P(-1) audit/review work. Slices 1-2 (committed): Cyrius 5.10.34 → 5.10.44 toolchain bump (zero codegen drift) + cstring/Str static analyzer wired into CI. Slice 3 (this cut): buffer-safety sweep — extends the linter to catch the static-buffer-escape pattern that bit history.cyr in slice 7 of v1.3.0, plus 5 dormant copies of the same shape across deferred modules.
 
-### Slice 2 — cstring/Str type-mismatch linter (this cut)
+### Slice 3 — buffer-safety sweep + static-buf-escape linter (this cut)
+
+#### Fixed
+Five sites in deferred modules carried the static-buffer-escape pattern — `str_from(&buf)` wrapping a `var buf[N]` static buffer, with the resulting Str either *returned* or *stored in a long-lived struct*. Each call to the same fn would overwrite the buffer and silently invalidate every earlier returned Str. The fix is `str_clone(str_from(&buf))` to deep-copy into a heap buffer the Str owns. Same pattern that bit `CommandHistory_add` in slice 7 of v1.3.0 (every history entry's data aliased to whatever was last typed).
+- **ui.cyr:13** — `read_input_line` returned `str_from(&buf)` where `buf` was the function-local 4 KB stdin buffer. Every caller would see the same Str data after the next `read_input_line` call.
+- **prompt.cyr:18** — `PromptContext_new` stored `str_from(&hostname_buf + 65)` (uname's nodename field) into the prompt context struct. Long-lived store, function-local buffer.
+- **session.cyr:22, 162, 256** — three `str_from(&cwd_buf)` sites storing the cwd into the prompt context / session struct after a `chdir`. Same shape.
+
+All five wrapped with `str_clone`. The modules stay deferred to v1.4.0's exec wire-up; the fix means that wire-up doesn't double as a bug-discovery slice.
+
+#### Added
+- **scripts/lint-cstr-str.sh — Category D: static-buffer escape**. Two new patterns:
+  - `return str_from(&...)` — Str borrowing a local static buf, returned to outlive the buf.
+  - `store64(*, str_from(&...))` — Str borrowing a local static buf, stored into a long-lived struct slot.
+  
+  Together they catch the aliasing-trap class that took slice 7 of v1.3.0 to discover (and three more slices of confusion before that to even see). Escape hatch (`# lint:cstr-ok`) still applies for any rare intentional case (single-call, immediate-use lifetimes).
+
+- **Documentation in the linter** of the five distinct bug variants the script now retroactively catches:
+  - `str_len(cstring)` — slice 1 v1.2.0
+  - `str_sub(start, end)` semantics — slice 1 v1.2.0 (semantic, not type; covered by str_substr migration)
+  - `str_cat(cstring, *)` — slice 7 v1.2.0 + slice 8 v1.3.0
+  - `str_cat(*, cstring)` — slice 2 v1.3.1
+  - `is_safe_path(Str)` — slice 3 v1.3.0 (silent translate_unknown for every NL filesystem op since v1.0)
+  - aarch64 raw syscalls — v1.3.0 closeout
+  - `str_from(&static_buf)` aliasing — slice 7 v1.3.0
+
+#### Notes
+- **Buffer size audit** — every `var buf[N]` in agnoshi's source catalogued and verified safe:
+  - `agnsh.cyr:230 var b[1]` (1 i64 = 8B; reads 1 byte at a time)
+  - `agnsh.cyr:273 var buf[4096]` (4096 i64s = 32 KB; reads up to 4096 bytes)
+  - `interpreter.cyr:528 var cmd_out[1]` (8B; cstring ptr)
+  - `approval.cyr:85 var buf[64]` (512B; reads up to 63 bytes)
+  - `security.cyr:86 var stat_buf[18]` (144B = exact `struct stat` size on x86_64)
+  - Plus 7 more in deferred modules (ui/prompt/session); all within size limits, all escape-paths now str_cloned.
+  
+  Verified that Cyrius's `var buf[N]` allocates `N` i64 *words* (8N bytes), not N raw bytes — confirmed against `lib/process.cyr`'s `var status_buf[1]` for waitpid (kernel writes 4 bytes; [1] = 8 bytes available, safe). The CI security-scan's `"%d bytes"` warn message under-counts by 8× but the 8 KB / 64 KB thresholds still bracket the actual hard limits sensibly.
+- **No live-binary impact** — all 5 escape-pattern fixes are in modules not currently linked into `agnsh`. Binary size unchanged at 293,792 B (x86) / 337,032 B (aarch64). Tests stay at 301/301; smoke at 58/58.
+
+### Slice 2 — cstring/Str type-mismatch linter (committed)
 
 #### Fixed
 The linter caught two real bugs on its first run, both in modules deferred to v1.4.0 wire-up but reachable through future test_core inclusion:

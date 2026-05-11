@@ -19,7 +19,10 @@ fn Session_new(config, security, initial_mode) {
     ApprovalManager_set_auto_approve(approval, load64(config + 24));
     var cwd_buf[4096];
     syscall(SYS_GETCWD, &cwd_buf, 4095);
-    var cwd = str_from(&cwd_buf);
+    # cwd gets stored long-term in PromptContext (offset 0) and
+    # gets re-set later from other cwd_buf-using sites — str_clone
+    # so each stored cwd is independent of any local buffer.
+    var cwd = str_clone(str_from(&cwd_buf));
     var username = SecurityContext_username(security);
     var prompt_ctx = PromptContext_new(cwd, username, initial_mode);
     var history_path = str_from("/tmp/.agnsh_history");
@@ -156,7 +159,7 @@ fn Session_execute_shell(self, input) {
             if (result == 0) {
                 var cwd_buf[4096];
                 syscall(SYS_GETCWD, &cwd_buf, 4095);
-                store64(self + 72, str_from(&cwd_buf));
+                store64(self + 72, str_clone(str_from(&cwd_buf)));
                 store64(load64(self + 48), load64(self + 72));
                 store64(load64(self + 48) + 40, 0);
             } else {
@@ -250,7 +253,7 @@ fn Session_execute_translation(self, translation) {
             if (result == 0) {
                 var cwd_buf[4096];
                 syscall(SYS_GETCWD, &cwd_buf, 4095);
-                store64(self + 72, str_from(&cwd_buf));
+                store64(self + 72, str_clone(str_from(&cwd_buf)));
                 store64(load64(self + 48), load64(self + 72));
                 store64(load64(self + 48) + 40, 0);
             } else {

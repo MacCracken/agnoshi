@@ -114,6 +114,21 @@ scan "syscall(SYS_OPEN) — aarch64-broken" 'syscall\(\s*SYS_OPEN\b'
 scan "syscall(SYS_CHMOD) — aarch64-broken" 'syscall\(\s*SYS_CHMOD\b'
 scan "syscall(SYS_STAT) — aarch64-broken"  'syscall\(\s*SYS_STAT\b'
 
+# Category D — static-buffer escape via str_from. `var buf[N]` in
+# Cyrius is STATIC DATA, not stack — two calls to the same fn share
+# the backing memory. `str_from(&buf)` wraps the buffer in a Str
+# fat-pointer that BORROWS the data; if the resulting Str outlives
+# the function (returned, stored in a long-lived struct, pushed into
+# a vec), every subsequent call to the same fn clobbers every prior
+# Str's data. Use `str_clone(str_from(&buf))` to deep-copy.
+#
+# Bit history.cyr in slice 7 of v1.3.0 (`CommandHistory_add` borrowed
+# interactive_loop's `&buf`; every history entry's data aliased to
+# whatever was last typed). Audit P(-1) sweep in v1.3.1 slice 3 found
+# five dormant copies of the same shape in ui/prompt/session.
+scan "str_from(&buf) escape via return" 'return\s+str_from\(&'
+scan "str_from(&buf) escape via store"  'store64\([^,]+,\s*str_from\(&'
+
 if [ $FAIL -eq 0 ]; then
     echo "lint-cstr-str: clean (no Str/cstring antipatterns in $SRC_DIRS/)"
     exit 0

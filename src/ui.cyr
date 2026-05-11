@@ -10,7 +10,12 @@ fn read_input_line(prompt) {
     }
     if (n == 0) { return str_from(""); }
     store8(&buf + n, 0);
-    return str_from(&buf);
+    # str_clone deep-copies so the returned Str doesn't alias the
+    # function's `var buf[4096]` static-data — next call to
+    # read_input_line would overwrite the buffer and silently
+    # invalidate every earlier returned Str. Same aliasing-trap class
+    # as history.cyr's CommandHistory_add (slice 7 v1.3.0).
+    return str_clone(str_from(&buf));
 }
 fn ui_show_welcome() {
     str_println("");
