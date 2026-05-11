@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+First slice of v1.3.1 P(-1) audit/review work — the lead item per the roadmap is the Cyrius toolchain bump, run alone before any other audit work so codegen drift surfaces cleanly.
+
+### Changed
+- **Cyrius toolchain pin 5.10.34 → 5.10.44** (`cyrius.cyml`). 10-patch bump along the 5.10 line, no major / minor changes. `cyrius deps` repopulated `./lib/` from the 5.10.44 snapshot. All gates clean on the bumped pin: check, capacity, fmt, lint, test_core 301/301, test_security 26/26, smoke 58/58, coverage 86%, both arches build (x86_64 293,792 B / aarch64 337,032 B).
+
+### Performance
+- Bracketed benchmarks before+after the pin bump (recorded in `bench-history.csv`). All 10 benchmark averages unchanged to the microsecond resolution — parse path stays in the 3-13us band, translate stays at 1us, sanitize stays at 1us. Codegen drift on x86_64 was −32 bytes (293,824 → 293,792 B); aarch64 binary size unchanged at 337,032 B. No regression, no measurable performance change in either direction.
+
 ## [1.3.0] - 2026-05-11
 
 The v1.2.x cycle outgrew patch scope — what started as "v1.2.1 approval workflow + interactive shell" closed *both* lead roadmap items, swept five Cyrius 4.5 → 5.10 stdlib regressions across deferred modules, and added a six-label audit-result vocabulary. Bumped to v1.3.0 to reflect the actual scope.
