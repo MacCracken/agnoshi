@@ -9,6 +9,7 @@ ADRs document the why behind significant architectural decisions.
 - [ADR-003: Keyword-Based Parser Instead of Regex](003-keyword-parser-over-regex.md) — 2026-04-13
 - [ADR-004: Split Translate Dispatch Across Multiple Match Functions](004-split-translate-match.md) — 2026-04-13
 - [ADR-005: Explicit String Type Discipline](005-string-type-discipline.md) — 2026-04-13
+- [ADR-006: Cyrius cstring/Str Dispatch Discipline (refines ADR-005)](006-cstr-str-dispatch-discipline.md) — 2026-05-11
 
 ## Format
 
@@ -22,9 +23,9 @@ Each ADR follows the [MADR-inspired](https://adr.github.io/madr/) template:
 
 ## Writing a new ADR
 
-1. Pick the next sequential number (current: 005, next: 006)
+1. Pick the next sequential number (current: 006, next: 007)
 2. Copy an existing ADR as template
 3. Update the index in this README
 4. Keep it short — an ADR is a decision record, not an essay
 
-ADRs are immutable once accepted. To supersede, write a new ADR referencing the old one.
+ADRs are immutable once accepted. To supersede or refine, write a new ADR referencing the old one (cf. ADR-006 → ADR-005).

@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — agnoshi
 
-> **Last refresh**: 2026-05-11 (1.3.0 release cut — `CHANGELOG.md`, `VERSION`, `roadmap.md`, `docs/agnsh.1` all moved to reflect shipped state) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-11 (v1.3.1 P(-1) slice 5 — ADR-006 landed; audit report `2026-05-11-pminus1.md` added; ADR + audit tier rows refreshed) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`agnoshi`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md)) — same buckets, agnoshi-shaped tiers.
@@ -73,14 +73,15 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-04-13 | 🔵 Evergreen | ADR index — refresh only when a new ADR lands. |
+| `README.md` | 2026-05-11 | 🔵 Evergreen | ADR index — refresh only when a new ADR lands. Index entry added for ADR-006. |
 | `001-cyrius-port.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Rust → Cyrius port rationale. Historical record. |
 | `002-struct-construction.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Cyrius struct-construction posture during port. Re-read at the next major if Cyrius gets a struct-literal syntax that obviates it. |
-| `003-keyword-parser-over-regex.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Parser-strategy choice. Verify still holds when the 1.2.0 "deeper intent parsing" work lands — it might surface a successor ADR. |
-| `004-split-translate-match.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Driven by cc3 per-fn match-arm limits — re-read at 1.2.x against Cyrius 5.10.34 limits; the underlying constraint may have moved. |
-| `005-string-type-discipline.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). String/Str discipline rules for the Cyrius surface. |
+| `003-keyword-parser-over-regex.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Parser-strategy choice. v1.2.0's "deeper intent parsing" + word-prefix matcher landed without forcing a successor ADR — the keyword-parser posture still holds at the strategic level. |
+| `004-split-translate-match.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Driven by cc3 per-fn match-arm limits. Cyrius 5.10.x's capacity gate reports the underlying constraint at ~85% of 4096 fn-table slots — the split is still load-bearing. Re-read at v2.0.0 if the limit moves. |
+| `005-string-type-discipline.md` | 2026-04-13 | 📦 Frozen | Accepted (1.0.0). Refined by ADR-006 in v1.3.1 (refinement, not replacement — the per-module convention table still holds). |
+| `006-cstr-str-dispatch-discipline.md` | 2026-05-11 | ✅ Fresh | Accepted (v1.3.1 P(-1) slice 5). Refines ADR-005 with three operational rules (explicit `_in_str` suffix, per-arch syscall wrappers, `str_clone` for static-buf escape) + the 14-pattern CI lint shield. Closes the seven-variant bug class that surfaced over v1.2.0/v1.3.0. |
 
-**ADR posture**: low decision-velocity. Only architecturally significant calls earn an ADR. The 1.1.0 cycle is a modernization pass and doesn't earn one (the CHANGELOG entry carries the rationale; no architectural reversal). Re-evaluate at v2.0.0 cut.
+**ADR posture**: low decision-velocity. Only architecturally significant calls earn an ADR. v1.1.0 was a modernization pass (no ADR). v1.2.0 was a feature pass that didn't reverse any architectural call (no ADR). v1.3.0 saw a major refinement of ADR-005's discipline driven by repeated production discovery of the underlying bug class — that earns ADR-006. Re-evaluate at v2.0.0 cut.
 
 ---
 
@@ -91,8 +92,9 @@ Date-stamped, frozen by design. Each P(-1) hardening pass per CLAUDE.md cadence 
 | File | Date | Status | Notes |
 |---|---|---|---|
 | `2026-04-13.md` | 2026-04-13 | 📦 Frozen | 1.0.0 P(-1) — 21 findings (5 critical, 7 high, 9 medium), all closed in the same cycle. Historical record. |
+| `2026-05-11-pminus1.md` | 2026-05-11 | ✅ Fresh (in progress) | v1.3.1 P(-1) pass. Running tally: 0 CRITICAL / 8 HIGH (all fixed — 5 static-buf escape, 2 chmod, 1 str_starts_with) / 3 MEDIUM (getcwd × 3, deferred to v1.4.0) / 11 LOW (triaged, not fixed). 14 lint patterns added across 5 categories — all 7 historical bug variants now CI-caught. Updated as P(-1) slices land. |
 
-Next audit slot: 1.2.0 P(-1) pass (paired with intent-parsing depth + translator hardening), or sooner if a CVE pattern surfaces in agnoshi's parser surfaces (shell tokenizer, JSON audit-log writer, alias expander, sanitize.cyr) or in Cyrius itself.
+Next audit slot: 2.0.0 cut OR sooner if a new CVE pattern surfaces in agnoshi's parser surfaces / sanitize predicates / Cyrius itself. v1.3.1's audit closes out the v1.2.0/v1.3.0 bug-class arc; v1.4.0 exec wire-up may surface a new surface area (real fork+exec error handling, sudo-escalation edge cases) but those are exec-side concerns, not parser-side.
 
 ---
 

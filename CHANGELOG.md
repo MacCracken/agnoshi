@@ -6,9 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-v1.3.1 P(-1) audit/review. Slices 1-3 (committed): toolchain bump, cstring/Str linter, buffer-safety sweep. Slice 4 (this cut): **syscall return-value handling sweep** — walked all 35+ syscall sites, found two HIGH-severity unchecked `sys_chmod` returns (live in `history.cyr`, deferred in `checkpoint.cyr`) where a silent chmod failure leaves user-private files at the umask default and leaks data to other users on a multi-user system. Fixed + linter category added. Also wrote up the consolidated P(-1) audit report.
+v1.3.1 P(-1) audit/review. Slices 1-4 (committed): toolchain bump, cstring/Str linter, buffer-safety sweep, syscall-return audit + chmod fixes + audit report. Slice 5 (this cut): **doc audit + ADR-006**. Captures the v1.2.0/v1.3.0 bug-class learnings as an architectural decision record; refines ADR-005's per-module convention with the three operational rules (explicit `_in_str` suffix, per-arch syscall wrappers, `str_clone` for static-buf escape) and references the 14-pattern CI lint shield as the mechanical enforcement.
 
-### Slice 4 — syscall return-value handling (this cut)
+### Slice 5 — doc audit + ADR-006 (this cut)
+
+#### Added
+- **docs/adr/006-cstr-str-dispatch-discipline.md** — refines ADR-005 with the operational rules earned by v1.2.0/v1.3.0 production discovery. Catalogues the seven distinct bug variants (each linked back to its discovery slice), codifies the `_in_str` suffix convention (and the load-bearing rename from `is_safe_path_str` to `safe_path_in_str` to sidestep Cyrius's overload-registration trap), and documents the four rules: (1) explicit `_str`-side suffix at cross-type boundaries, (2) per-arch syscall wrappers, (3) `str_clone` for static-buf escape, (4) CI lint shield as the mechanical enforcement. Includes the four alternatives considered (stay-with-005, --strict-types in Cyrius, all-Str, Cyrius lint plugin) with rejection rationale.
+- **docs/adr/README.md** — index entry for ADR-006 + the "Writing a new ADR" footer bumped (current: 006, next: 007).
+
+#### Changed
+- **docs/doc-health.md** — Tier 4 (ADRs) and Tier 5 (Audit reports) rows refreshed. ADR-005 status now reads "Refined by ADR-006" (still frozen, but its discipline-table is now augmented by 006's operational rules). Audit report `2026-05-11-pminus1.md` row added with the running-tally severity counts. ADR-posture commentary updated to reflect that v1.1.0 was a modernization (no ADR), v1.2.0 was a feature pass with no architectural reversal (no ADR), and v1.3.0's repeated bug-class discovery earned ADR-006.
+
+#### Notes
+- **Doc deliverables for v1.3.1 P(-1) are complete.** The roadmap's `Doc audit — doc-health.md refresh, ADRs for any architectural calls` line is satisfied (ADR landed; doc-health Tier rows refreshed). What remains in the v1.3.1 P(-1) roadmap: input validation sweep, no-command-injection audit (deferred to v1.4.0 exec wire-up — agnoshi has no exec call sites in the live binary yet), no-path-traversal sweep (largely covered by `safe_path_in_str` + the linter), and known-CVE review. These are smaller residual items; v1.3.1 can close after one or two more bites.
+
+### Slice 4 — syscall return-value handling (committed)
 
 #### Fixed
 - **history.cyr:112 — `sys_chmod` return unchecked** on `$HOME/.agnsh_history`. **HIGH severity**: if chmod fails (race / NFS / unusual filesystem), the history file stays at the umask default (typically 0644), leaking every shell command the user has ever typed to other users on a multi-user system. **Live in agnsh** (saved on every `exit` / `quit`). Captured the return; writes a one-line stderr warning on non-zero result so the operator sees a visible signal without escalating the write failure (the file itself was already written successfully).
