@@ -16,17 +16,18 @@
 
 ### v1.3.1 — P(-1) audit/review pass
 Hardening cycle per the AGNOS [first-party standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/planning/first-party-standards.md) "Security Hardening (required before every release)" section + the agnoshi CLAUDE.md P(-1) work loop.
+- [ ] **Cyrius toolchain bump 5.10.34 → 5.10.44** (`cyrius.cyml` pin). Local dev has been running 5.10.39 / 5.10.43 / 5.10.48 / 5.10.49 through the v1.3.0 cycle without surfacing pin-version issues; the P(-1) audit is the right place to commit to a tighter pin (CI runs the manifest pin verbatim). Re-run all gates against the bumped toolchain before any other audit work — surfaces any silent codegen / stdlib drift up front rather than mixing it with audit findings.
 - [ ] Input validation sweep — every function accepting external data validates bounds, types, ranges
 - [ ] Buffer safety — every `var buf[N]` verified for size + access bounds + no-overflow-into-adjacent
-- [ ] Syscall review — every syscall site validated (args checked, returns handled, error paths complete)
+- [ ] Syscall review — every syscall site validated (args checked, returns handled, error paths complete). v1.3.0 fixed three cross-arch breaks (SYS_OPEN/CHMOD/STAT in audit/history/security via per-arch wrappers); audit should sweep remaining direct `syscall(SYS_*, ...)` sites for the same portability surface.
 - [ ] Pointer validation — no raw deref of untrusted input
 - [ ] No command injection — no `sys_system()` / `exec_cmd()`-with-unsanitized-input patterns; only `exec_vec` with explicit argv
-- [ ] No path traversal — every external file path validated (already done in `is_safe_path_str`; sweep for any remaining direct uses)
+- [ ] No path traversal — every external file path validated (already done in `safe_path_in_str`; sweep for any remaining direct uses)
 - [ ] Known-CVE review — check patterns and behaviors against current CVE databases
 - [ ] Static-analyzer slice — "cstring passed where `Str` is typed" lint to retire the five-pattern bug class that surfaced over v1.2.0 + v1.3.0 (currently caught only by Cyrius 5.10.x's single type-warning hint; the other four variants surface as silent runtime fallthroughs)
 - [ ] Document findings in `docs/audit/YYYY-MM-DD-audit.md` per AGNOS convention
-- [ ] Deeper benchmarks per CLAUDE.md P(-1) §4 — `./scripts/bench-history.sh` baseline + post-review comparison
-- [ ] Doc audit — `docs/doc-health.md` refresh, ADRs for any architectural calls (`is_safe_path_str` Str-vs-cstring split is a candidate), guides + examples re-read against current `src/`
+- [ ] Deeper benchmarks per CLAUDE.md P(-1) §4 — `./scripts/bench-history.sh` baseline + post-review comparison; specifically include a pre/post bench against the toolchain bump so codegen perf changes between 5.10.34 and 5.10.44 are quantified
+- [ ] Doc audit — `docs/doc-health.md` refresh, ADRs for any architectural calls (`safe_path_in_str` Str-vs-cstring split is a candidate), guides + examples re-read against current `src/`
 
 ### v1.3.2 — Packaging + zugot recipe
 - [ ] zugot recipe bump for AGNOS packaging (`agnoshi` 1.3.x)
