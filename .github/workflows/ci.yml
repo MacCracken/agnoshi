@@ -25,21 +25,34 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Cyrius toolchain
+        # Versioned install layout (~/.cyrius/versions/$VERSION/{bin,lib}
+        # + symlinks) matches the Cyrius 6.0+ wrapper's expectations
+        # (drift-check between manifest pin and resolved cycc).
         run: |
           CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
           echo "Installing Cyrius $CYRIUS_VERSION"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          mkdir -p "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
+          # cycc_aarch64 (renamed from cc5_aarch64 in Cyrius 6.0) may
+          # ship under bin/ (picked up by the bin/* copy above) or at
+          # the tarball top-level depending on the release. Cover both.
+          [ -f "$CYRIUS_DIR/cycc_aarch64" ] && cp "$CYRIUS_DIR/cycc_aarch64" "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"
+          chmod +x "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"* 2>/dev/null || true
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/bin"
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib" "$HOME/.cyrius/lib"
+          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
       - name: Verify toolchain
-        run: cc5 --version
+        # Use the wrapper (`cyrius`) — present in every release. `cc5`
+        # was renamed to `cycc` in Cyrius 6.0, so a hard `cc5 --version`
+        # breaks the CI install on every 6.x release.
+        run: cyrius --version
 
       - name: Resolve dependencies
         # `./lib/` is gitignored — `cyrius deps` populates it from
@@ -115,11 +128,12 @@ jobs:
 
       - name: Cross-build aarch64
         # The toolchain translates x86_64 syscall numbers to aarch64
-        # at codegen. Requires cc5_aarch64 in the toolchain bin dir;
-        # skip with a warning if the release didn't bundle it.
+        # at codegen. Requires cycc_aarch64 (renamed from cc5_aarch64
+        # in Cyrius 6.0) in the toolchain bin dir; skip with a warning
+        # if the release didn't bundle it.
         run: |
-          if [ ! -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
-            echo "::warning::cc5_aarch64 not shipped with Cyrius $CYRIUS_VERSION — skipping aarch64 cross-build"
+          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
+            echo "::warning::cycc_aarch64 not shipped with Cyrius $CYRIUS_VERSION — skipping aarch64 cross-build"
             exit 0
           fi
           CYRIUS_DCE=1 cyrius build --aarch64 src/agnsh.cyr build/agnsh-aarch64

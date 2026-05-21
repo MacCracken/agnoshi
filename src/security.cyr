@@ -80,7 +80,8 @@ fn security_get_username_safe(uid) {
 # (`include/uapi/asm-generic/stat.h`). Both arches expose a `sys_stat`
 # wrapper in lib/syscalls_{x86,aarch64}_linux.cyr — but the st_uid
 # offset has to be per-arch. The build flag `CYRIUS_ARCH_X86` (set by
-# cc5; cc5_aarch64 sets `CYRIUS_ARCH_AARCH64`) selects the right one.
+# cycc; cycc_aarch64 sets `CYRIUS_ARCH_AARCH64`) selects the right one.
+# (Cyrius 6.0 renamed cc5 → cycc, cc5_aarch64 → cycc_aarch64.)
 fn verify_sudo_path(sudo_path) {
     if (file_exists(sudo_path) == 0) { return 0; }
     var stat_buf[18];
