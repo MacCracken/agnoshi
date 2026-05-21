@@ -79,17 +79,28 @@ $found"
 # `str_starts_with` regex.
 #
 # Coverage rationale — only flag stdlib fns we've confirmed are BUGGY
-# when passed a cstring. Cyrius dispatches several Str-typed fns to
-# their `_cstr` counterpart automatically (`strlen` → `strlen_str`,
-# `str_contains` → `str_contains_cstr`, `str_eq` → `str_eq_cstr`,
-# `str_split` → `str_split_cstr`) so those calls are safe even though
-# the signature is typed Str. Fns WITHOUT a `_cstr` overload are the
-# ones that bite:
+# when passed the wrong-typed arg. Cyrius advertises name-lookup
+# dispatch from Str-typed call sites to `_str` variants (`strlen` →
+# `strlen_str`, `str_contains` → `str_contains_cstr`, etc.) but the
+# dispatch requires the COMPILER to see the arg's type as Str. When
+# the call site's arg is a plain `var s` with no type annotation, the
+# dispatch is UNRELIABLE — under Cyrius 6.0.x it routes to the cstring
+# `strlen` instead, which walks the Str fat-pointer bytes until it
+# finds a zero (typically inside the address pointer's high bytes,
+# producing a garbage length of 1-8). The v1.3.3 bump caught this in
+# `path_traversal_in_str(s)` → `strlen(s)` falsely returning 1 ~5% of
+# the time, defeating the safety predicate on path traversal. Fix:
+# call the explicit Str primitive (`str_len`, `str_data`) directly.
+# Fns WITHOUT a `_cstr` overload that bite:
 #   str_len    — Str-only primitive (use `strlen` for cstring)
 #   str_data   — Str-only primitive
 #   str_cat    — no str_cat_cstr in lib/str.cyr (verified)
 #   str_starts_with — no str_starts_with_cstr (verified)
 #   str_ends_with   — no str_ends_with_cstr (verified)
+# Fns with a `_cstr` overload that STILL bite under 6.0.x when arg
+# isn't type-annotated:
+#   strlen     — dispatches reliably ONLY when arg is `s: Str` typed
+#                (no annotation = cstring strlen walks pointer bytes)
 
 # Category A — first-arg cstring literal.
 scan "str_len(cstring)"        '\bstr_len\("'
@@ -128,6 +139,37 @@ scan "syscall(SYS_STAT) — aarch64-broken"  'syscall\(\s*SYS_STAT\b'
 # five dormant copies of the same shape in ui/prompt/session.
 scan "str_from(&buf) escape via return" 'return\s+str_from\(&'
 scan "str_from(&buf) escape via store"  'store64\([^,]+,\s*str_from\(&'
+
+# Category F — `strlen(...)` inside a `_in_str` fn body. Per ADR-006,
+# the `_in_str` suffix marks a Str-side helper, so the arg is a Str
+# fat-pointer. Cyrius 6.0.x's overload dispatch routes untyped
+# `strlen(s)` to the cstring strlen (which walks pointer bytes
+# looking for a zero) instead of `strlen_str` (which loads load64(s+8)
+# directly). The bug surfaces as a flaky safety-predicate false-pass
+# at ~5-10% rate, depending on the address layout's first zero byte.
+# Use `str_len(...)` directly (no dispatch ambiguity) inside any
+# `_in_str` fn body. The v1.3.3 cycle caught this in three sites in
+# sanitize.cyr; this lint pattern catches future occurrences.
+#
+# Implementation: awk through src/*.cyr, when inside a fn whose name
+# matches `_in_str`, flag any `strlen(` line.
+for f in $SRC_DIRS/*.cyr; do
+    [ -f "$f" ] || continue
+    bad=$(awk '
+        /^fn[[:space:]]+[a-zA-Z_][a-zA-Z_0-9]*_in_str[[:space:]]*\(/ { in_fn = 1; next }
+        in_fn && /^fn[[:space:]]/                                    { in_fn = 0 }
+        in_fn && /^}/                                                { in_fn = 0; next }
+        in_fn && /\<strlen[[:space:]]*\(/ && !/lint:cstr-ok/ {
+            print FILENAME ":" NR ": " $0
+        }
+    ' "$f" 2>/dev/null || true)
+    if [ -n "$bad" ]; then
+        HITS="$HITS
+strlen(...) inside _in_str fn body — use str_len(...) directly (Category F):
+$bad"
+        FAIL=1
+    fi
+done
 
 # Category E — security-critical syscall returns left unchecked.
 # `sys_chmod` is the canary: failures leave files at umask-default

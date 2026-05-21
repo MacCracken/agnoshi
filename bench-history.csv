@@ -29,3 +29,13 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-05-11T18:51:00Z,cyrius_5.10.44,main,perm/classify_5,6000
 2026-05-11T18:51:00Z,cyrius_5.10.44,main,sanitize/basename,1000
 2026-05-11T18:51:00Z,cyrius_5.10.44,main,sanitize/safe_path,1000
+2026-05-21T04:38:01Z,deab6d3,main,parse/list_files,4000
+2026-05-21T04:38:01Z,deab6d3,main,parse/cd,3000
+2026-05-21T04:38:01Z,deab6d3,main,parse/find_files,5000
+2026-05-21T04:38:01Z,deab6d3,main,parse/git_status,6000
+2026-05-21T04:38:01Z,deab6d3,main,parse/shell_cmd,13000
+2026-05-21T04:38:01Z,deab6d3,main,translate/list_files,1000
+2026-05-21T04:38:01Z,deab6d3,main,translate/cd,1000
+2026-05-21T04:38:01Z,deab6d3,main,perm/classify_5,5000
+2026-05-21T04:38:01Z,deab6d3,main,sanitize/basename,1000
+2026-05-21T04:38:01Z,deab6d3,main,sanitize/safe_path,1000

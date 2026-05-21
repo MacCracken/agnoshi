@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — agnoshi
 
-> **Last refresh**: 2026-05-11 (v1.3.1 P(-1) slice 5 — ADR-006 landed; audit report `2026-05-11-pminus1.md` added; ADR + audit tier rows refreshed) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-20 (v1.3.3 — Cyrius 6.0.1 toolchain bump + sanitize.cyr strlen→str_len fix in 3 sites + lint Category F; root-level pin refs + agnsh.1 + architecture overview rebumped) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`agnoshi`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md)) — same buckets, agnoshi-shaped tiers.
@@ -42,13 +42,13 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: Cyrius 5.10.34 stat-line added, install prefixed with `cyrius deps`, "146 KB" headline reframed as a 1.0.0-port-arc snapshot pointing at `benchmarks-rust-v-cyrius.md` + in-tree refresh command, "v1.0 minimal" annotation dropped. |
-| `CHANGELOG.md` | 2026-05-11 | ✅ Fresh | 1.3.0 entry cut. Documents the nine-slice approval-workflow + interactive-shell + bug-class arc (audit/security/history modules unbusted, Str-aware safety predicates, six-class audit result vocabulary). Slice 1-9 detail preserved below the consolidated release summary. Source of truth for shipped work. |
+| `README.md` | 2026-05-20 | ✅ Fresh | v1.3.3: stat-line bumped (`1.3.3 · Cyrius 6.0.1 · 295 KB / 340 KB · 301+26+59 tests`), install/pin refs bumped to 6.0.1, post-bump binary-size line updated. |
+| `CHANGELOG.md` | 2026-05-20 | ✅ Fresh | v1.3.3 entry cut. Documents the Cyrius 6.0.1 toolchain bump + `sanitize.cyr` strlen→str_len fix (three `_in_str` sites — path_traversal / shell_metachars / safe_arg) closing a 5-10% safety-predicate flake exposed by 6.0.x's codegen layout, plus lint-cstr-str.sh Category F. Source of truth for shipped work. |
 | `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Rust→Cyrius gate commands swapped; stale Known Issues purged; version-discipline note added (VERSION is single SoT). |
-| `CONTRIBUTING.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `cyrius deps` step added, cleanliness gate command list inlined, cc3-era warnings (`//`-with-colons mis-parse, 40-arm per-fn limit) purged, Cyrius 5.10.x trailing-comma rule carried in from CHANGELOG. |
+| `CONTRIBUTING.md` | 2026-05-20 | ✅ Fresh | v1.3.3: pin ref bumped 5.10.44 → 6.0.1. |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
-| `VERSION` | 2026-05-11 | ✅ Fresh | `1.3.2` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-05-20 | ✅ Fresh | `1.3.3` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -57,7 +57,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-05-11 | ✅ Fresh | 1.3.0 moved to Shipped (2026-05-11) with the nine-slice approval+interactive summary inline; v1.3.x polish bucket holds 1.3.1 P(-1) audit/review per AGNOS first-party standards and 1.3.2 packaging; v1.4.0 holds the deferred exec wire-up + hoosh modernization + LLM streaming + tab completion bucket; v1.5.x+ holds demand-gated systems/UX/consumer-app translators. |
+| `roadmap.md` | 2026-05-20 | ✅ Fresh | v1.3.3 added to Shipped (2026-05-20) — Cyrius 6.0.1 toolchain bump + sanitize.cyr strlen→str_len fix + lint Category F. v1.3.x polish bucket still closed; v1.4.0 holds the deferred exec wire-up + hoosh modernization + LLM streaming + tab completion bucket; v1.5.x+ holds demand-gated systems/UX/consumer-app translators. |
 
 ---
 
@@ -65,7 +65,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `overview.md` | 2026-05-10 | ✅ Fresh | 1.1.0 closeout: `lib/` reframed as `cyrius deps`-managed (gitignored); build-time req bumped 4.3.0+ → Cyrius 5.10.34; runtime binary size annotated with 146 KB → 272 KB 4.5.0→5.10.x toolchain-side growth. Module map verified against `src/` (21 files). |
+| `overview.md` | 2026-05-20 | ✅ Fresh | v1.3.3: build-time req pin bumped 5.10.44 → 6.0.1; runtime binary-size line updated (295 KB x86_64 / 340 KB aarch64). Module map verified against `src/` (21 files). |
 
 ---
 
@@ -125,7 +125,7 @@ Next audit slot: 2.0.0 cut OR sooner if a new CVE pattern surfaces in agnoshi's 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `benchmarks-rust-v-cyrius.md` (repo root) | 2026-05-10 | ✅ Fresh (frozen by design) | Rust → Cyrius port-arc comparison, point-in-time at 1.0.0 / Cyrius 4.5.0. The cc3-limit framing was re-anchored as historical in 1.1.0 closeout (header callout + in-tree refresh command for current-toolchain numbers); substance left frozen. Home decision (root vs `docs/`) still open — see Open Question. |
-| `docs/agnsh.1` | 2026-05-11 | ✅ Fresh | 1.3.0 closeout: `.TH` header bumped to `agnoshi 1.3.0`; DESCRIPTION expanded with mode-aware prompt + Risk / Hint output shape; FILES entry for `~/.agnsh_audit.log` now documents the six-class `result` vocabulary. BUILTINS section already covered history / mode / clear / undo at 1.1.0; no additions needed. |
+| `docs/agnsh.1` | 2026-05-20 | ✅ Fresh | v1.3.3: `.TH` header bumped to `agnoshi 1.3.3`. Command surface unchanged in 1.3.3 (toolchain bump + safety-predicate fix, no user-visible options/builtins delta) so the body needed no edits. |
 
 ---
 

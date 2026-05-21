@@ -235,7 +235,7 @@ fn is_safe_path(path) {
 # to `strlen_str` on a Str input).
 fn path_traversal_in_str(s) {
     if (s == 0) { return 0; }
-    var len = strlen(s);
+    var len = str_len(s);
     if (len < 2) { return 0; }
     for (var i = 0; i < len - 1; i = i + 1) {
         if (str_byte_at(s, i) == 46) {
@@ -248,7 +248,7 @@ fn path_traversal_in_str(s) {
 }
 fn shell_metachars_in_str(s) {
     if (s == 0) { return 0; }
-    var len = strlen(s);
+    var len = str_len(s);
     for (var i = 0; i < len; i = i + 1) {
         if (is_shell_metachar(str_byte_at(s, i)) == 1) {
             return 1;
@@ -264,7 +264,7 @@ fn safe_path_in_str(s) {
 }
 fn safe_arg_in_str(s) {
     if (s == 0) { return 0; }
-    var len = strlen(s);
+    var len = str_len(s);
     if (len == 0) { return 0; }
     if (len > 4096) { return 0; }
     return (shell_metachars_in_str(s) == 0);
