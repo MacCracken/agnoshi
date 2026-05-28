@@ -39,3 +39,13 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-05-21T04:38:01Z,deab6d3,main,perm/classify_5,5000
 2026-05-21T04:38:01Z,deab6d3,main,sanitize/basename,1000
 2026-05-21T04:38:01Z,deab6d3,main,sanitize/safe_path,1000
+2026-05-28T23:14:30Z,98bcb15,main,parse/list_files,4000
+2026-05-28T23:14:30Z,98bcb15,main,parse/cd,3000
+2026-05-28T23:14:30Z,98bcb15,main,parse/find_files,5000
+2026-05-28T23:14:30Z,98bcb15,main,parse/git_status,6000
+2026-05-28T23:14:30Z,98bcb15,main,parse/shell_cmd,12000
+2026-05-28T23:14:30Z,98bcb15,main,translate/list_files,1000
+2026-05-28T23:14:30Z,98bcb15,main,translate/cd,1000
+2026-05-28T23:14:30Z,98bcb15,main,perm/classify_5,5000
+2026-05-28T23:14:30Z,98bcb15,main,sanitize/basename,1000
+2026-05-28T23:14:30Z,98bcb15,main,sanitize/safe_path,1000

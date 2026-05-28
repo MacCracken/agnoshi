@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.3.3 · Cyrius 6.0.1 · 21 modules · ~5 K src lines · 295 KB static binary (DCE, x86_64) · 340 KB aarch64 · 0 runtime deps · 301 unit + 26 security + 59 smoke tests**
+**1.3.4 · Cyrius 6.0.14 · 21 modules · ~5 K src lines · 295 KB static binary (DCE, x86_64) · 340 KB aarch64 · 0 runtime deps · 301 unit + 26 security + 59 smoke tests**
 
 ## Features
 
@@ -23,7 +23,7 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 
 ```bash
 # Resolve the version-pinned stdlib snapshot into ./lib/ (gitignored).
-# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.0.1").
+# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.0.14").
 cyrius deps
 
 # Build from source
@@ -111,7 +111,7 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.0.1 is 295 KB (x86_64) / 340 KB (aarch64) — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 6.0.x plus the v1.2.0/v1.3.0 feature additions (approval, audit, history, security wired in), not from agnoshi-side bloat. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.0.14 is 295 KB (x86_64) / 340 KB (aarch64) — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 6.0.x plus the v1.2.0/v1.3.0 feature additions (approval, audit, history, security wired in), not from agnoshi-side bloat. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-05-28
+
+Cyrius toolchain pin 6.0.1 → **6.0.14** — a within-6.0.x patch-level bump. Zero codegen drift: both binary sizes are byte-for-byte identical to v1.3.3 (x86_64 295,312 B / aarch64 339,512 B). All gates clean, all tests green, benchmarks unchanged.
+
+### Changed
+- **Cyrius toolchain pin 6.0.1 → 6.0.14** (`cyrius.cyml`). Patch-level bump within the 6.0.x line; `cyrius deps` repopulated `./lib/` from the 6.0.14 stdlib snapshot. The wrapper had already advanced to 6.0.14 (manifest-pin drift); this aligns the manifest. Cleanliness gates all clean against the new snapshot: `cyrius check` ok, fmt no drift (22 files), lint 0 warnings (22 files), `cyrius vet` 22 deps / 0 untrusted / 0 missing, `cyrius capacity --check` all caps under 85% (fn_table 512/8192, code_size 154,864/1,048,576). Bracketed benchmarks pre/post: all 10 averages unchanged to microsecond resolution (per-run jitter only). **Binary size unchanged** on both arches — x86_64 295,312 B, aarch64 339,512 B — no codegen drift between 6.0.1 and 6.0.14.
+
+### Notes
+- **Toolchain warnings under 6.0.14** — unchanged from v1.3.3 in character: test_core/test_security/bench builds emit `warning:<source>:1: duplicate fn 'getenv' (last definition wins)` (test-side stub vs `lib/io.cyr` getenv) and test_core emits `warning:src/security.cyr:1087: syscall arity mismatch` (the synthesized-position diagnostic, now attributed to :1087 vs :1086 under 6.0.1 — still past security.cyr's real line count; doesn't reproduce in the production `agnsh` build). Both are warnings, not errors. Production `agnsh` build is warning-free.
+- **Test count** stays at 301 unit + 26 security + 59 smoke. Coverage 86%. lint-cstr-str clean.
+- **Zugot recipe** at `~/Repos/zugot/marketplace/agnoshi.cyml` to be updated locally with the new version + sha when release artifacts land.
+
 ## [1.3.3] - 2026-05-20
 
 Cyrius toolchain bump 5.10.44 → **6.0.1** + a latent path-traversal safety regression caught at the new compiler's codegen layout. The safety predicate flake was a pre-existing v1.0-era bug in `sanitize.cyr` that 5.10.x's address layout happened to not surface; 6.0.x's different bump-allocator stride exposed it as a 5-10% smoke-test flake on the v1.3.1 `create directory ../foo` rejected_safety probe. ADR-006 §"explicit `_in_str` discipline" now extends to: any `strlen(s)` inside a `_in_str` fn body is also caught by the lint shield (new Category F). 100/100 traversal-probe repro post-fix.

@@ -121,11 +121,11 @@ Every command is classified into one of six levels:
 ## Dependencies
 
 **Build-time:**
-- Cyrius 6.0.1 (pinned in `cyrius.cyml`: `cyrius = "6.0.1"`)
+- Cyrius 6.0.14 (pinned in `cyrius.cyml`: `cyrius = "6.0.14"`)
 - Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, json, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step.
 
 **Runtime:**
-- None (statically linked ELF, ~295 KB x86_64 / ~340 KB aarch64 on Cyrius 6.0.1; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
+- None (statically linked ELF, ~295 KB x86_64 / ~340 KB aarch64 on Cyrius 6.0.14; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 
