@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-06-03
+
+**agnsh runs on AGNOS for the first time.** Cyrius toolchain pin `6.0.14` → **6.0.56** — the bump that lands the `CYRIUS_TARGET_AGNOS` stdlib peer agnsh needs to boot on the sovereign kernel. With it, the `cyrius build --agnos` binary (`agnsh_agnos`, 282,880 B) launches in ring 3 from the agnos ext2 root and reaches its prompt — no more `#UD` at `args_init()` startup.
+
+### Changed
+- **Cyrius toolchain pin `6.0.14` → `6.0.56`** (`cyrius.cyml`). `cyrius update` repopulated `./lib/` from the 6.0.56 snapshot (84 → 89 files; adds `lib/args_agnos.cyr` + `lib/process_agnos.cyr`). The agnos-target build now resolves `args_init`/`argc`/`argv` (6.0.55's `lib/args_agnos.cyr` + init-stack capture), correct agnos file-op ABI (6.0.55's `lib/io.cyr` `AO_*` mapping fix), and `exec`/`run` of external programs (6.0.56's `lib/process_agnos.cyr`, `sys_spawn`-based). The Linux/macOS/Windows builds are unaffected.
+
+### Fixed
+- **`VERSION_STR` banner drift.** `src/agnsh.cyr` hard-coded `"agnoshi 1.3.2"` while `VERSION` had advanced to 1.3.4 — so `version` / `-v` / the startup banner printed a stale number. Synced to the live version (`agnoshi 1.3.5`).
+
+### Validated
+- **Boot-to-agnsh-on-disk** — built `--agnos` and seeded as `/bin/agnsh` on an ext2 root; agnsh launches in ring 3 under the agnos kernel (`kybernet` PID 1 execs it) and reaches its prompt; agnos-side `agnsh-smoke` PASS ×3 (no `#UD`, no emergency-shell fallback). The agnos-target binary is `ud2`-free (0 unresolved-call sentinels).
+
 ## [1.3.4] - 2026-05-28
 
 Cyrius toolchain pin 6.0.1 → **6.0.14** — a within-6.0.x patch-level bump. Zero codegen drift: both binary sizes are byte-for-byte identical to v1.3.3 (x86_64 295,312 B / aarch64 339,512 B). All gates clean, all tests green, benchmarks unchanged.
