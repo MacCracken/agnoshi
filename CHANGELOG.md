@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-06-04
+
+**Hardening on the agnos target — not itself the prompt fix.** The `14111`/`14112` archaemenid burns showed `agnsh` launches in ring 3 and renders its banner, then never reached a prompt. The blocker turned out to be **outside agnsh**: a kernel PMM allocation bug in agnos (`pmm_alloc` cross-class fragmentation) left the userland mmap heap page mapped supervisor-not-user, so agnsh `#PF`'d on its first heap write on ~half of boots — fixed in **agnos 1.41.12** (`pmm_alloc` top-down; QEMU 0 `#PF`/52 boots, iron-pending). This patch is independent hygiene and does not by itself make the prompt appear. *(An earlier draft of this entry mis-diagnosed the fault as an agnsh "frame-smash / rbp corruption at `0x42c0b8`" — that read came from a stale disassembly and was wrong; the fault is the kernel mapping bug above, with healthy rbp/rsp.)*
+
+### Fixed
+- **Skip the guaranteed-useless `getenv("HOME")` on agnos.** `history_path()` and `audit_log_path()` now return their fixed `/tmp/agnsh_*` paths directly under `#ifdef CYRIUS_TARGET_AGNOS`. On agnos `getenv` opens `/proc/self/environ` (which doesn't exist) and always returns 0, so these helpers already fell back to the `/tmp` paths — the call was pure dead weight that also reserved an 8 KB stack buffer (`cyrius lib/io.cyr` `var buf[8192]`) on a deep call path. Behavior-preserving on agnos. **The Linux/macOS/Windows builds are unaffected** — they keep the `$HOME`-based history/audit paths their smoke tests assert (`scripts/smoke-test.sh` history-persistence + audit-log cases set `HOME` and check `$HOME/.agnsh_*`).
+
+### Changed
+- **`VERSION_STR` `agnoshi 1.3.5` → `agnoshi 1.3.6`** (`src/agnsh.cyr`) — the banner doubles as the on-iron "which build am I running" canary.
+
+### Validated
+- Host `smoke-test.sh` **59/59** green (the `#ifdef` guard is agnos-only; `$HOME` history/audit paths intact on Linux).
+- agnos-target `agnsh_agnos` (282,912 B): with the agnos **1.41.12** PMM fix, `agnsh-smoke` boots agnsh past its first heap write to its prompt in QEMU across **0 `#PF` / 52 fresh boots** (was ~16/20 faulting). **Iron burn pending** for hardware confirmation.
+
 ## [1.3.5] - 2026-06-03
 
 **agnsh runs on AGNOS for the first time.** Cyrius toolchain pin `6.0.14` → **6.0.56** — the bump that lands the `CYRIUS_TARGET_AGNOS` stdlib peer agnsh needs to boot on the sovereign kernel. With it, the `cyrius build --agnos` binary (`agnsh_agnos`, 282,880 B) launches in ring 3 from the agnos ext2 root and reaches its prompt — no more `#UD` at `args_init()` startup.

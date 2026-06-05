@@ -37,7 +37,7 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.3.5";
+var VERSION_STR = "agnoshi 1.3.6";
 
 fn print_version() {
     println(VERSION_STR);
@@ -59,6 +59,18 @@ fn history_path() {
     # Mirrors audit_log_path's shape — cstring with manual concat so
     # file_exists/read/write can use it directly. `$HOME/.agnsh_history`
     # matches the docs/agnsh.1 convention.
+    #
+    # On agnos there is no /proc/self/environ and the ring-3 init stack passes
+    # envp=NULL, so getenv("HOME") can only ever return 0 here — calling it is
+    # pure dead weight that also reserves an 8 KB stack buffer (cyrius getenv)
+    # co-resident with interactive_loop's 4 KB read buffer. Until the 1.41.12
+    # kernel stack-relocation that combo overflowed the 12 KB ring-3 stack and
+    # faulted agnsh right after its banner. Skip getenv on agnos and return the
+    # fixed /tmp path directly; the host build keeps the $HOME behavior its
+    # smoke tests assert.
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/tmp/agnsh_history";
+    #endif
     var home = getenv("HOME");
     if (home == 0) { return "/tmp/agnsh_history"; }
     var hlen = strlen(home);
@@ -76,6 +88,12 @@ fn audit_log_path() {
     # passes the path to syscall(SYS_OPEN) directly, and str_cat allocates
     # a length-prefixed buffer with no trailing zero. Falls back to /tmp
     # when HOME is unset (test harness / restricted envs).
+    #
+    # Same agnos rationale as history_path: getenv is a guaranteed-0 no-op on
+    # agnos and its 8 KB stack buffer is a deep-stack hazard, so skip it there.
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/tmp/agnsh_audit.log";
+    #endif
     var home = getenv("HOME");
     if (home == 0) { return "/tmp/agnsh_audit.log"; }
     var hlen = strlen(home);
