@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-05
+
+**`agnsh` reaches its interactive prompt AND accepts typed input in ring 3 on agnos.** This is the milestone the 1.3.x line was building toward: a userland shell exec'd from disk that a user can actually *type into* on the sovereign kernel. Proven in QEMU end-to-end — booted to `[ASSIST] >`, then `help` / `version` / `mode` injected through a USB-xHCI HID keyboard each dispatched and printed their output. The full input path works: USB-HID → kernel `hid_poll` → `read(fd 0)` → `read_line` → command dispatch.
+
+The two blockers that stood between "renders banner" (1.3.x) and "reaches prompt + types" were cross-repo, and `1.4.0` is the marker that both are resolved:
+
+### Fixed
+- **Function-pointer dispatch was silently returning 0 on the agnos target — the prompt-blocker.** Every `fncall0`..`fncall8` (`lib/fnptr.cyr`) had `#ifdef` branches for `CYRIUS_TARGET_LINUX` / `_MACOS` / `_WIN` but **none for `CYRIUS_TARGET_AGNOS`**, so on agnos none of the `call rax` asm compiled and each `fncallN` fell through to its `var result = 0` initializer. That broke *all* vtable dispatch: `alloc_via(default_alloc(), …)` → `_bump_alloc` never ran → `vec_new()` returned 0 → `CommandHistory_new`'s `vec_len(entries)` dereferenced null → `#PF` (cpl=3, CR2=0x8) right after the banner, before the first prompt. Fixed by adding the `CYRIUS_TARGET_AGNOS` branch (identical x86-64 SysV asm to the Linux branch — agnos ring-3 shares the SysV convention) to all nine `fncallN`. This is the exact failure mode the file's own v5.9.38 comment records for the then-missing macOS branch. **Note:** `lib/fnptr.cyr` is a vendored cyrius-stdlib snapshot; the durable fix belongs upstream in cyrius and will propagate on the next `cyrius deps`/`update`. The Linux/macOS/Windows builds are unaffected (their branches already existed).
+
+### Changed
+- **`VERSION_STR` `agnoshi 1.3.6` → `agnoshi 1.4.0`** (`src/agnsh.cyr`) — the banner is the on-iron "which build am I running" canary.
+
+### Depends on (agnos kernel, separate repo)
+- **agnos `proc_unmap_page` no longer punches the kernel identity map.** The ring-3 stack guard-page unmap was zeroing a *supervisor* PD entry (pid 2's guard at `0xE00000` = PD[7]) which — under agnos's top-down `pmm_alloc` — identity-maps the very 2 MB region holding the process's own page tables. After the unmap the kernel couldn't walk to those tables under the per-process CR3, so the first `sys_mmap`/`proc_map_page` `#PF`'d at `CR2 = PML4-phys` and agnsh died before its banner. The kernel fix (clear user PDEs only) is what lets `agnsh` exec, run, and reach `read(fd 0)` at all.
+
+### Validated
+- QEMU (gnoboot + OVMF + NVMe ext2 rootfs, USB-xHCI keyboard): clean boot → `[ASSIST] >` prompt → typed `help` / `version` / `mode` each dispatched and rendered. No `#PF`, no fallback to the kernel emergency shell.
+
 ## [1.3.6] - 2026-06-04
 
 **Hardening on the agnos target — not itself the prompt fix.** The `14111`/`14112` archaemenid burns showed `agnsh` launches in ring 3 and renders its banner, then never reached a prompt. The blocker turned out to be **outside agnsh**: a kernel PMM allocation bug in agnos (`pmm_alloc` cross-class fragmentation) left the userland mmap heap page mapped supervisor-not-user, so agnsh `#PF`'d on its first heap write on ~half of boots — fixed in **agnos 1.41.12** (`pmm_alloc` top-down; QEMU 0 `#PF`/52 boots, iron-pending). This patch is independent hygiene and does not by itself make the prompt appear. *(An earlier draft of this entry mis-diagnosed the fault as an agnsh "frame-smash / rbp corruption at `0x42c0b8`" — that read came from a stale disassembly and was wrong; the fault is the kernel mapping bug above, with healthy rbp/rsp.)*
