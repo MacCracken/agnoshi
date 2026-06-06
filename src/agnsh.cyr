@@ -37,7 +37,7 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.4.0";
+var VERSION_STR = "agnoshi 1.4.1";
 
 fn print_version() {
     println(VERSION_STR);
@@ -236,29 +236,23 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
 }
 
 fn read_line(buf, maxlen) {
-    # Read stdin one byte at a time until newline or EOF. Returns the
-    # byte count (excluding the newline), 0 for an empty line, or -1 on
-    # EOF before any data. Necessary because piped input arrives in
-    # multi-line blobs; a single `syscall(SYS_READ, ..., maxlen)` would
-    # swallow several user "lines" in one buffer and the loop's line-
-    # oriented dispatch (streq against builtins, etc.) would fail. In a
-    # real terminal the tty's line discipline serves each line under a
-    # newline, so byte-by-byte reads still get one line per cycle.
-    var i = 0;
-    var b[1];
-    while (i < maxlen - 1) {
-        var r = syscall(SYS_READ, 0, &b, 1);
-        if (r <= 0) {
-            if (i == 0) { return 0 - 1; }
-            break;
-        }
-        var ch = load8(&b);
-        if (ch == 10) { break; }
-        store8(buf + i, ch);
-        i = i + 1;
+    # Read one line from stdin. The kernel's read(fd=0) is line-disciplined
+    # (canonical-lite, agnos 1.41.15): it blocks until Enter, echoes printable
+    # bytes + handles backspace as you type, and returns the line WITH its
+    # trailing newline in one syscall. So we issue a single read and strip the
+    # terminator — no per-byte loop, no agnsh-side echo (the kernel owns echo,
+    # mirroring the in-kernel recovery shell; the old per-byte read masked IRQ1
+    # in the ring-3 IF=0 gap between syscalls and dropped shift-release breaks,
+    # the 1.41.14 "Command: D" stuck-shift collapse). Returns the line length
+    # excluding the newline, 0 for an empty line (bare Enter), -1 on EOF.
+    var n = syscall(SYS_READ, 0, buf, maxlen - 1);
+    if (n <= 0) { return 0 - 1; }
+    # Strip a single trailing newline (the kernel stores it as the terminator).
+    if (n > 0) {
+        if (load8(buf + n - 1) == 10) { n = n - 1; }
     }
-    store8(buf + i, 0);
-    return i;
+    store8(buf + n, 0);
+    return n;
 }
 fn try_mode_switch(mgr, arg_cstr) {
     # Maps a CLI mode name to the enum and switches the ModeManager.
