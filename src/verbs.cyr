@@ -496,7 +496,8 @@ fn verb_cp(args, argc, mode): i64 {
             var sino = verb_stat_ino(&sst);
             var dino = verb_stat_ino(&dstat);
             if (sino != 0 && dino != 0 && sino == dino) {
-                return verb_err2("cp", "", str_cat3_cstr("'", src, str_cat3_cstr("' and '", dst, "' are the same file")));
+                var same_msg = str_cat3_cstr("'", src, str_cat3_cstr("' and '", dst, "' are the same file"));
+                return verb_err2("cp", "", same_msg);
             }
         }
     }
@@ -528,8 +529,8 @@ fn verb_cp(args, argc, mode): i64 {
 # ================================================================
 # rename(31) within one mount. Cross-mount rename is an error on agnos
 # (ABI: rename is single-mount); we surface it cleanly rather than silently
-# failing. We do NOT fall back to cp+unlink here (the task pins mv=rename
-# for now).
+# failing. We do NOT fall back to cp+unlink here; mv=rename, the cross-mount
+# cp+unlink fallback is deferred — see CHANGELOG [1.4.2].
 fn verb_mv(args, argc, mode): i64 {
     if (argc < 2) { return verb_err2("mv", "", "usage: mv SRC DST"); }
     # FIX 2/3: mv takes no options here — reject ANY unknown leading-'-'
@@ -557,7 +558,8 @@ fn verb_mv(args, argc, mode): i64 {
 # Verb: rm FILE...
 # ================================================================
 # unlink(30) each operand. A directory operand is reported as an error
-# suggesting rmdir (no -r recursion for now). Returns nonzero if any failed.
+# suggesting rmdir (no -r recursion yet — deferred, see CHANGELOG [1.4.2]).
+# Returns nonzero if any operand failed.
 fn verb_rm(args, argc, mode): i64 {
     if (argc == 0) { return verb_err2("rm", "", "missing operand"); }
     # FIX 2 (BLOCKING — inverted safety): reject ANY unknown leading-'-'
