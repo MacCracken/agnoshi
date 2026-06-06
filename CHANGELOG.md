@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-06-06
+
+**Core filesystem verbs — agnsh can now actually operate on files.** `ls cat cp mv rm mkdir rmdir touch echo wc find grep` are implemented as in-process builtins that call the agnos (or host) syscalls directly. They're builtins rather than external binaries because running standalone programs from the shell waits on ring-3 `execwait` (agnos 1.43.x). This is the substantive core of the AGNOS-roadmap "Track B — userland environment". Validated on the host (`verbs-smoke.sh` 84/0) and on the live agnos kernel ext2 root (agnos `agnsh-verb-test.py`: `echo > /vtest` → `ls /` lists it → `cat` reads it back).
+
+### Added
+
+- **`src/verbs.cyr` — the 12 FS verbs as builtins.** `dispatch_fs_verb(line, mode)` runs after the inline builtins and before the NL→intent path in both the interactive loop and the `-c` one-shot path; an unknown first word falls through to the AI/intent path. Semantics: `ls`/`ls -l` (getdents + stat for type/size), `cat` (+ stdin), `cp` (streamed), `mv` (rename within a mount; clean cross-mount error), `rm`, `mkdir`, `rmdir`, `touch` (open `AO_CREAT`), `echo [-n] [> FILE]`, `wc`, `find [PATH] [-name PAT]` (recursive, depth-capped), `grep PAT FILE...`. Cross-target correctness is `#ifdef CYRIUS_TARGET_AGNOS` only where the surfaces genuinely differ: `open` flags, the getdents record layout (agnos §4.2 packed vs Linux `getdents64`), and the `stat` struct offsets.
+- **Mode-gated safety for destructive verbs.** `rm`/`mv` and overwriting `cp` execute directly in **auto**/**assist** but prompt `⚠ <action> <path> ? [y/N]` in **human**/**strict** (proceed only on y/Y; EOF/Enter default to no). Read-only/create verbs (`ls cat wc find grep mkdir rmdir touch echo`) never prompt. The pre-existing safety gate is preserved: `rm -rf`/`--force`/`--recursive`/`..`-traversal/pipeline forms still route to the intent classifier (BLOCKED), and `rm`/`mv` reject any unknown `-flag` (closes a `rm -i FILE` hazard that would otherwise still unlink).
+- **`scripts/verbs-smoke.sh`** — 84 host assertions covering every verb against a real temp dir + the safety-gate + mode-confirm behaviors. `scripts/smoke-test.sh` stays 59/0 (5 NL samples that collided with verb-leading words re-phrased to the same intent/safety classification).
+
+### Fixed
+
+- **`cp FILE FILE` no longer truncates the file to 0** (a same-path `streq` + inode guard refuses before any `O_TRUNC` open).
+
+### Changed
+
+- **`scripts/version-bump.sh` now syncs the `VERSION_STR` banner literal** in `src/agnsh.cyr` from `VERSION` (with a fail-loud count-guard), so a version bump can't desync the banner again — the root cause of the agnos `14115` burn showing `agnoshi 1.4.0` while `VERSION` was 1.4.1.
+
 ## [1.4.1] - 2026-06-05
 
 **`read_line` is now a single line read — pairs with agnos 1.41.15's line-disciplined `read(fd 0)`.** The first iron burn of 1.4.0 typing (`14114`) read the keyboard but every line collapsed to a single stuck `Command: D` with no echo. The kernel-side root cause (the ring-3 IF=0 gap between per-byte reads dropping shift-release breaks) is fixed in agnos 1.41.15, which makes `read(fd 0)` line-buffered + kernel-echoed (canonical-lite). This shell-side change consumes that contract.

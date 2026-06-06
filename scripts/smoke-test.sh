@@ -63,7 +63,11 @@ check "parse git status" "Intent:" "$out"
 out=$("$BIN" -c "install vim" 2>&1)
 check "parse install" "Intent:" "$out"
 
-out=$("$BIN" -c "find files named foo" 2>&1)
+# NB: "find files named foo" used to exercise the FIND_FILES intent here,
+# but `find` is now an in-process FS builtin (1.4.2), so a `find`-leading
+# line runs the verb. Use the equivalent NL phrasing that does NOT begin
+# with a verb word to keep the intent-parser coverage.
+out=$("$BIN" -c "search for files named foo" 2>&1)
 check "parse find files" "Intent:" "$out"
 
 out=$("$BIN" -c "remove file.txt" 2>&1)
@@ -138,9 +142,12 @@ check "unknown mode suggests list" "Available: auto, assist, human, strict" "$BA
 # replays the last 20; the on-disk $HOME/.agnsh_history persists across
 # sessions; the next session loads it on start.
 HIST_HOME=$(mktemp -d -t agnsh-hist.XXXXXX)
-HIST_OUT=$(printf 'show files\nfind /tmp\nhistory\nexit\n' | HOME="$HIST_HOME" "$BIN" 2>&1)
+# NB: the second line used to be `find /tmp` (an NL sample), but `find` is
+# now an FS builtin, so it would run the verb (noisy real output). Use a
+# non-verb NL phrasing so this stays a clean history-recording test.
+HIST_OUT=$(printf 'show files\nsearch /tmp\nhistory\nexit\n' | HOME="$HIST_HOME" "$BIN" 2>&1)
 check "history shows 1 entry" "1  show files" "$HIST_OUT"
-check "history shows 2 entry" "2  find /tmp" "$HIST_OUT"
+check "history shows 2 entry" "2  search /tmp" "$HIST_OUT"
 HIST_FILE="$HIST_HOME/.agnsh_history"
 check "history file created" "$(test -f "$HIST_FILE" && echo yes)" "yes"
 check "history file line count" "$(wc -l < "$HIST_FILE" 2>/dev/null)" "2"
@@ -149,7 +156,7 @@ check "history file content" "show files" "$(cat "$HIST_FILE" 2>/dev/null)"
 # Second session must load the persisted file on start.
 HIST2_OUT=$(printf 'history\nexit\n' | HOME="$HIST_HOME" "$BIN" 2>&1)
 check "history loads on next session" "1  show files" "$HIST2_OUT"
-check "history loads entry 2" "2  find /tmp" "$HIST2_OUT"
+check "history loads entry 2" "2  search /tmp" "$HIST2_OUT"
 rm -rf "$HIST_HOME"
 
 # Empty-history path -- a fresh shell with no prior history file
@@ -185,9 +192,13 @@ rm -rf "$SMOKE_HOME"
 # classes that downstream filters can grep / jq on: proposed,
 # needs_approval, blocked, needs_llm, needs_exec, rejected_safety.
 RES_HOME=$(mktemp -d -t agnsh-result.XXXXXX)
+# NB: `rm /tmp/x` would now run the rm builtin (literal command). Use the
+# NL phrasing `delete /tmp/x`, which the intent parser classifies BLOCKED
+# (result "blocked") exactly as the old `rm /tmp/x` did — preserving the
+# safety-classification coverage without colliding with the rm verb.
 HOME="$RES_HOME" "$BIN" -c "show files" > /dev/null 2>&1
 HOME="$RES_HOME" "$BIN" -c "install vim" > /dev/null 2>&1
-HOME="$RES_HOME" "$BIN" -c "rm /tmp/x" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" -c "delete /tmp/x" > /dev/null 2>&1
 HOME="$RES_HOME" "$BIN" -c "what is dns" > /dev/null 2>&1
 HOME="$RES_HOME" "$BIN" -c "ls | grep foo" > /dev/null 2>&1
 HOME="$RES_HOME" "$BIN" -c "remove ../etc/passwd" > /dev/null 2>&1
@@ -195,7 +206,7 @@ RES_LOG="$RES_HOME/.agnsh_audit.log"
 res_content=$(cat "$RES_LOG" 2>/dev/null)
 check "result proposed for read-only" '"input":"show files".*"result":"proposed"' "$res_content"
 check "result needs_approval for admin" '"input":"install vim".*"result":"needs_approval"' "$res_content"
-check "result blocked for rm" '"input":"rm /tmp/x".*"result":"blocked"' "$res_content"
+check "result blocked for rm" '"input":"delete /tmp/x".*"result":"blocked"' "$res_content"
 check "result needs_llm for question" '"input":"what is dns".*"result":"needs_llm"' "$res_content"
 check "result needs_exec for pipeline" '"input":"ls | grep foo".*"result":"needs_exec"' "$res_content"
 # For REMOVE inputs both "rejected_safety" (translator catches the

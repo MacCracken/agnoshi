@@ -31,13 +31,14 @@ include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/intent.cyr"
 include "src/commands.cyr"
+include "src/verbs.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.4.1";
+var VERSION_STR = "agnoshi 1.4.2";
 
 fn print_version() {
     println(VERSION_STR);
@@ -395,6 +396,24 @@ fn interactive_loop() {
             continue;
         }
 
+        # FS-verb dispatch (Track B, 1.4.2). If the line's first word is one
+        # of the core filesystem verbs (ls/cat/cp/mv/rm/mkdir/rmdir/touch/
+        # echo/wc/find/grep), run it IN-PROCESS via the agnos syscalls and
+        # skip the NL→intent path entirely. These are builtins (not external
+        # binaries) because launching a standalone binary waits on ring-3
+        # execwait, a future 1.43.x kernel feature; until then the verbs must
+        # execute via syscalls inside the shell process. dispatch_fs_verb
+        # returns -1 when the first word is NOT an FS verb (fall through to
+        # the NL path); otherwise it runs the verb and returns its exit code.
+        # `cur_mode` (the current ModeManager mode) is threaded in so
+        # destructive verbs (rm/mv/cp-overwrite) apply the FIX 4 mode-gated
+        # confirm: HUMAN/STRICT prompt inline, AUTO/ASSIST run directly.
+        if (dispatch_fs_verb(&buf, cur_mode) >= 0) {
+            # Verbs are real commands the user typed — record them in history.
+            CommandHistory_add(history, &buf);
+            continue;
+        }
+
         # Record every non-builtin input in history. Persists on exit.
         CommandHistory_add(history, &buf);
 
@@ -427,14 +446,38 @@ fn main() {
         print_usage();
         return 0;
     }
-    if (streq(arg1, "-c") == 1 || streq(arg1, "--command") == 1) {
+    # Optional `--mode NAME` prefix before -c. Lets the one-shot path drive
+    # the FIX 4 mode-gated confirm non-interactively (and host smoke tests
+    # pipe y/n under a chosen mode). Default for -c stays AUTO — destructive
+    # verbs run directly, matching the prior `-c` behavior. When present,
+    # shift the -c / command positionals two slots to the right.
+    var c_mode = Mode.AI_AUTONOMOUS;
+    var c_idx = 1;     # index of the -c flag
+    if (streq(arg1, "--mode") == 1) {
         if (n_args < 3) {
+            println("Error: --mode requires a name (auto|assist|human|strict)");
+            return 1;
+        }
+        c_mode = mode_from_name(argv(2), Mode.AI_AUTONOMOUS);
+        c_idx = 3;
+        arg1 = argv(3);
+    }
+    if (streq(arg1, "-c") == 1 || streq(arg1, "--command") == 1) {
+        if (n_args < c_idx + 2) {
             println("Error: -c requires a command argument");
             return 1;
         }
-        # -c is one-shot non-interactive; the audit `mode` field
-        # stays "auto" to distinguish from sessioned invocations.
-        print_intent_result(argv(2), "auto");
+        var c_cmd = argv(c_idx + 1);
+        # FS verbs run in-process even in one-shot mode (`agnsh -c "ls /tmp"`).
+        # dispatch_fs_verb returns the verb's exit code (>=0) when the first
+        # word is an FS verb, else -1 to fall through to the NL→intent path.
+        # `c_mode` carries the optional --mode (default AUTO) so destructive
+        # verbs apply the FIX 4 confirm.
+        var vrc = dispatch_fs_verb(c_cmd, c_mode);
+        if (vrc >= 0) { return vrc; }
+        # -c is one-shot non-interactive; the audit `mode` field reflects the
+        # resolved mode label (was hardcoded "auto"; --mode now selects).
+        print_intent_result(c_cmd, mode_display(c_mode));
         return 0;
     }
 

@@ -43,6 +43,18 @@ fn mode_prompt_prefix(mode) {
         _ => { return "[?]"; }
     }
 }
+# Map a CLI mode name (auto/assist/human/strict) to the enum value, or
+# the supplied `dflt` enum if the name is unrecognized. Used by the -c
+# one-shot path's optional `--mode NAME` prefix so the mode-gated confirm
+# (FIX 4) is drivable non-interactively (and by host smoke tests). Names
+# match the four lowercased `mode_display` labels.
+fn mode_from_name(name_cstr, dflt) {
+    if (streq(name_cstr, "auto") == 1) { return Mode.AI_AUTONOMOUS; }
+    if (streq(name_cstr, "assist") == 1) { return Mode.AI_ASSISTED; }
+    if (streq(name_cstr, "human") == 1) { return Mode.HUMAN; }
+    if (streq(name_cstr, "strict") == 1) { return Mode.STRICT; }
+    return dflt;
+}
 fn ModeManager_new(initial, allow_switching) {
     var p = alloc(32);
     store64(p, initial);
