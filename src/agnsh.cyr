@@ -235,24 +235,54 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
     return 0;
 }
 
+# Line-splitting read buffer (module-static so the leftover survives between
+# calls). Module-scope `var X[N]` allocates N*u64 = 8N bytes, so [512] = 4096 B.
+var rl_buf[512];
+var rl_len = 0;   # bytes currently held in rl_buf
+var rl_pos = 0;   # read cursor into rl_buf
+
 fn read_line(buf, maxlen) {
-    # Read one line from stdin. The kernel's read(fd=0) is line-disciplined
-    # (canonical-lite, agnos 1.41.15): it blocks until Enter, echoes printable
-    # bytes + handles backspace as you type, and returns the line WITH its
-    # trailing newline in one syscall. So we issue a single read and strip the
-    # terminator — no per-byte loop, no agnsh-side echo (the kernel owns echo,
-    # mirroring the in-kernel recovery shell; the old per-byte read masked IRQ1
-    # in the ring-3 IF=0 gap between syscalls and dropped shift-release breaks,
-    # the 1.41.14 "Command: D" stuck-shift collapse). Returns the line length
-    # excluding the newline, 0 for an empty line (bare Enter), -1 on EOF.
-    var n = syscall(SYS_READ, 0, buf, maxlen - 1);
-    if (n <= 0) { return 0 - 1; }
-    # Strip a single trailing newline (the kernel stores it as the terminator).
-    if (n > 0) {
-        if (load8(buf + n - 1) == 10) { n = n - 1; }
+    # Return exactly ONE line from stdin, buffering any leftover for the next
+    # call. This is target-agnostic and the reason we don't just `read()` once:
+    #   - On agnos the kernel's read(fd=0) is line-disciplined (canonical-lite,
+    #     1.41.15): it blocks until Enter, echoes + handles backspace as you
+    #     type, and returns ONE line with its trailing newline — so rl_buf holds
+    #     exactly that line and drains empty each call. (The old per-byte read
+    #     masked IRQ1 in the ring-3 IF=0 gap between syscalls and dropped
+    #     shift-release breaks — the 1.41.14 "Command: D" stuck-shift collapse;
+    #     the kernel now owns echo + line discipline, so we never echo here.)
+    #   - On the host (Linux pipe) read() returns a MULTI-line blob in one go; a
+    #     naive single read would swallow several user lines into one buffer and
+    #     break line-oriented dispatch (streq against builtins, etc.). The carry
+    #     buffer hands those back one line at a time.
+    # Returns the line length excluding the newline, 0 for an empty line (bare
+    # Enter), -1 on EOF before any data.
+    var i = 0;
+    while (1 == 1) {
+        if (rl_pos >= rl_len) {                 # carry buffer empty -> refill
+            rl_pos = 0;
+            rl_len = syscall(SYS_READ, 0, &rl_buf, 4095);
+            if (rl_len <= 0) {
+                if (i == 0) { return 0 - 1; }   # EOF, nothing accumulated
+                break;                          # EOF after a newline-less tail
+            }
+        }
+        while (rl_pos < rl_len) {
+            var ch = load8(&rl_buf + rl_pos);
+            rl_pos = rl_pos + 1;
+            if (ch == 10) {                     # line terminator: done
+                store8(buf + i, 0);
+                return i;
+            }
+            if (i < maxlen - 1) {
+                store8(buf + i, ch);
+                i = i + 1;
+            }
+        }
+        # buffer drained with no newline -> loop refills and keeps accumulating
     }
-    store8(buf + n, 0);
-    return n;
+    store8(buf + i, 0);
+    return i;
 }
 fn try_mode_switch(mgr, arg_cstr) {
     # Maps a CLI mode name to the enum and switches the ModeManager.
