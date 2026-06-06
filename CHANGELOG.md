@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-06-05
+
+**`read_line` is now a single line read — pairs with agnos 1.41.15's line-disciplined `read(fd 0)`.** The first iron burn of 1.4.0 typing (`14114`) read the keyboard but every line collapsed to a single stuck `Command: D` with no echo. The kernel-side root cause (the ring-3 IF=0 gap between per-byte reads dropping shift-release breaks) is fixed in agnos 1.41.15, which makes `read(fd 0)` line-buffered + kernel-echoed (canonical-lite). This shell-side change consumes that contract.
+
+### Changed
+
+- **`read_line` issues ONE `read(fd 0)` for the whole line instead of looping byte-by-byte.** The kernel now blocks until Enter, echoes printable bytes + handles backspace as you type, and returns the line with its trailing newline; `read_line` strips the terminator and returns the length (0 for a bare Enter, -1 on EOF). The old per-byte loop existed to keep line-oriented dispatch working under a RAW kernel, but on iron it masked IRQ1 in the ring-3 IF=0 gap between syscalls and dropped keystrokes — the `14114` collapse. No agnsh-side echo: the kernel owns echo now (mirroring the in-kernel recovery shell), so typed input is visible and dispatches intact. (`src/agnsh.cyr`.)
+
+### Notes
+
+- A richer line editor (`completion.cyr`/`history.cyr` with cursor movement) would want raw keystrokes again; that returns when agnos's future multithreading arc lets ring 3 run with IF=1 and O1 can go back to RAW. For now, canonical-lite is the only shape that types on iron.
+
 ## [1.4.0] - 2026-06-05
 
 **`agnsh` reaches its interactive prompt AND accepts typed input in ring 3 on agnos.** This is the milestone the 1.3.x line was building toward: a userland shell exec'd from disk that a user can actually *type into* on the sovereign kernel. Proven in QEMU end-to-end — booted to `[ASSIST] >`, then `help` / `version` / `mode` injected through a USB-xHCI HID keyboard each dispatched and printed their output. The full input path works: USB-HID → kernel `hid_poll` → `read(fd 0)` → `read_line` → command dispatch.
