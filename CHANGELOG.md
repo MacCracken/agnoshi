@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-06-07
+
+**The file verbs + `echo` are now discoverable, and a `run` builtin is wired (kernel-gated) for the coming execwait arc.** The `14115`-class iron burns surfaced two shell-UX gaps: the 1.4.2 in-process file verbs executed but were absent from `help` (so `echo` "worked but was hidden"), and there was no `run` command to launch a program from disk (`commandress`/`bannermanor`/`klug`). This patch documents the verbs and lands `run` as a first-class builtin — validated and pre-wired to the real exec path, gated off until agnos ships the execwait syscall.
+
+### Added
+
+- **`run PATH` builtin** in both the interactive loop and the `-c` one-shot path. Dispatched ahead of `dispatch_fs_verb` (it is a first-class builtin, never an FS verb), with absolute-path enforcement (leading `/`), and `..`-traversal / shell-metacharacter rejection via `is_safe_path`. The launch itself is centralized in one `sh_run_program(path, mode)` helper shared by both call sites, behind a single `RUN_EXECWAIT_READY` flag (`src/agnsh.cyr`).
+- **Mode-gated launch (pre-wired).** When un-gated, `run` takes the same FIX 4 mode gate as `rm`/`mv` — HUMAN/STRICT confirm before launch, AUTO/ASSIST run directly (`mode_needs_confirm` + `verb_confirm`). Launching an arbitrary on-disk binary is at least as consequential as a destructive verb.
+
+### Changed
+
+- **`help` now lists every command that works.** The interactive `help` builtin gained a **Files:** group (ls/cat/cp/mv/rm/mkdir/rmdir/touch/echo/wc/find/grep, one-line each) and a **Run:** group (`run PATH`) — previously these executed but were undocumented. The boot-banner `Built-ins:` block gained a Files/Run summary line, and `print_usage()` (`-h`/`--help`) gained file-verb and `run` hints.
+
+### Notes
+
+- **`run` is wired but kernel-gated (`RUN_EXECWAIT_READY = 0`).** It validates the path and refuses with a clear message rather than driving the broken `spawn`(#3)+`waitpid`(#4) path, which fatally faults on iron: `waitpid` `hlt`-spins with `IF=0` (the scheduler-driving timer ISR never fires → hard hang), and `spawn`→ in-memory `elf_load` does a CR3-switch `memcpy` of agnsh's mmap-arena buffer (unmapped under the child CR3 → `#PF`/`#DF`/triple fault), with its 4 KB page mapped as a 2 MB huge page aliasing live memory. The proven exec path is the in-kernel recovery shell's `elf_load_from_file` + synchronous `exec_and_wait`; the **agnos 1.43.x execwait arc** exposes it as a ring-3 syscall and swaps `process_agnos.cyr`'s `run()` onto it. Then `RUN_EXECWAIT_READY` flips to `1` and `run` goes live with no other agnsh-side change. No argv/envp passing in the first un-gated cut (`sys_spawn`/execwait take the program path only).
+
 ## [1.4.2] - 2026-06-06
 
 **Core filesystem verbs — agnsh can now actually operate on files.** `ls cat cp mv rm mkdir rmdir touch echo wc find grep` are implemented as in-process builtins that call the agnos (or host) syscalls directly. They're builtins rather than external binaries because running standalone programs from the shell waits on ring-3 `execwait` (agnos 1.43.x). This is the substantive core of the AGNOS-roadmap "Track B — userland environment". Validated on the host (`verbs-smoke.sh` 84/0) and on the live agnos kernel ext2 root (agnos `agnsh-verb-test.py`: `echo > /vtest` → `ls /` lists it → `cat` reads it back).

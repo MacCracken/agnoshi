@@ -14,6 +14,10 @@ include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 include "lib/args.cyr"
 include "lib/chrono.cyr"
+# process.cyr → process_agnos.cyr under CYRIUS_TARGET_AGNOS (sys_spawn/waitpid
+# today; swaps onto the 1.43.x execwait syscall later). Pulled in so the `run`
+# builtin's live path compiles now and un-gates with a one-line flag flip.
+include "lib/process.cyr"
 
 # `ui_show_*` are minimal stand-ins because src/ui.cyr isn't pulled
 # into this entry's include graph yet (queued for the v1.2.1
@@ -38,7 +42,7 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.4.2";
+var VERSION_STR = "agnoshi 1.4.3";
 
 fn print_version() {
     println(VERSION_STR);
@@ -52,8 +56,10 @@ fn print_usage() {
     println("  -h, --help          Show this help");
     println("");
     println("Interactive mode (no args): type natural language or shell commands.");
-    println("  help    -- builtin commands");
-    println("  exit    -- leave shell");
+    println("  help                -- builtin, file, and run commands");
+    println("  ls cat cp mv rm ... -- in-process file verbs");
+    println("  run PATH            -- run a program from disk (pending agnos 1.43.x)");
+    println("  exit                -- leave shell");
 }
 
 fn history_path() {
@@ -307,10 +313,59 @@ fn try_mode_switch(mgr, arg_cstr) {
     }
     return 0;
 }
+
+# RUN_EXECWAIT_READY gates the `run` builtin's live exec path. It stays 0 until
+# agnos ships the execwait syscall (the 1.43.x arc). Until then `run` validates
+# its argument and refuses cleanly instead of driving the spawn(#3)+waitpid(#4)
+# path, which fatally faults on this kernel:
+#   - waitpid(#4) busy-waits on a bare `hlt` while IF=0 (ring-3 syscalls run
+#     interrupts-masked) → the timer ISR that drives the scheduler never fires,
+#     the child never runs/exits, the box HARD-HANGS;
+#   - spawn(#3) → the in-memory elf_load does a CR3-switch memcpy of agnsh's
+#     mmap-arena buffer, which the child CR3 leaves unmapped → #PF/#DF/triple
+#     fault; and its 4 KB page mapped as a 2 MB huge page aliases live memory.
+# The proven exec path is the in-kernel recovery shell's elf_load_from_file +
+# synchronous exec_and_wait. 1.43.x exposes that as a ring-3 execwait syscall
+# and process_agnos.cyr's run() swaps onto it; THEN this flag flips to 1 and the
+# builtin below goes live with no other agnsh-side change. Order matters: do not
+# flip until both the kernel syscall and the process_agnos run() swap have landed.
+var RUN_EXECWAIT_READY = 0;
+
+# Run a program from disk. Shared by the interactive loop and the -c one-shot
+# path. `path` is an already-validated absolute cstr. Returns the child exit
+# code, or 1 on refusal/abort/launch-failure.
+fn sh_run_program(path, mode) {
+    if (RUN_EXECWAIT_READY == 0) {
+        println("run: external programs not yet available (pending agnos 1.43.x execwait)");
+        return 1;
+    }
+    # Launching an arbitrary on-disk binary is at least as consequential as a
+    # destructive file verb, so it takes the same FIX 4 mode gate: HUMAN/STRICT
+    # confirm before launch; AUTO/ASSIST run directly.
+    if (mode_needs_confirm(mode) == 1) {
+        # verb_confirm prints "(aborted)" itself on a no/Enter, matching the
+        # rm/mv convention — stay silent here rather than double-reporting.
+        if (verb_confirm(str_cat3_cstr("run ", path, "")) == 0) { return 1; }
+    }
+    var r = run(path, 0, 0);
+    if (is_ok(r) == 1) {
+        var code = result_unwrap(r);
+        if (code != 0) {
+            str_print(str_from("run: exit "));
+            str_print(str_from_int(code));
+            println("");
+        }
+        return code;
+    }
+    println("run: failed to launch program");
+    return 1;
+}
+
 fn interactive_loop() {
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
     println("Built-ins: help, version, mode, history, clear, exit");
+    println("Files: ls cat cp mv rm mkdir rmdir touch echo wc find grep   Run: run");
     println("");
 
     var buf[4096];
@@ -363,6 +418,22 @@ fn interactive_loop() {
             println("  history                              show last 20 commands");
             println("  clear                                clear screen");
             println("  exit, quit                           leave shell (saves history)");
+            println("Files:");
+            println("  ls [PATH]                            list directory entries");
+            println("  cat FILE                             print file contents");
+            println("  cp SRC DST                           copy a file");
+            println("  mv SRC DST                           move/rename a file");
+            println("  rm FILE                              remove a file");
+            println("  mkdir DIR                            create a directory");
+            println("  rmdir DIR                            remove an empty directory");
+            println("  touch FILE                           create/update a file");
+            println("  echo TEXT [> FILE]                   print TEXT (> writes to FILE)");
+            println("  wc FILE                              count lines/words/bytes");
+            println("  find PATH [-name PAT]                find entries by name");
+            println("  grep PATTERN FILE                    search FILE for PATTERN");
+            println("Run:");
+            println("  run PATH                             run a program from disk");
+            println("                                       (pending agnos 1.43.x)");
             println("Or type a natural-language command.");
             continue;
         }
@@ -393,6 +464,34 @@ fn interactive_loop() {
                 println(arg);
                 println("Available: auto, assist, human, strict");
             }
+            continue;
+        }
+
+        # `run PATH` — launch a program from disk. A first-class builtin (NOT an
+        # FS verb), dispatched before dispatch_fs_verb so `run` is never mistaken
+        # for a filesystem op. Validates the path here; sh_run_program owns the
+        # mode gate + the kernel-gated exec (see RUN_EXECWAIT_READY).
+        if (streq(&buf, "run") == 1) {
+            println("usage: run /abs/path/to/program");
+            continue;
+        }
+        if (cstr_starts_with(&buf, "run ") == 1) {
+            var rpath = &buf + 4;
+            while (load8(rpath) == 32) { rpath = rpath + 1; }
+            if (load8(rpath) == 0) {
+                println("usage: run /abs/path/to/program");
+                continue;
+            }
+            if (load8(rpath) != 47) {
+                println("run: path must be absolute (start with /)");
+                continue;
+            }
+            if (is_safe_path(rpath) == 0) {
+                println("run: unsafe path (traversal or shell metacharacter)");
+                continue;
+            }
+            sh_run_program(rpath, cur_mode);
+            CommandHistory_add(history, &buf);
             continue;
         }
 
@@ -475,6 +574,17 @@ fn main() {
         # verbs apply the FIX 4 confirm.
         var vrc = dispatch_fs_verb(c_cmd, c_mode);
         if (vrc >= 0) { return vrc; }
+        # `run PATH` in one-shot mode (`agnsh -c "run /bin/klug"`). Same
+        # validation + kernel gate as the interactive path.
+        if (streq(c_cmd, "run") == 1) { println("usage: run /abs/path/to/program"); return 1; }
+        if (cstr_starts_with(c_cmd, "run ") == 1) {
+            var rpath = c_cmd + 4;
+            while (load8(rpath) == 32) { rpath = rpath + 1; }
+            if (load8(rpath) == 0) { println("usage: run /abs/path/to/program"); return 1; }
+            if (load8(rpath) != 47) { println("run: path must be absolute (start with /)"); return 1; }
+            if (is_safe_path(rpath) == 0) { println("run: unsafe path (traversal or shell metacharacter)"); return 1; }
+            return sh_run_program(rpath, c_mode);
+        }
         # -c is one-shot non-interactive; the audit `mode` field reflects the
         # resolved mode label (was hardcoded "auto"; --mode now selects).
         print_intent_result(c_cmd, mode_display(c_mode));

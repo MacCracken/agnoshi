@@ -177,6 +177,7 @@ hoosh-side modernization (external, user-owned)
 - History fuzzy search (fzf-style) — extends v1.3.0's persistent history
 - Rich prompt themes — extends the v1.3.0 mode-aware prompt
 - Man page integration (`explain <cmd>` pulls from man)
+- **`.agnshrc` startup config** — a sourced-at-launch rc file (aliases, default mode, env/settings), the `.zshrc`/`.bashrc` analog. Today agnsh keeps only *state* dotfiles (`~/.agnsh_history`, `~/.agnsh_audit.log`, `~/.agnoshi/checkpoints/`) — no *config* one. Name `.agnshrc` (binary-prefix, matching the `.agnsh_*` files). **Gated on the agnos kernel env gap**: agnos `exec` sets up no `envp`, so `getenv("HOME")` returns 0 on agnos (`agnsh.cyr:65`; the history path already falls back to `/tmp/.agnsh_history`). A `$HOME`-resolved rc file needs the kernel to pass `envp` at exec — the same userland-env gap behind commandress's `getcwd`/`$PWD`. Works on the Linux host build today; the agnos side unlocks at **agnos 1.43.x**, where the exec ABI gains an `envp` array alongside `execwait` (agnos roadmap, 1.43.x slot — kybernet seeds HOME/PWD, agnsh inherits + passes it on).
 
 ### Consumer app translators (from IntentTag stubs)
 Stubbed for later — wire up only when the consumer app lands a public surface for agnoshi to translate into.
