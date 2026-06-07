@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-06-07
+
+**`run` is LIVE — agnsh launches programs from disk on agnos.** agnos 1.43.0 shipped the `execwait` (#37) syscall (the ring-3 blocking-exec primitive), so the `run` builtin staged + gated in 1.4.3 is now un-gated. `run /bin/klug` (etc.) loads and runs a static ELF64 from the ext2 root in ring 3 and reports its exit code — the first user-facing "agnsh runs an external tool" path.
+
+### Changed
+
+- **`process_agnos.cyr` `run()` routes through `sys_execwait(path, len)`** (agnos #37) instead of the old read-into-buffer + `sys_spawn`(#3) + `sys_waitpid`(#4) pair. The old pair faulted on the kernel (in-memory `elf_load` did a CR3-switch `memcpy` of an unmapped arena buffer; `waitpid` busy-`hlt`ed with IF=0 → hard hang); `execwait` has the kernel own the load (under boot CR3) + synchronous `exec_and_wait`, so there's no in-shell ELF buffering and no busy-wait. Returns the child's exit code directly. (`spawn`/`run_capture`/`wait_pid` retain the old wrappers — not reachable from `run`, left for a future capture/background bite.)
+- **`RUN_EXECWAIT_READY = 1`** (`src/agnsh.cyr`) — the one-line gate flip 1.4.3 was built for. `sh_run_program` now executes via `run()` (mode-gated: HUMAN/STRICT confirm, AUTO/ASSIST direct) instead of refusing. Help/usage text dropped the "(pending agnos 1.43.x)" qualifier.
+- **`SYS_EXECWAIT = 37` + `sys_execwait(path, pathlen)` wrapper** added to `lib/syscalls_x86_64_agnos.cyr` (also backfilled the missing `SYS_UNAME`/`SYS_SYSINFO`/`SYS_KLOG` = 34/35/36 enum entries for parity).
+
+### Notes
+
+- **No argv/envp yet** — `execwait` takes the program path only (the envp bite is an agnos 1.43.x follow-on; `run`'s `arg1`/`arg2` stay unused on agnos). So `run /bin/klug` works (no args needed); `run /bin/bnrmr TEXT` runs bnrmr but can't pass `TEXT` until argv lands.
+- **QEMU-validated kernel-side** (agnos `/bin/exwv` ring-3 selftest, sweep 7/7); the agnsh `run` path rides the next iron burn. Host build unaffected — `run()` there uses the POSIX fork/exec path, and the 84+59 host smoke assertions stay green.
+
 ## [1.4.3] - 2026-06-07
 
 **The file verbs + `echo` are now discoverable, and a `run` builtin is wired (kernel-gated) for the coming execwait arc.** The `14115`-class iron burns surfaced two shell-UX gaps: the 1.4.2 in-process file verbs executed but were absent from `help` (so `echo` "worked but was hidden"), and there was no `run` command to launch a program from disk (`commandress`/`bannermanor`/`klug`). This patch documents the verbs and lands `run` as a first-class builtin — validated and pre-wired to the real exec path, gated off until agnos ships the execwait syscall.

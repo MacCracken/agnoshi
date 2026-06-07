@@ -14,9 +14,8 @@ include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 include "lib/args.cyr"
 include "lib/chrono.cyr"
-# process.cyr → process_agnos.cyr under CYRIUS_TARGET_AGNOS (sys_spawn/waitpid
-# today; swaps onto the 1.43.x execwait syscall later). Pulled in so the `run`
-# builtin's live path compiles now and un-gates with a one-line flag flip.
+# process.cyr → process_agnos.cyr under CYRIUS_TARGET_AGNOS, whose run() routes
+# through sys_execwait (agnos #37, 1.43.0). Backs the `run` builtin's live path.
 include "lib/process.cyr"
 
 # `ui_show_*` are minimal stand-ins because src/ui.cyr isn't pulled
@@ -42,7 +41,7 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.4.3";
+var VERSION_STR = "agnoshi 1.4.4";
 
 fn print_version() {
     println(VERSION_STR);
@@ -58,7 +57,7 @@ fn print_usage() {
     println("Interactive mode (no args): type natural language or shell commands.");
     println("  help                -- builtin, file, and run commands");
     println("  ls cat cp mv rm ... -- in-process file verbs");
-    println("  run PATH            -- run a program from disk (pending agnos 1.43.x)");
+    println("  run PATH            -- run a program from disk");
     println("  exit                -- leave shell");
 }
 
@@ -314,22 +313,20 @@ fn try_mode_switch(mgr, arg_cstr) {
     return 0;
 }
 
-# RUN_EXECWAIT_READY gates the `run` builtin's live exec path. It stays 0 until
-# agnos ships the execwait syscall (the 1.43.x arc). Until then `run` validates
-# its argument and refuses cleanly instead of driving the spawn(#3)+waitpid(#4)
-# path, which fatally faults on this kernel:
-#   - waitpid(#4) busy-waits on a bare `hlt` while IF=0 (ring-3 syscalls run
-#     interrupts-masked) → the timer ISR that drives the scheduler never fires,
-#     the child never runs/exits, the box HARD-HANGS;
-#   - spawn(#3) → the in-memory elf_load does a CR3-switch memcpy of agnsh's
-#     mmap-arena buffer, which the child CR3 leaves unmapped → #PF/#DF/triple
-#     fault; and its 4 KB page mapped as a 2 MB huge page aliases live memory.
-# The proven exec path is the in-kernel recovery shell's elf_load_from_file +
-# synchronous exec_and_wait. 1.43.x exposes that as a ring-3 execwait syscall
-# and process_agnos.cyr's run() swaps onto it; THEN this flag flips to 1 and the
-# builtin below goes live with no other agnsh-side change. Order matters: do not
-# flip until both the kernel syscall and the process_agnos run() swap have landed.
-var RUN_EXECWAIT_READY = 0;
+# RUN_EXECWAIT_READY gates the `run` builtin's live exec path. **LIVE since agnos
+# 1.43.0 shipped execwait (#37)** + process_agnos.cyr's run() routes through
+# sys_execwait(path, len). execwait loads the ELF from the ext2 root and runs it
+# synchronously in ring 3 via the proven elf_load_from_file + exec_and_wait path
+# (the in-kernel recovery shell's `run` model), returning the child's exit code.
+# It replaced the broken spawn(#3)+waitpid(#4) pair this flag used to gate off:
+#   - waitpid(#4) busy-waited on a bare `hlt` while IF=0 → the box HARD-HUNG;
+#   - spawn(#3) → in-memory elf_load CR3-switch memcpy of an unmapped arena
+#     buffer → #PF/#DF/triple fault.
+# execwait sidesteps both (kernel owns the load under boot CR3; no waitpid spin).
+# QEMU-validated via the kernel's /bin/exwv ring-3 selftest (sweep 7/7); iron
+# rides the next burn. (Still no argv/envp on agnos — path only; the envp bite is
+# a 1.43.x follow-on.)
+var RUN_EXECWAIT_READY = 1;
 
 # Run a program from disk. Shared by the interactive loop and the -c one-shot
 # path. `path` is an already-validated absolute cstr. Returns the child exit
@@ -433,7 +430,6 @@ fn interactive_loop() {
             println("  grep PATTERN FILE                    search FILE for PATTERN");
             println("Run:");
             println("  run PATH                             run a program from disk");
-            println("                                       (pending agnos 1.43.x)");
             println("Or type a natural-language command.");
             continue;
         }
