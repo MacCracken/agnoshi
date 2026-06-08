@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-06-08
+
+**`getenv()` resolves on agnos — `$HOME`-based userland config is live.** The envp arc item's two lower halves already shipped — agnos 1.43.2 stages a real env (`HOME=/`, `PWD=/`) on the exec init stack, and cyrius 6.0.87 added the agnos `getenv()` branch that walks it (QEMU-validated against the real 1.43.2 kernel: `getenv("HOME")→/`, `getenv("PWD")→/`, `getenv("NOPE")→null`). What was missing was *consumption*: agnoshi still pinned 6.0.56, so its vendored `getenv()` was the old `/proc/self/environ`-only reader and agnsh short-circuited to `/tmp` on agnos. This patch closes the loop end-to-end.
+
+### Changed
+
+- **cyrius pin 6.0.56 → 6.0.87** (`cyrius.cyml`) — pulls in the agnos `getenv()`/envp walk (`lib/io.cyr`'s `CYRIUS_TARGET_AGNOS` branch → `lib/args_agnos.cyr`'s `_agnos_getenv`). Feature-motivated, exactly parallel to the 6.0.14→6.0.56 bump that pulled in `CYRIUS_TARGET_AGNOS` — *not* drift-chasing. The vendored `./lib/` snapshot was re-synced via `cyrius lib sync` (gitignored; the pin is the only tracked delta). The agnos **kernel** deliberately stays on its held 6.0.56 — it is the envp *producer*, not a `getenv` consumer.
+- **`history_path()` / `audit_log_path()` consume `getenv("HOME")` on agnos** (`src/agnsh.cyr`) — removed the `#ifdef CYRIUS_TARGET_AGNOS` `/tmp` short-circuit. The old rationale (getenv a guaranteed-0 no-op + an 8 KB stack buffer co-resident with the read buffer) no longer holds: getenv now resolves, and the agnos branch (`_agnos_getenv`) is a stack-light envp walk — the 8 KB buffer only ever existed in the Linux `/proc/self/environ` path. With the default agnos `HOME=/`, the paths resolve to `/.agnsh_history` and `/.agnsh_audit.log` (was `/tmp/...`).
+- **Trailing-slash-aware `$HOME` concat** — both path builders strip one trailing `/` from `$HOME` so `HOME=/` yields `/.agnsh_history` (not `//.agnsh_history`); `HOME=/root` → `/root/.agnsh_history`, `HOME=/root/` → `/root/.agnsh_history`. Correct on both agnos and host; unset `HOME` still falls back to `/tmp`.
+
+### Verified
+
+- Host build + smoke **59/0** — no regression from the 6.0.57→6.0.87 re-vendor (a 3-lens adversarial review confirmed the agnos-target delta is limited to the intended getenv addition plus one benign uncontended `alloc_agnos` lock; zero syscall-number / ABI / struct / wrapper-signature changes to any agnos peer).
+- Agnos `--agnos` build OK → valid static ELF64 (the `getenv → _agnos_getenv` delegation links).
+- The ABI offset was independently re-derived from both sides: kernel writes `envp[j]` at `rsp + 8 + (argc+1+j)*8` (`agnos/kernel/core/elf.cyr`); the consumer reads the identical formula (`args_agnos.cyr`) — exact match, no off-by-one.
+- Trailing-slash concat proven for `HOME=/`, `/root`, `/root/`, `/home/x`, unset. getenv runtime on agnos already validated by cyrius 6.0.87 against the real 1.43.2 kernel; the agnsh path rides the next iron burn.
+
 ## [1.4.5] - 2026-06-07
 
 ### Fixed

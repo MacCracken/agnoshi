@@ -41,7 +41,7 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 
-var VERSION_STR = "agnoshi 1.4.5";
+var VERSION_STR = "agnoshi 1.4.6";
 
 fn print_version() {
     println(VERSION_STR);
@@ -66,20 +66,19 @@ fn history_path() {
     # file_exists/read/write can use it directly. `$HOME/.agnsh_history`
     # matches the docs/agnsh.1 convention.
     #
-    # On agnos there is no /proc/self/environ and the ring-3 init stack passes
-    # envp=NULL, so getenv("HOME") can only ever return 0 here — calling it is
-    # pure dead weight that also reserves an 8 KB stack buffer (cyrius getenv)
-    # co-resident with interactive_loop's 4 KB read buffer. Until the 1.41.12
-    # kernel stack-relocation that combo overflowed the 12 KB ring-3 stack and
-    # faulted agnsh right after its banner. Skip getenv on agnos and return the
-    # fixed /tmp path directly; the host build keeps the $HOME behavior its
-    # smoke tests assert.
-    #ifdef CYRIUS_TARGET_AGNOS
-    return "/tmp/agnsh_history";
-    #endif
+    # getenv("HOME") resolves on agnos as of agnoshi 1.4.6: the kernel stages
+    # envp on the exec init stack (agnos 1.43.2) and cyrius 6.0.87's getenv
+    # walks it (the agnos branch delegates to _agnos_getenv — a stack-buffer-free
+    # envp walk, NOT the 8 KB /proc/self/environ reader the Linux path uses, so
+    # the old deep-stack hazard that gated this off on agnos no longer applies).
+    # Default agnos env is HOME=/, so this resolves to /.agnsh_history. Falls
+    # back to /tmp when HOME is unset (test harness / restricted envs).
     var home = getenv("HOME");
     if (home == 0) { return "/tmp/agnsh_history"; }
     var hlen = strlen(home);
+    # Drop one trailing '/' so HOME=/ → /.agnsh_history (not //.agnsh_history);
+    # HOME=/root stays /root/.agnsh_history. The suffix carries the separator.
+    if (hlen > 0) { if (load8(home + hlen - 1) == 47) { hlen = hlen - 1; } }
     var suffix = "/.agnsh_history";
     var slen = strlen(suffix);
     var buf = alloc(hlen + slen + 1);
@@ -95,14 +94,14 @@ fn audit_log_path() {
     # a length-prefixed buffer with no trailing zero. Falls back to /tmp
     # when HOME is unset (test harness / restricted envs).
     #
-    # Same agnos rationale as history_path: getenv is a guaranteed-0 no-op on
-    # agnos and its 8 KB stack buffer is a deep-stack hazard, so skip it there.
-    #ifdef CYRIUS_TARGET_AGNOS
-    return "/tmp/agnsh_audit.log";
-    #endif
+    # As of agnoshi 1.4.6 getenv resolves on agnos too (kernel 1.43.2 envp +
+    # cyrius 6.0.87 getenv); see history_path for the no-stack-hazard rationale.
+    # Default agnos HOME=/ → /.agnsh_audit.log.
     var home = getenv("HOME");
     if (home == 0) { return "/tmp/agnsh_audit.log"; }
     var hlen = strlen(home);
+    # Drop one trailing '/' (HOME=/ → /.agnsh_audit.log); the suffix has the sep.
+    if (hlen > 0) { if (load8(home + hlen - 1) == 47) { hlen = hlen - 1; } }
     var suffix = "/.agnsh_audit.log";
     var slen = strlen(suffix);
     var buf = alloc(hlen + slen + 1);
