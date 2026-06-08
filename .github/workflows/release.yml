@@ -36,24 +36,18 @@ jobs:
           echo "Version verified: $TAG (cyrius.cyml pulls from VERSION via \${file:VERSION})"
 
       - name: Install Cyrius toolchain
-        # Mirrors the ci.yml install pattern — versioned layout +
-        # cycc_aarch64 tarball-root fallback for Cyrius 6.0+.
+        # Pipe the upstream installer (same as ci.yml / patra). Replaces the
+        # silent `curl -sLO | tar xzf` that saved a 404 page → "not in gzip
+        # format" when a freshly bumped pin's tarball asset was still uploading.
+        # install.sh fetches with -sSfL (fails clean), source-bootstrap fallback.
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          set -e
+          CYRIUS_VERSION="$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
-          [ -f "$CYRIUS_DIR/cycc_aarch64" ] && cp "$CYRIUS_DIR/cycc_aarch64" "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"
-          chmod +x "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"* 2>/dev/null || true
-          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/bin"
-          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib" "$HOME/.cyrius/lib"
-          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+            CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
+          echo "CYRIUS_HOME=$HOME/.cyrius" >> "$GITHUB_ENV"
 
       - name: Verify toolchain
         # `cc5` was renamed to `cycc` in Cyrius 6.0; use the wrapper.
