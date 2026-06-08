@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ls` (and every path verb) now sees the agnos filesystem.** The in-process verbs passed relative paths — `ls` with no arg / `ls .` passed the literal `"."` — straight to `sys_open`/`sys_stat`. agnos's `vfs_resolve_mount` requires an absolute path (the ABI is "userland passes absolute paths"; there is no per-process CWD), so a non-`/`-leading path returned `FS_NONE` → "No such file or directory". The in-kernel recovery shell never hit this because it normalized via `sh_abspath`; agnsh's userland verbs had no equivalent. Added `verb_abspath()` (`src/verbs.cyr`) and applied it at every path chokepoint (`verb_open_read/write_trunc/create/dir`, `verb_stat`, `verb_mkdir/rmdir/unlink/rename_sc`): on agnos it resolves relative paths against root `/` (the effective CWD — no working `cd`); on the host it's a pass-through so Linux still resolves `.` against the real CWD. **QEMU-validated** (gnoboot+OVMF, xHCI keyboard via HMP sendkey): `ls`, `ls .`, and `ls /` all list the ext2 root (`bin`/`lsmark`/`lost+found`) at the `[ASSIST] >` prompt.
+
 ## [1.4.4] - 2026-06-07
 
 **`run` is LIVE — agnsh launches programs from disk on agnos.** agnos 1.43.0 shipped the `execwait` (#37) syscall (the ring-3 blocking-exec primitive), so the `run` builtin staged + gated in 1.4.3 is now un-gated. `run /bin/klug` (etc.) loads and runs a static ELF64 from the ext2 root in ring 3 and reports its exit code — the first user-facing "agnsh runs an external tool" path.

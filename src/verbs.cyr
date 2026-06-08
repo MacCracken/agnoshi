@@ -32,8 +32,46 @@
 # host Linux open can use it directly); the agnos branch derives namelen
 # from the cstring and passes the agnos AO_* flags.
 
+# Resolve a verb's path argument to an ABSOLUTE path for the agnos VFS.
+# agnos's vfs_resolve_mount REQUIRES a leading '/' ("must be absolute") and the
+# kernel has NO per-process CWD — chdir/getcwd (#79/#80) are unimplemented by
+# design; the ABI is "userland passes absolute paths". The in-kernel recovery
+# shell did this itself via sh_abspath (lazy-init CWD to "/"), which is why
+# `ls` / `ls .` worked there; agnsh's userland verbs skipped that step, so a
+# bare name or "." reached the kernel, failed the absolute-path check, and
+# surfaced "No such file or directory". The agnos effective CWD is root "/"
+# (no working `cd`), so relative paths resolve against "/".
+#
+# On the HOST this is a pass-through: the Linux kernel resolves "." and relative
+# names against the real process CWD, so rewriting them would be wrong.
+fn verb_abspath(path_cstr): i64 {
+    #ifndef CYRIUS_TARGET_AGNOS
+    return path_cstr;
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    var n = strlen(path_cstr);
+    if (n == 0) { return "/"; }                          # empty → root
+    if (load8(path_cstr) == 47) { return path_cstr; }    # already absolute
+    if (n == 1) { if (load8(path_cstr) == 46) { return "/"; } }   # "." → root
+    var start = 0;                                        # strip one leading "./"
+    if (n >= 2) {
+        if (load8(path_cstr) == 46) {
+            if (load8(path_cstr + 1) == 47) { start = 2; }
+        }
+    }
+    var rem = n - start;
+    var buf = alloc(rem + 2);                             # '/' + remainder + NUL
+    store8(buf, 47);
+    var i = 0;
+    while (i < rem) { store8(buf + 1 + i, load8(path_cstr + start + i)); i = i + 1; }
+    store8(buf + 1 + rem, 0);
+    return buf;
+    #endif
+}
+
 # Open `path_cstr` read-only. Returns fd >= 0, or -1.
 fn verb_open_read(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     var n = strlen(path_cstr);
     return sys_open(path_cstr, n, 0x0);          # AO_RDONLY
@@ -46,6 +84,7 @@ fn verb_open_read(path_cstr): i64 {
 # Open `path_cstr` for writing, creating if absent and truncating to zero
 # (the `echo >` / `cp` shape). Returns fd >= 0, or -1.
 fn verb_open_write_trunc(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     var n = strlen(path_cstr);
     return sys_open(path_cstr, n, 0x1 | 0x100 | 0x200);  # AO_WRONLY|AO_CREAT|AO_TRUNC
@@ -58,6 +97,7 @@ fn verb_open_write_trunc(path_cstr): i64 {
 # Open `path_cstr` create-if-absent WITHOUT truncating (the `touch` shape).
 # Returns fd >= 0, or -1.
 fn verb_open_create(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     var n = strlen(path_cstr);
     return sys_open(path_cstr, n, 0x1 | 0x100);          # AO_WRONLY|AO_CREAT
@@ -71,6 +111,7 @@ fn verb_open_create(path_cstr): i64 {
 # AO_DIRECTORY so the kernel returns a dir-fd (ABI O3); on the host a plain
 # read-open of a directory works with getdents64. Returns fd >= 0, or -1.
 fn verb_open_dir(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     var n = strlen(path_cstr);
     return sys_open(path_cstr, n, 0x800);        # AO_DIRECTORY (read)
@@ -97,6 +138,7 @@ fn verb_open_dir(path_cstr): i64 {
 # Linux rename has no stdlib wrapper (and no SysNr enum slot); use the raw
 # x86_64 number 82. agnos has sys_rename in the peer.
 fn verb_mkdir_sc(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_mkdir(path_cstr, strlen(path_cstr));
     #endif
@@ -105,6 +147,7 @@ fn verb_mkdir_sc(path_cstr): i64 {
     #endif
 }
 fn verb_rmdir_sc(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_rmdir(path_cstr, strlen(path_cstr));
     #endif
@@ -113,6 +156,7 @@ fn verb_rmdir_sc(path_cstr): i64 {
     #endif
 }
 fn verb_unlink_sc(path_cstr): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_unlink(path_cstr, strlen(path_cstr));
     #endif
@@ -121,6 +165,8 @@ fn verb_unlink_sc(path_cstr): i64 {
     #endif
 }
 fn verb_rename_sc(old_cstr, new_cstr): i64 {
+    old_cstr = verb_abspath(old_cstr);
+    new_cstr = verb_abspath(new_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_rename(old_cstr, strlen(old_cstr), new_cstr, strlen(new_cstr));
     #endif
@@ -338,6 +384,7 @@ fn dir_read_names(fd, out): i64 {
 # Type + size are read back with verb_stat_mode / verb_stat_size, which
 # normalize the per-target struct offsets to a portable answer.
 fn verb_stat(path_cstr, statbuf): i64 {
+    path_cstr = verb_abspath(path_cstr);
     #ifdef CYRIUS_TARGET_AGNOS
     var n = strlen(path_cstr);
     return sys_stat(path_cstr, n, statbuf);
@@ -719,9 +766,9 @@ fn verb_wc(args, argc): i64 {
 # Verb: ls [-l] [PATH]
 # ================================================================
 # Lists directory entries one per line. `-l` prepends a type marker
-# (d/-) + size via stat. Default PATH is "." (host resolves CWD; agnos
-# treats a bare name as CWD-relative, lazy-init "/" per the ABI). If PATH
-# is a file (not a dir), prints the path itself.
+# (d/-) + size via stat. Default PATH is "." — verb_abspath resolves it to
+# the agnos root "/" (host resolves "." against the real CWD). If PATH is a
+# file (not a dir), prints the path itself.
 fn verb_ls(args, argc): i64 {
     var long = 0;
     var path_idx = 0 - 1;
