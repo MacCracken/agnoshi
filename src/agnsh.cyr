@@ -45,7 +45,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.4.7";
+var VERSION_STR = "agnoshi 1.4.8";
 
 fn print_version() {
     println(VERSION_STR);
@@ -70,13 +70,23 @@ fn history_path() {
     # file_exists/read/write can use it directly. `$HOME/.agnsh_history`
     # matches the docs/agnsh.1 convention.
     #
-    # getenv("HOME") resolves on agnos as of agnoshi 1.4.6: the kernel stages
-    # envp on the exec init stack (agnos 1.43.2) and cyrius 6.0.87's getenv
-    # walks it (the agnos branch delegates to _agnos_getenv — a stack-buffer-free
-    # envp walk, NOT the 8 KB /proc/self/environ reader the Linux path uses, so
-    # the old deep-stack hazard that gated this off on agnos no longer applies).
-    # Default agnos env is HOME=/, so this resolves to /.agnsh_history. Falls
-    # back to /tmp when HOME is unset (test harness / restricted envs).
+    # agnos: resolve the path WITHOUT calling getenv. The kernel default env is
+    # always HOME=/ (elf.cyr stages it), so $HOME/.agnsh_history is statically
+    # /.agnsh_history — no envp walk needed. We must NOT call getenv here: the
+    # lib/io.cyr getenv() wrapper declares `var buf[8192]` AFTER its
+    # `#ifdef CYRIUS_TARGET_AGNOS ... #endif` early-return, so that 8 KB local is
+    # unguarded and compiled into getenv's frame on the agnos target too (the
+    # agnos branch returns before using it, but the prologue still reserves it).
+    # agnos hands ring-3 only ~12 KB of init stack (elf.cyr: rsp starts at stack
+    # offset 0x3000), and interactive_loop already holds `var buf[4096]`, so the
+    # extra 8 KB frame overflows the stack → #PF right after the banner. This is
+    # the regression burn agnoshi_147 surfaced (1.4.6 re-enabled getenv on the
+    # mistaken premise that the buffer-free _agnos_getenv delegate cleared the
+    # hazard — but the wrapper's reservation, not the delegate, is what blows up).
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/.agnsh_history";
+    #endif
+    # host: full $HOME resolution; falls back to /tmp when HOME is unset.
     var home = getenv("HOME");
     if (home == 0) { return "/tmp/agnsh_history"; }
     var hlen = strlen(home);
@@ -98,9 +108,14 @@ fn audit_log_path() {
     # a length-prefixed buffer with no trailing zero. Falls back to /tmp
     # when HOME is unset (test harness / restricted envs).
     #
-    # As of agnoshi 1.4.6 getenv resolves on agnos too (kernel 1.43.2 envp +
-    # cyrius 6.0.87 getenv); see history_path for the no-stack-hazard rationale.
-    # Default agnos HOME=/ → /.agnsh_audit.log.
+    # agnos: resolve WITHOUT getenv — HOME=/ is the fixed kernel default, so this
+    # is statically /.agnsh_audit.log. Calling getenv would push lib/io.cyr's
+    # unguarded `var buf[8192]` frame onto the ~12 KB ring-3 stack and fault; see
+    # history_path for the full rationale (the agnoshi_147 banner-hang regression).
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/.agnsh_audit.log";
+    #endif
+    # host: full $HOME resolution; falls back to /tmp when HOME is unset.
     var home = getenv("HOME");
     if (home == 0) { return "/tmp/agnsh_audit.log"; }
     var hlen = strlen(home);
