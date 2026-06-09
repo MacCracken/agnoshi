@@ -45,7 +45,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.4.8";
+var VERSION_STR = "agnoshi 1.4.9";
 
 fn print_version() {
     println(VERSION_STR);
@@ -643,5 +643,14 @@ fn main() {
     return 1;
 }
 
-var exit_code = main();
-syscall(60, exit_code);
+# Bare-call entry (NOT `var exit_code = main();`): on the agnos target a
+# `var = main()` top-level makes main a gvar-initializer that runs BEFORE
+# cyrius's init-rsp capture (placed after gvar-inits, cyrius 6.1.14), so
+# argc()/argv() would read 0/null. A bare statement runs in PARSE_PROG, after
+# the capture, so args resolve correctly.
+fn _agnos_entry(): i64 {
+    var exit_code = main();
+    syscall(SYS_EXIT, exit_code);
+    return 0;
+}
+_agnos_entry();
