@@ -6,7 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **agnos: no prompt after the banner — REAL root cause was a cyrius `fnptr.cyr` gap, not getenv/the stack.** The 1.4.8 getenv change below was necessary-but-insufficient: re-staging it still hung agnsh right after the banner. QEMU bisection (real agnos 1.43.7 kernel via `agnos/scripts/agnsh-smoke.sh`, burn-free) traced the hang into `CommandHistory_new() → vec_new()`, which returned **0**, then a null-deref on the first prompt render. Cause: **`cyrius/lib/fnptr.cyr`'s `fncall0..8` have no `CYRIUS_TARGET_AGNOS` asm branch** (only `_LINUX`/`_MACOS`/`_WIN`), and `cyrius build --agnos` predefines `CYRIUS_TARGET_AGNOS` but deliberately not `CYRIUS_TARGET_LINUX`, so every `fncallN` compiled to `var result = 0; return result;` → returned 0 → the `Allocator` vtable (`alloc_via`/`realloc_via`/`free_via` dispatch through `fncall1/2/4`) returned 0 → `vec_new`/`str_new`/`hashmap` via `default_alloc()` all produced null. (Same bug class as the v5.9.38 macOS `fncall` gap the file documents.) The getenv/`buf[8192]`/`~12 KB stack` story in 1.4.8 was wrong — a Cyrius function-local `var X[N]` is a `.bss` global (0 stack bytes), and getenv isn't on the agnos pre-prompt path anyway.
+  - **Stopgap** (`scripts/patch-fnptr-agnos.py`, new): idempotent patcher that clones each `fncallN`'s validated Linux/x86 asm under a `CYRIUS_TARGET_AGNOS` guard **in place** in the gitignored vendored `lib/fnptr.cyr`. Must be in-place, not a separate-file override — the hand-asm `[rbp-N]` offsets are coupled to cycc's per-definition frame layout (a copied-out standalone `fncallN` gets a different layout and calls a wild address; disassembly-confirmed). Run after every `cyrius update`/`cyrius deps`, before `cyrius build --agnos`.
+  - **Verified** (QEMU, no iron burn): agnsh reaches `[ASSIST] >` and dispatches `help`/`version`/`mode` (`agnos/scripts/agnsh-type-test.py`); host smoke **59/0** (stopgap is agnos-gated, host untouched).
+  - **Durable fix** (cyrius, hands-off): add the agnos branch to `fncall0..8` in `cyrius/lib/fnptr.cyr`. Tracking issue: `cyrius/docs/development/issues/2026-06-08-fnptr-fncall-missing-agnos-branch.md`. Remove `scripts/patch-fnptr-agnos.py` once that lands and agnoshi re-vendors.
+
 ## [1.4.8] - 2026-06-08
+
+> **Correction (see [Unreleased]):** this getenv fix did NOT resolve the no-prompt hang — the real cause was the cyrius `fnptr.cyr` agnos gap. The getenv change is retained as a harmless simplification (agnos `HOME` is always `/`), not as the fix.
 
 ### Fixed
 

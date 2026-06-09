@@ -72,17 +72,15 @@ fn history_path() {
     #
     # agnos: resolve the path WITHOUT calling getenv. The kernel default env is
     # always HOME=/ (elf.cyr stages it), so $HOME/.agnsh_history is statically
-    # /.agnsh_history — no envp walk needed. We must NOT call getenv here: the
-    # lib/io.cyr getenv() wrapper declares `var buf[8192]` AFTER its
-    # `#ifdef CYRIUS_TARGET_AGNOS ... #endif` early-return, so that 8 KB local is
-    # unguarded and compiled into getenv's frame on the agnos target too (the
-    # agnos branch returns before using it, but the prologue still reserves it).
-    # agnos hands ring-3 only ~12 KB of init stack (elf.cyr: rsp starts at stack
-    # offset 0x3000), and interactive_loop already holds `var buf[4096]`, so the
-    # extra 8 KB frame overflows the stack → #PF right after the banner. This is
-    # the regression burn agnoshi_147 surfaced (1.4.6 re-enabled getenv on the
-    # mistaken premise that the buffer-free _agnos_getenv delegate cleared the
-    # hazard — but the wrapper's reservation, not the delegate, is what blows up).
+    # /.agnsh_history — no envp walk needed; this is just a simplification.
+    # NB: the old "getenv's buf[8192] overflows the ~12 KB ring-3 stack" rationale
+    # for avoiding getenv here was WRONG — a Cyrius function-local `var X[N]` is a
+    # .bss global (0 stack bytes), so getenv never cost stack. The real agnoshi_147
+    # banner-hang cause was cyrius lib/fnptr.cyr's fncall0..8 missing a
+    # CYRIUS_TARGET_AGNOS asm branch (every fncallN returned 0 → alloc_via/vec_new
+    # returned 0 → CommandHistory_new null-deref before the first prompt). Fixed by
+    # the agnoshi stopgap scripts/patch-fnptr-agnos.py; durable fix tracked in
+    # cyrius issue 2026-06-08-fnptr-fncall-missing-agnos-branch.md.
     #ifdef CYRIUS_TARGET_AGNOS
     return "/.agnsh_history";
     #endif
@@ -109,9 +107,9 @@ fn audit_log_path() {
     # when HOME is unset (test harness / restricted envs).
     #
     # agnos: resolve WITHOUT getenv — HOME=/ is the fixed kernel default, so this
-    # is statically /.agnsh_audit.log. Calling getenv would push lib/io.cyr's
-    # unguarded `var buf[8192]` frame onto the ~12 KB ring-3 stack and fault; see
-    # history_path for the full rationale (the agnoshi_147 banner-hang regression).
+    # is statically /.agnsh_audit.log (a simplification, not a fix). See
+    # history_path for why the old "getenv overflows the ring-3 stack" rationale was
+    # wrong (the real agnoshi_147 cause was cyrius fnptr.cyr's missing agnos branch).
     #ifdef CYRIUS_TARGET_AGNOS
     return "/.agnsh_audit.log";
     #endif
