@@ -53,7 +53,9 @@ fn sh_try_bareword_launch(line, mode): i64 {
     var i = 0;
     while (i < tl) { store8(probe + 5 + i, load8(line + i)); i = i + 1; }
     store8(probe + 5 + tl, 0);
-    var fd = verb_open_read(probe);
+    # Existence probe. `probe` is already absolute ("/bin/<word>"), so open it
+    # directly (AO_RDONLY); the old verb_open_read helper went with the verbs.
+    var fd = sys_open(probe, strlen(probe), 0x0);
     if (fd < 0) { return 0 - 1; }                  # no such /bin program → NL intent
     sys_close(fd);
 

@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-06-09 (userland coreutils delegation: file verbs → kriya/owl)
+
+agnsh stops reimplementing coreutils. The in-process FS verbs added at 1.4.2 as a
+stopgap "until ring-3 execwait lands" are removed now that execwait shipped (agnos
+1.43.0) and the sovereign tools build for agnos: agnsh is a pure launcher, and a
+typed `cp`/`ls`/`rm`/… resolves to the staged **/bin/kriya** dispatcher via the
+bareword launcher (1.4.6), while **owl** is AGNOS's `cat`.
+
+### Removed
+
+- **The 12 in-process FS verbs** (`ls cat cp mv rm mkdir rmdir touch echo wc find
+  grep`) and their ABI-bridging helpers — `verb_abspath`, the `verb_open_*` /
+  `verb_*_sc` syscall wrappers, `dir_read_names`/getdents, the `verb_stat*` family,
+  `reject_unknown_flags`, every per-verb body, and the `is_fs_verb` / `run_fs_verb`
+  / `dispatch_fs_verb` dispatcher with its pipeline/traversal/dangerous-flag gates.
+  `src/verbs.cyr` is deleted; the agnsh binary shrinks **−37 KB** (host, 347→310 KB)
+  / **−39 KB** (agnos, 327→287 KB).
+- **`scripts/verbs-smoke.sh`** retired to a tombstone — its 84 host assertions
+  tested the now-removed in-process verbs. The delegation contract is validated on
+  the agnos target via `agnos/scripts/agnsh-verb-test.py` (bareword cp/ls → kriya,
+  owl -p), not on the host.
+
+### Changed
+
+- **File verbs are delegated, not built in.** On agnos a bareword `cp a b` / `ls /`
+  / `wc f` / `grep p f` falls through `sh_try_bareword_launch` → `/bin/<verb>` (a
+  symlink to the kriya dispatcher) → `execwait`#37. On the host (a dev target with
+  no `/bin` launcher) the file verbs become NL-intent proposals.
+- **`cat` → owl nudge.** kriya has no `cat` by design (owl is AGNOS's cat) and there
+  is no `/bin/cat`, so a typed `cat …` prints `cat: AGNOS reads files with owl --
+  try 'owl FILE' (or 'owl -p FILE' for plain output)` instead of silently hitting
+  the NL path. New `sh_cat_owl_warning` / `sh_first_word_eq` in `src/sanitize.cyr`.
+- **Relocated the survivors.** `verb_confirm` / `verb_read_yes` / `verb_out*` /
+  `str_cat3_cstr` / `mode_needs_confirm` moved from `verbs.cyr` to `sanitize.cyr`
+  (still used by the `run` builtin's mode-gated launch confirm). `run_agnos.cyr`'s
+  `/bin/<word>` existence probe now calls `sys_open` directly instead of the
+  removed `verb_open_read`.
+- **help / banner / usage** reworded — the `Files:` block now lists the verbs as
+  external `/bin` tools (kriya) plus `owl FILE` for cat, not in-process builtins.
+
+### Breaking
+
+- `agnsh -c "ls /tmp"` (and the other file verbs) no longer execute in-process on
+  the host — they are agnos-delegation only. On agnos the verbs require the staged
+  `/bin/kriya` + symlinks (agnos `scripts/stage-tools.sh`); `cat` requires `/bin/owl`.
+- The `echo TEXT > FILE` in-process redirect is gone (agnsh does no shell
+  redirection; kriya `echo` prints to stdout). Seed file content at mkfs/stage time.
+
+Host smoke `scripts/smoke-test.sh` 59/0; both targets build clean.
+
 ## [1.4.9] — 2026-06-08 (cyrius 6.1.14: native fnptr fix + shim retired; agnos argv idiom)
 
 ### Changed

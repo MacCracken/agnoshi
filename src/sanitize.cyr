@@ -383,3 +383,99 @@ fn is_safe_commit_message(msg) {
     if (load8(msg) == 45) { return 0; }
     return 1;
 }
+
+# ================================================================
+# Shell confirm + output helpers (relocated from verbs.cyr at 1.5.0)
+# ================================================================
+# The in-process FS verbs were removed in agnoshi 1.5.0 — agnsh now DELEGATES
+# cp/mv/rm/ls/mkdir/rmdir/touch/echo/wc/find/grep to the staged /bin/kriya
+# dispatcher and cat to /bin/owl (see run_agnos.cyr's bareword launcher). These
+# few helpers survived because sh_run_program (the `run` builtin) still uses them
+# for its mode-gated launch confirm; re-homed here (target-agnostic, included
+# before the agnsh.cyr body) rather than deleted with the verbs.
+
+# Mode-gated destructive-action confirmation. Modes (0=AI_AUTONOMOUS,
+# 1=AI_ASSISTED, 2=HUMAN, 3=STRICT; src/mode.cyr): AUTO+ASSIST run directly,
+# HUMAN+STRICT prompt before a consequential action.
+fn mode_needs_confirm(mode): i64 {
+    if (mode == 2) { return 1; }
+    if (mode == 3) { return 1; }
+    return 0;
+}
+
+# Write a cstring / a newline to stdout (syscall-direct, no Str churn).
+fn verb_out_cstr(cstr): i64 {
+    syscall(SYS_WRITE, 1, cstr, strlen(cstr));
+    return 0;
+}
+fn verb_out_nl(): i64 {
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+
+# Read one confirm line; return 1 iff its first byte is 'y'/'Y'. Routes through
+# read_line (defined in agnsh.cyr, forward-referenced across the compilation
+# unit) so the interactive line discipline + carry buffer apply; EOF/empty -> no.
+fn verb_read_yes(): i64 {
+    var rb[64];
+    var n = read_line(&rb, 64);
+    if (n <= 0) { return 0; }
+    var c = load8(&rb);
+    if (c == 121) { return 1; }   # 'y'
+    if (c == 89) { return 1; }    # 'Y'
+    return 0;
+}
+
+# Prompt `  ⚠ <action> ? [y/N] `, read one line, return 1 to PROCEED / 0 to
+# ABORT (prints "(aborted)" itself). Only called when mode_needs_confirm==1.
+fn verb_confirm(action_cstr): i64 {
+    verb_out_cstr("  \xE2\x9A\xA0 ");   # two-space indent + U+26A0 WARNING SIGN
+    verb_out_cstr(action_cstr);
+    verb_out_cstr(" ? [y/N] ");
+    if (verb_read_yes() == 1) { return 1; }
+    verb_out_cstr("  (aborted)");
+    verb_out_nl();
+    return 0;
+}
+
+# Build the cstring `a + b + c` (all NUL-terminated) into a fresh heap buffer.
+fn str_cat3_cstr(a, b, c): i64 {
+    var la = strlen(a);
+    var lb = strlen(b);
+    var lc = strlen(c);
+    var buf = alloc(la + lb + lc + 1);
+    memcpy(buf, a, la);
+    memcpy(buf + la, b, lb);
+    memcpy(buf + la + lb, c, lc);
+    store8(buf + la + lb + lc, 0);
+    return buf;
+}
+
+# ----------------------------------------------------------------
+# cat -> owl redirect nudge (1.5.0)
+# ----------------------------------------------------------------
+# kriya provides every delegated file verb EXCEPT cat — owl is AGNOS's cat, and
+# kriya has none by design. There is no /bin/cat, so a typed `cat FILE` would
+# otherwise fall to the NL-intent path with no useful feedback. Intercept a
+# leading `cat` word and nudge the user to owl. Returns 1 if it handled the line
+# (caller should skip further dispatch), else 0.
+fn sh_first_word_eq(line_cstr, word_cstr): i64 {
+    var i = 0;
+    while (1 == 1) {
+        var wc = load8(word_cstr + i);
+        if (wc == 0) {
+            var lc = load8(line_cstr + i);
+            if (lc == 0) { return 1; }     # exact match (bare `cat`)
+            if (lc == 32) { return 1; }    # word boundary (`cat ...`)
+            return 0;
+        }
+        if (load8(line_cstr + i) != wc) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn sh_cat_owl_warning(line_cstr): i64 {
+    if (sh_first_word_eq(line_cstr, "cat") == 0) { return 0; }
+    println("cat: AGNOS reads files with owl -- try 'owl FILE' (or 'owl -p FILE' for plain output)");
+    return 1;
+}

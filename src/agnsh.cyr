@@ -37,7 +37,6 @@ include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/intent.cyr"
 include "src/commands.cyr"
-include "src/verbs.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
@@ -45,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.4.9";
+var VERSION_STR = "agnoshi 1.5.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -60,7 +59,7 @@ fn print_usage() {
     println("");
     println("Interactive mode (no args): type natural language or shell commands.");
     println("  help                -- builtin, file, and run commands");
-    println("  ls cat cp mv rm ... -- in-process file verbs");
+    println("  cp mv rm ls ...     -- file tools via /bin (kriya); owl reads files");
     println("  run PATH            -- run a program from disk");
     println("  exit                -- leave shell");
 }
@@ -396,7 +395,7 @@ fn interactive_loop() {
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
     println("Built-ins: help, version, mode, history, clear, exit");
-    println("Files: ls cat cp mv rm mkdir rmdir touch echo wc find grep   Run: run");
+    println("Files: cp mv rm ls mkdir rmdir touch echo wc find grep (kriya) - owl FILE (cat)   Run: run");
     println("");
 
     var buf[4096];
@@ -449,21 +448,12 @@ fn interactive_loop() {
             println("  history                              show last 20 commands");
             println("  clear                                clear screen");
             println("  exit, quit                           leave shell (saves history)");
-            println("Files:");
-            println("  ls [PATH]                            list directory entries");
-            println("  cat FILE                             print file contents");
-            println("  cp SRC DST                           copy a file");
-            println("  mv SRC DST                           move/rename a file");
-            println("  rm FILE                              remove a file");
-            println("  mkdir DIR                            create a directory");
-            println("  rmdir DIR                            remove an empty directory");
-            println("  touch FILE                           create/update a file");
-            println("  echo TEXT [> FILE]                   print TEXT (> writes to FILE)");
-            println("  wc FILE                              count lines/words/bytes");
-            println("  find PATH [-name PAT]                find entries by name");
-            println("  grep PATTERN FILE                    search FILE for PATTERN");
+            println("Files (external /bin tools — type the name to run):");
+            println("  cp mv rm ls mkdir rmdir touch echo wc find grep   kriya (/bin/<verb>)");
+            println("  owl FILE                             print a file (AGNOS's cat; -p = plain)");
             println("Run:");
-            println("  run PATH                             run a program from disk");
+            println("  run /abs/path                        run a program from disk");
+            println("  <name> [args]                        run /bin/<name> directly");
             println("Or type a natural-language command.");
             continue;
         }
@@ -497,10 +487,10 @@ fn interactive_loop() {
             continue;
         }
 
-        # `run PATH` — launch a program from disk. A first-class builtin (NOT an
-        # FS verb), dispatched before dispatch_fs_verb so `run` is never mistaken
-        # for a filesystem op. Validates the path here; sh_run_program owns the
-        # mode gate + the kernel-gated exec (see RUN_EXECWAIT_READY).
+        # `run PATH` — launch a program from disk. A first-class builtin, matched
+        # before the bareword launcher so an explicit `run` is never confused with
+        # a /bin program of the same name. Validates the path here; sh_run_program
+        # owns the mode gate + the kernel-gated exec (see RUN_EXECWAIT_READY).
         if (streq(&buf, "run") == 1) {
             println("usage: run /abs/path/to/program");
             continue;
@@ -525,20 +515,13 @@ fn interactive_loop() {
             continue;
         }
 
-        # FS-verb dispatch (Track B, 1.4.2). If the line's first word is one
-        # of the core filesystem verbs (ls/cat/cp/mv/rm/mkdir/rmdir/touch/
-        # echo/wc/find/grep), run it IN-PROCESS via the agnos syscalls and
-        # skip the NL→intent path entirely. These are builtins (not external
-        # binaries) because launching a standalone binary waits on ring-3
-        # execwait, a future 1.43.x kernel feature; until then the verbs must
-        # execute via syscalls inside the shell process. dispatch_fs_verb
-        # returns -1 when the first word is NOT an FS verb (fall through to
-        # the NL path); otherwise it runs the verb and returns its exit code.
-        # `cur_mode` (the current ModeManager mode) is threaded in so
-        # destructive verbs (rm/mv/cp-overwrite) apply the FIX 4 mode-gated
-        # confirm: HUMAN/STRICT prompt inline, AUTO/ASSIST run directly.
-        if (dispatch_fs_verb(&buf, cur_mode) >= 0) {
-            # Verbs are real commands the user typed — record them in history.
+        # File verbs are no longer in-process (1.5.0 delegation). cp/mv/rm/ls/
+        # mkdir/rmdir/touch/echo/wc/find/grep are DELEGATED to the staged
+        # /bin/kriya dispatcher via the bareword launcher below; `cat` is the one
+        # verb with no /bin entry (owl is AGNOS's cat, kriya has none by design)
+        # — nudge the user to owl rather than silently dropping `cat` on the NL
+        # path. Everything else falls through to sh_try_bareword_launch.
+        if (sh_cat_owl_warning(&buf) == 1) {
             CommandHistory_add(history, &buf);
             continue;
         }
@@ -609,13 +592,9 @@ fn main() {
             return 1;
         }
         var c_cmd = argv(c_idx + 1);
-        # FS verbs run in-process even in one-shot mode (`agnsh -c "ls /tmp"`).
-        # dispatch_fs_verb returns the verb's exit code (>=0) when the first
-        # word is an FS verb, else -1 to fall through to the NL→intent path.
-        # `c_mode` carries the optional --mode (default AUTO) so destructive
-        # verbs apply the FIX 4 confirm.
-        var vrc = dispatch_fs_verb(c_cmd, c_mode);
-        if (vrc >= 0) { return vrc; }
+        # File verbs are delegated to /bin/kriya via the bareword launcher below
+        # (1.5.0); `cat` -> owl nudge (no /bin/cat; owl is AGNOS's cat).
+        if (sh_cat_owl_warning(c_cmd) == 1) { return 0; }
         # `run PATH` in one-shot mode (`agnsh -c "run /bin/klug"`). Same
         # validation + kernel gate as the interactive path.
         if (streq(c_cmd, "run") == 1) { println("usage: run /abs/path/to/program"); return 1; }
