@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.6.0";
+var VERSION_STR = "agnoshi 1.6.1";
 
 fn print_version() {
     println(VERSION_STR);
@@ -305,11 +305,20 @@ fn read_line(buf, maxlen) {
                         if (job_any() == 0) {                         # no jobs AND no partial line ->
                             rl_len = syscall(SYS_READ, 0, &rl_buf, 4095, 0);   # block efficiently (a4=0)
                             done = 1;
+                        } else {
+                            # sched_yield (literal 44, agnos 1.44.16; see the literal-43/37 rationale
+                            # in run_agnos.cyr): donate the REST of our timer slice to the bg job
+                            # instead of busy-polling it away — bg throughput roughly doubles, and
+                            # keystrokes still land within ~2 ticks (latched in kb_buf, drained on
+                            # the next poll; imperceptible against human typing).
+                            syscall(44);
                         }
                     } elif (r == 0 - 3) {                             # PARTIAL line in the kernel
                         job_reap_poll();                              # accumulator: KEEP polling so it
                         # isn't orphaned (the blocking read accumulates into a DIFFERENT buffer); the
                         # next read_line (no jobs) blocks. Reap finished jobs meanwhile.
+                        syscall(44);                                  # donate the slice here too — a
+                        # half-typed line must not busy-spin the slice away (same rationale as -2).
                     } else { rl_len = r; done = 1; }                  # a complete line (or EOF 0)
                 }
             } else {

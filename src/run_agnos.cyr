@@ -93,7 +93,11 @@ fn sh_run_program_bg(cmd, mode): i64 {
     var len = 0;
     while (load8(cmd + len) != 0) { len = len + 1; }
     if (len > 127) { println("run: command too long for a background job (max 127)"); return 1; }
-    var pid = syscall(SYS_SPAWN_PATH, cmd, len);
+    # Literal 43 = spawn_path (the literal-37 execwait precedent below): lib/ is the
+    # gitignored, `cyrius update`-regenerated stdlib snapshot, so an enum added THERE is
+    # silently lost on regeneration — committed src must not depend on it. (1.6.1 fix: the
+    # 1.6.0 cut used a snapshot-local SYS_SPAWN_PATH enum that a regen would have dropped.)
+    var pid = syscall(43, cmd, len);
     if (pid < 0) { println("run: failed to launch background job"); return 1; }
     job_add(pid);
     return 0;
