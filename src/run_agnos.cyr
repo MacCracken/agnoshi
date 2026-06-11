@@ -97,10 +97,48 @@ fn sh_run_program_bg(cmd, mode): i64 {
     # gitignored, `cyrius update`-regenerated stdlib snapshot, so an enum added THERE is
     # silently lost on regeneration — committed src must not depend on it. (1.6.1 fix: the
     # 1.6.0 cut used a snapshot-local SYS_SPAWN_PATH enum that a regen would have dropped.)
-    var pid = syscall(43, cmd, len);
+    # Env inheritance for bg jobs too (see sh_build_env_blob) — explicit 5-arg form.
+    var blen = sh_build_env_blob();
+    var pid = 0 - 1;
+    if (blen > 0) { pid = syscall(43, cmd, len, &sh_env_blob, blen); }
+    else { pid = syscall(43, cmd, len, 0, 0); }
     if (pid < 0) { println("run: failed to launch background job"); return 1; }
     job_add(pid);
     return 0;
+}
+
+# ===================================================================================
+# Per-process env (agnos 1.44.19): children INHERIT agnsh's environment. agnsh walks its
+# OWN envp off the exec init stack (_agnos_init_rsp, the _agnos_getenv shape — ABI §4.6)
+# and concatenates every "KEY=VALUE" into a flat NUL-separated blob, passed to the kernel
+# as (a3=blob, a4=len) on execwait(37) and spawn_path(43) — the explicit 5-arg syscall
+# form (the cyrius builtin pops exactly N arg regs; a 3-arg call leaves GARBAGE in
+# a3/a4, which the kernel's fallback gate tolerates but never propagates). CLIENT-CLAMPED
+# to the kernel caps (<=1024 B, <=16 entries — oversized degrades to the default env
+# kernel-side, so clamping here keeps inheritance working). Today agnsh's env is the
+# kybernet seed (HOME=/ PWD=/), so children see identical CONTENT either way — the
+# inheritance becomes observable the moment agnsh's env first differs (PWD-tracking on
+# agnos and PATH are flagged candidates, not added here). [128] = 1024 B (8N).
+var sh_env_blob[128];
+fn sh_build_env_blob(): i64 {
+    if (_agnos_init_rsp == 0) { return 0; }
+    var acnt = load64(_agnos_init_rsp);
+    var base = _agnos_init_rsp + 8 + (acnt + 1) * 8;   # &envp[0]
+    var off = 0;
+    var j = 0;
+    while (j < 16) {
+        var ep = load64(base + j * 8);
+        if (ep == 0) { break; }                        # envp NULL terminator
+        var el = 0;
+        while (load8(ep + el) != 0) { el = el + 1; }
+        if (off + el + 1 > 1024) { break; }            # clamp: keep whole entries only
+        var k = 0;
+        while (k < el) { store8(&sh_env_blob + off + k, load8(ep + k)); k = k + 1; }
+        store8(&sh_env_blob + off + el, 0);
+        off = off + el + 1;
+        j = j + 1;
+    }
+    return off;                                        # 0 = no env to pass
 }
 
 # Launch `line` ("ABS_PATH [args..]", a NUL-terminated cstr) via execwait (#37) and
@@ -110,7 +148,9 @@ fn sh_run_program_bg(cmd, mode): i64 {
 fn sh_exec_line(line): i64 {
     var len = 0;
     while (load8(line + len) != 0) { len = len + 1; }
-    return syscall(37, line, len);
+    var blen = sh_build_env_blob();
+    if (blen > 0) { return syscall(37, line, len, &sh_env_blob, blen); }   # 5-arg: a3/a4 explicit
+    return syscall(37, line, len, 0, 0);               # explicit zeros — never garbage a3/a4
 }
 
 # Bareword program launch. If the first word of `line` names an executable at

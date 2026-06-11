@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-06-11 (env inheritance: children get the shell's environment)
+
+The consumer half of agnos 1.44.19's per-process env. agnsh now passes its OWN environment
+to every child it launches — through `execwait`(#37, the `run` path) and `spawn_path`(#43,
+the `&` background path) — so env becomes inherited shell state instead of a kernel constant.
+
+### Added
+
+- **`sh_build_env_blob`** (`src/run_agnos.cyr`): walks agnsh's own envp off the exec init
+  stack (`_agnos_init_rsp`, the `_agnos_getenv` shape — agnos ABI §4.6) and concatenates
+  every `KEY=VALUE` into a flat NUL-separated blob, client-clamped to the kernel caps
+  (≤1024 B, ≤16 entries, whole entries only — oversized would silently degrade to the
+  default env kernel-side).
+- **Explicit 5-arg syscall forms**: `syscall(37, line, len, blob, blen)` in `sh_exec_line`
+  and `syscall(43, cmd, len, blob, blen)` in `sh_run_program_bg` — explicit because the
+  cyrius `syscall()` builtin pops exactly N arg registers (a 3-arg call leaves garbage in
+  a3/a4; the kernel's fallback gate tolerates that but never propagates). When the blob is
+  empty, explicit `(…, 0, 0)` — never garbage.
+
+### Notes
+
+- Today agnsh's env IS the kybernet seed (`HOME=/`,`PWD=/`), so children see identical
+  content either way — the inheritance becomes observable the moment agnsh's env first
+  differs. **Candidates flagged, not added** (user-decision scope): real PWD tracking on
+  agnos (the session/prompt cwd machinery is host-only — `SYS_GETCWD` has no agnos
+  equivalent), `PATH=/bin`, shell-exported vars. Validated: agnos `agnsh-bg-test` PASS
+  (~9.8 s, the 5-arg #43+blob path) · `agnsh-delegation-test` PASS (kriya/owl through the
+  5-arg #37+blob path) · host + agnos builds green.
+
 ## [1.6.1] — 2026-06-10 (poll-loop `sched_yield` + the lib-enum durability fix)
 
 ### Changed
