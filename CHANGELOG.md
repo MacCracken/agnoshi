@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-06-10 (background jobs: `prog &`)
+
+agnsh gains real background jobs. A trailing `&` launches a program via the agnos
+kernel's non-blocking `spawn_path`(#43); the prompt returns immediately and stays
+live while the job runs, and agnsh reaps it with `[n] Done`. Needs the kernel-side
+preemptive-agnsh support that landed at **agnos 1.44.14** (without it bg jobs get
+no CPU). End-to-end QEMU-validated via `agnos/scripts/agnsh-bg-test.py`.
+
+### Added
+
+- **Trailing-`&` background launch** (`src/run_agnos.cyr`, `#ifdef CYRIUS_TARGET_AGNOS`).
+  `sh_strip_trailing_amp` strips the `&` in place; `sh_run_program_bg` launches via
+  `syscall(SYS_SPAWN_PATH=43, cmd, len)` (non-blocking, returns the pid immediately)
+  instead of the blocking `execwait`(#37), and records the pid. `sh_try_bareword_launch`
+  routes `prog &` to it.
+- **Background-job table + reaping** (`src/run_agnos.cyr`). A small 8-slot job table
+  (`job_pid`/`job_num`); `job_add` announces `[n] <pid>`; `job_reap_poll` polls each
+  live job with non-blocking `waitpid`(#4) and prints `[n] Done` + compacts the slot
+  on exit. Polled at the top of `read_line` and on every poll iteration.
+- **Poll-mode prompt** (`src/agnsh.cyr` `read_line`). When a background job is live,
+  agnsh polls stdin non-blocking (`read(0)` with `a4=1`) interleaved with `job_reap_poll`,
+  so it yields the CPU in ring 3 and the kernel time-slices the bg job; it reverts to
+  the efficient blocking read when no jobs remain. Handles the kernel's **-3**
+  (partial-line-buffered) return so a mid-line job-drain never orphans a half-typed
+  command. Host build keeps the 4-arg blocking read unchanged.
+
+### Notes
+
+- Background **>1** job concurrently is not yet supported (the kernel's `proc_reap_child`
+  is LIFO-asymmetric for out-of-order exits — single bg job is solid; audit before lifting).
+
 ## [1.5.0] — 2026-06-09 (userland coreutils delegation: file verbs → kriya/owl)
 
 agnsh stops reimplementing coreutils. The in-process FS verbs added at 1.4.2 as a

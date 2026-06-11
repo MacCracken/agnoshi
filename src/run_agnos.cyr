@@ -20,6 +20,85 @@
 # This whole file is agnos-only; the host build keeps the lib fork/exec run().
 #ifdef CYRIUS_TARGET_AGNOS
 
+# ===================================================================================
+# Background jobs (agnos 1.44.13 kernel halves: spawn_path #43 + non-blocking read).
+# A trailing `&` launches the program via spawn_path(#43) — a NON-BLOCKING from-disk
+# spawn that returns the child's pid immediately, so agnsh stays live. The prompt loop
+# polls these pids with waitpid(#4) (non-blocking, returns -2 while alive) and prints
+# "[n] Done" + reaps when one exits. Single-core: this table is agnsh's own state, no
+# locking ([[project_multithreading_future_arc]]).
+# ===================================================================================
+var job_pid[8];          # child pids of live background jobs
+var job_num[8];          # the "[n]" job number shown to the user
+var job_count = 0;       # live jobs in [0, job_count)
+var job_next_num = 1;    # monotonic job-number counter
+
+fn job_any(): i64 { return job_count; }
+
+# Record a freshly-spawned bg child + announce it as "[n] <pid>".
+fn job_add(pid): i64 {
+    if (job_count >= 8) { println("run: too many background jobs (max 8)"); return 0 - 1; }
+    var n = job_next_num;
+    job_next_num = job_next_num + 1;
+    store64(&job_pid + job_count * 8, pid);
+    store64(&job_num + job_count * 8, n);
+    job_count = job_count + 1;
+    str_print(str_from("[")); str_print(str_from_int(n)); str_print(str_from("] "));
+    str_print(str_from_int(pid)); println("");
+    return 0;
+}
+
+# Poll every live bg job once (non-blocking waitpid #4). A return != -2/WOULD_BLOCK means
+# the child exited (and #4 already reaped it): announce "[n] Done" and compact the slot
+# (swap-with-last). Cheap to call every prompt tick.
+fn job_reap_poll(): i64 {
+    var i = 0;
+    while (i < job_count) {
+        var pid = load64(&job_pid + i * 8);
+        var r = syscall(SYS_WAITPID, pid);
+        if (r != 0 - 2) {                                   # exited (not WOULD_BLOCK)
+            var n = load64(&job_num + i * 8);
+            str_print(str_from("[")); str_print(str_from_int(n)); println("] Done");
+            job_count = job_count - 1;                       # compact: last slot -> i
+            store64(&job_pid + i * 8, load64(&job_pid + job_count * 8));
+            store64(&job_num + i * 8, load64(&job_num + job_count * 8));
+            # do NOT advance i — re-check the swapped-in slot
+        } else { i = i + 1; }
+    }
+    return 0;
+}
+
+# Strip a trailing `&` (ASCII 38) + the whitespace before it, IN PLACE. Returns 1 if the
+# line was a background request, 0 otherwise. "sleeper &" -> "sleeper" + return 1.
+fn sh_strip_trailing_amp(line): i64 {
+    var len = 0;
+    while (load8(line + len) != 0) { len = len + 1; }
+    var e = len;
+    while (e > 0) { if (load8(line + e - 1) == 32) { e = e - 1; } else { break; } }  # skip trailing spaces
+    if (e == 0) { return 0; }
+    if (load8(line + e - 1) != 38) { return 0; }            # no trailing '&'
+    e = e - 1;                                              # the '&' position
+    while (e > 0) { if (load8(line + e - 1) == 32) { e = e - 1; } else { break; } }  # spaces before '&'
+    store8(line + e, 0);                                    # truncate
+    return 1;
+}
+
+# Background launch: spawn `cmd` ("/bin/<word> [args..]") via spawn_path(#43, non-blocking)
+# and record the pid. Returns 0 on launch (the child runs concurrently), 1 on refusal/failure.
+# Mirrors sh_run_program's mode gate (HUMAN/STRICT confirm; AUTO/ASSIST run directly).
+fn sh_run_program_bg(cmd, mode): i64 {
+    if (mode_needs_confirm(mode) == 1) {
+        if (verb_confirm(str_cat3_cstr("run ", cmd, " &")) == 0) { return 1; }
+    }
+    var len = 0;
+    while (load8(cmd + len) != 0) { len = len + 1; }
+    if (len > 127) { println("run: command too long for a background job (max 127)"); return 1; }
+    var pid = syscall(SYS_SPAWN_PATH, cmd, len);
+    if (pid < 0) { println("run: failed to launch background job"); return 1; }
+    job_add(pid);
+    return 0;
+}
+
 # Launch `line` ("ABS_PATH [args..]", a NUL-terminated cstr) via execwait (#37) and
 # return the child's exit code, or -1 on launch failure. The literal 37 mirrors the
 # literal-60 sys_exit call in agnsh.cyr (the agnos syscall enum tops out at 33 and has
@@ -40,6 +119,9 @@ fn sh_exec_line(line): i64 {
 # STRICT still confirm before launch; AUTO / ASSIST run directly (matching `run`).
 fn sh_try_bareword_launch(line, mode): i64 {
     if (load8(line) == 47) { return 0 - 1; }       # absolute path → use the `run` builtin
+    # 1.44.13: a trailing `&` backgrounds the launch (stripped IN PLACE before the token scan
+    # so the path token + argv never see it). bg==1 routes to spawn_path(#43) instead of execwait.
+    var bg = sh_strip_trailing_amp(line);
     # first-token length (the command word, up to the first space)
     var tl = 0;
     while (load8(line + tl) != 0) { if (load8(line + tl) == 32) { break; } tl = tl + 1; }
@@ -74,6 +156,7 @@ fn sh_try_bareword_launch(line, mode): i64 {
         println("run: unsafe path (traversal or shell metacharacter)");
         return 1;
     }
+    if (bg == 1) { return sh_run_program_bg(cmd, mode); }   # `prog &` → non-blocking #43 + job table
     return sh_run_program(cmd, mode);
 }
 #endif

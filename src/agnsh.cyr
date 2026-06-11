@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.5.0";
+var VERSION_STR = "agnoshi 1.6.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -278,11 +278,47 @@ fn read_line(buf, maxlen) {
     #     buffer hands those back one line at a time.
     # Returns the line length excluding the newline, 0 for an empty line (bare
     # Enter), -1 on EOF before any data.
+    #ifdef CYRIUS_TARGET_AGNOS
+    job_reap_poll();                            # reap finished bg jobs (+ "[n] Done") before we block
+    #endif
     var i = 0;
     while (1 == 1) {
         if (rl_pos >= rl_len) {                 # carry buffer empty -> refill
             rl_pos = 0;
+            #ifdef CYRIUS_TARGET_AGNOS
+            # 1.44.13 schedulable agnsh (Option B): with LIVE bg jobs, POLL stdin non-blocking
+            # (read fd0 a4=1 -> -2/WOULD_BLOCK until a full line) interleaved with bg-job reaping,
+            # so bg jobs time-slice in the preemptible RING-3 gap between polls (the timer preempts
+            # this loop). NO preempt-disabling wait here (sleep_ms#41 would FREEZE the bg jobs).
+            # CRITICAL: special-case -2 (poll again) BEFORE the <=0 EOF check below. With no jobs,
+            # use the efficient BLOCKING read (the default).
+            # NOTE: read(fd0) MUST pass the a4 flag EXPLICITLY (0=blocking, 1=non-blocking). The
+            # kernel sets ksyscall_a4 = r10 unconditionally (syscall_hw.cyr) — it is NOT zeroed for
+            # calls that don't intend a4 — so a 4-arg read(0) would deliver GARBAGE r10 as a4 and
+            # mis-route to the non-blocking path (returns -2 -> agnsh reads it as EOF -> exits).
+            if (job_any() > 0) {
+                var done = 0;
+                while (done == 0) {
+                    var r = syscall(SYS_READ, 0, &rl_buf, 4095, 1);   # a4=1 -> non-blocking
+                    if (r == 0 - 2) {                                 # nothing buffered: reap + retry
+                        job_reap_poll();
+                        if (job_any() == 0) {                         # no jobs AND no partial line ->
+                            rl_len = syscall(SYS_READ, 0, &rl_buf, 4095, 0);   # block efficiently (a4=0)
+                            done = 1;
+                        }
+                    } elif (r == 0 - 3) {                             # PARTIAL line in the kernel
+                        job_reap_poll();                              # accumulator: KEEP polling so it
+                        # isn't orphaned (the blocking read accumulates into a DIFFERENT buffer); the
+                        # next read_line (no jobs) blocks. Reap finished jobs meanwhile.
+                    } else { rl_len = r; done = 1; }                  # a complete line (or EOF 0)
+                }
+            } else {
+                rl_len = syscall(SYS_READ, 0, &rl_buf, 4095, 0);      # a4=0 -> blocking
+            }
+            #endif
+            #ifndef CYRIUS_TARGET_AGNOS
             rl_len = syscall(SYS_READ, 0, &rl_buf, 4095);
+            #endif
             if (rl_len <= 0) {
                 if (i == 0) { return 0 - 1; }   # EOF, nothing accumulated
                 break;                          # EOF after a newline-less tail
