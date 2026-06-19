@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.1] — 2026-06-19 (toolchain pin → cyrius 6.2.25)
+
+### Changed
+
+- **`cyrius.cyml`**: pin bumped `6.1.14` → `6.2.25` (latest cyrius toolchain). CI reads the
+  pin from the manifest; `VERSION` bumped to 1.7.1 in lockstep.
+
 ## [1.7.0] — 2026-06-11 (env inheritance: children get the shell's environment)
 
 The consumer half of agnos 1.44.19's per-process env. agnsh now passes its OWN environment
