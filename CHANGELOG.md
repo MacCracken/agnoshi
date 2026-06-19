@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`cyrius.cyml`**: pin bumped `6.1.14` → `6.2.25` (latest cyrius toolchain). CI reads the
   pin from the manifest; `VERSION` bumped to 1.7.1 in lockstep.
 
+### Fixed
+
+- **`cyrius.cyml`**: dropped the stale `json` entry from `[deps] stdlib`. In 6.2.25 the
+  standalone `json.cyr` module was folded into the `bayan` distlib bundle (`bayan_json_*`),
+  so `cyrius deps` failed to resolve `lib/json.cyr`. agnoshi never consumed stdlib json
+  (its `json_escape` is a local fn in `src/sanitize.cyr`), so the entry was dead — removed
+  rather than re-pointed at `bayan`.
+
 ## [1.7.0] — 2026-06-11 (env inheritance: children get the shell's environment)
 
 The consumer half of agnos 1.44.19's per-process env. agnsh now passes its OWN environment

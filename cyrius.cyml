@@ -12,4 +12,4 @@ entry = "src/agnsh.cyr"
 output = "agnsh"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "fs", "json", "chrono", "hashmap", "args", "tagged", "process", "fnptr", "net", "sakshi", "assert", "bench"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "fs", "chrono", "hashmap", "args", "tagged", "process", "fnptr", "net", "sakshi", "assert", "bench"]
