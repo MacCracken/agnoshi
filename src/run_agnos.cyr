@@ -220,16 +220,17 @@ fn sh_try_bareword_launch(line, mode): i64 {
 # the GLOBAL fd table so this is correct only under #37 run-to-completion, NOT SMP
 # STEP-2-safe (per-process fd tables are the follow-on). 2-stage only (no N-stage chain).
 
-# Offset of the SPACE before a ' | ' (space-pipe-space) separator, or -1 if absent.
-# Matches Interpreter_parse's ' | ' convention (interpreter.cyr).
+# Offset of the FIRST '|' pipe separator (byte 124), or -1 if absent. Surrounding spaces
+# are OPTIONAL — `a|b`, `a |b`, `a| b`, and `a | b` all split identically because
+# _sh_bin_segment ltrim/rtrims each stage. The tolerance is deliberate: the xHCI keyboard
+# drops the occasional keystroke on iron (the agnos pipe-smoke.py harness retries on exactly
+# this), and a swallowed space around the '|' must NOT silently demote a pipeline to a
+# bareword launch — whose is_safe_path then rejects the '|' as a shell metacharacter, the
+# baffling "run: unsafe path" the 1.46.11 burn hit on `anuenue | brnmr` (one space eaten).
 fn _sh_find_pipe(line): i64 {
     var i = 0;
     while (load8(line + i) != 0) {
-        if (load8(line + i) == 32) {                # ' '
-            if (load8(line + i + 1) == 124) {       # '|'
-                if (load8(line + i + 2) == 32) { return i; }   # ' '
-            }
-        }
+        if (load8(line + i) == 124) { return i; }   # '|'
         i = i + 1;
     }
     return 0 - 1;
@@ -263,11 +264,11 @@ fn sh_run_pipeline(line, mode): i64 {
     if (pi < 0) { return 0 - 1; }                   # no ' | ' → not a pipeline (caller falls through)
     var llen = 0;
     while (load8(line + llen) != 0) { llen = llen + 1; }
-    var cmd1 = _sh_bin_segment(line, 0, pi);
-    var cmd2 = _sh_bin_segment(line, pi + 3, llen);
+    var cmd1 = _sh_bin_segment(line, 0, pi);          # [0, pi)   — _sh_bin_segment rtrims any gap before '|'
+    var cmd2 = _sh_bin_segment(line, pi + 1, llen);   # (pi, end) — _sh_bin_segment ltrims any gap after '|'
     if (cmd1 == 0) { println("run: empty pipeline stage before '|'"); return 1; }
     if (cmd2 == 0) { println("run: empty pipeline stage after '|'"); return 1; }
-    # Validate EACH stage individually — the ' | ' is split out, so no stage holds it.
+    # Validate EACH stage individually — the '|' is split out, so no stage holds it.
     if (is_safe_path(cmd1) == 0) { println("run: unsafe path in pipeline stage 1"); return 1; }
     if (is_safe_path(cmd2) == 0) { println("run: unsafe path in pipeline stage 2"); return 1; }
     # HUMAN/STRICT confirm the whole pipeline BEFORE arming any redirect (verb_confirm

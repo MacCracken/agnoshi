@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.1] — 2026-06-27 (pipe separator robustness)
+
+### Fixed
+- **Pipe separator now tolerates a missing space around `|` (`src/run_agnos.cyr`).** `_sh_find_pipe` matched only the exact 3-byte sequence `' | '` (space-pipe-space); any near-miss — `a|b`, `a |b`, `a| b` — fell through to the bareword launcher, whose `is_safe_path` then rejected the `|` as a shell metacharacter with the baffling **`run: unsafe path (traversal or shell metacharacter)`**. The 1.46.11 iron burn hit exactly this: a swallowed xHCI keystroke ate a space in `anuenue | brnmr AGNOSTICOS` → demoted to a bareword → "unsafe path" (while `anuenue | owl …` came through with both spaces intact and piped fine). `_sh_find_pipe` now returns the offset of the **first bare `|`** (spaces optional — `_sh_bin_segment` already ltrim/rtrims each stage), so the keyboard dropping a space around the pipe no longer silently breaks the pipeline. Validated in QEMU (`pipe-smoke.py` regression + a no-space/partial-space variant): all of `owl -p /hello.txt|anuenue`, `… |anuenue`, `…| anuenue`, and the canonical `… | anuenue` deliver `OWLPROOF` to anuenue's stdin and truecolor-rainbow it. Kernel pipe path unchanged — this was purely shell-side parsing.
+
 ## [1.8.0] — 2026-06-27 (two-stage shell pipelines)
 
 ### Added
