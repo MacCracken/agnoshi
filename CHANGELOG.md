@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-06-27 (two-stage shell pipelines)
+
+### Added
+- **Two-stage shell pipelines `cmd1 | cmd2` (e.g. `iam | anuenue`) on agnos (`src/run_agnos.cyr`, `src/agnsh.cyr`).** agnos has no streaming pipes, so this is **store-and-forward** over the kernel's 4088-byte pipe buffer: `cmd1` runs to completion under `execwait#37` with its stdout redirected into the pipe (`exec_redirect#62`), then `cmd2` drains it with its stdin redirected from the pipe (the kernel's new `read#5` `VFS_DEVICE` tag guard). EOF is free — `cmd1` exits before `cmd2` starts, so `pipe_read` returns 0 once drained (sequencing *is* the EOF; no write-end close needed). New `sh_pipe` (pipe#25) / `sh_exec_redirect` (#62) wrappers + a `sh_run_pipeline` driver (splits on ` | `, validates each stage with `is_safe_path` individually, one HUMAN/STRICT confirm before arming any redirect) + a `sh_try_pipeline_launch` dispatch hook checked **before** the bareword launcher (whose `is_safe_path` previously rejected the `|` → "run: unsafe path") in both the interactive loop and `-c`. Validated end-to-end by `agnos/scripts/pipe-smoke.py`: `owl -p /hello.txt | anuenue` → owl's `OWLPROOF` reaches anuenue's stdin and is truecolor-rainbow'd on the console. **MVP scope**: 2-stage, single-foreground, `cmd1` stdout ≤ 4088 bytes (silent overflow past that), NOT SMP-STEP-2-safe (the redirect swaps the global fd table). Streaming / N-stage / SMP-safe pipes need per-process fd tables — tracked in agnos issues `2026-06-27-agnos-pipes-per-proc-fd-streaming.md` + `…-pipe-buffer-leak-refcount.md`. Agnos-only (`#ifdef CYRIUS_TARGET_AGNOS`); the host build keeps real OS pipes.
+
 ## [1.7.1] — 2026-06-19 (toolchain pin → cyrius 6.2.25)
 
 ### Changed

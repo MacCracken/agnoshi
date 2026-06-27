@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.7.0";
+var VERSION_STR = "agnoshi 1.8.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -577,6 +577,12 @@ fn interactive_loop() {
         # (`doom` / `bnrmr AGNOS` launch, `brnmr` interprets). agnos-only — the host
         # keeps barewords on the NL path so the smoke tests stay green.
         #ifdef CYRIUS_TARGET_AGNOS
+        # `cmd1 | cmd2` pipelines run BEFORE the bareword launcher (whose is_safe_path
+        # rejects the '|') and before the NL-intent path. Non-pipeline lines return -1.
+        if (sh_try_pipeline_launch(&buf, cur_mode) >= 0) {
+            CommandHistory_add(history, &buf);
+            continue;
+        }
         if (sh_try_bareword_launch(&buf, cur_mode) >= 0) {
             CommandHistory_add(history, &buf);
             continue;
@@ -654,6 +660,8 @@ fn main() {
         # Bareword program launch in one-shot mode (`agnsh -c "doom /DOOM1.WAD"`),
         # mirroring the interactive arm. agnos-only; -1 falls through to NL-intent.
         #ifdef CYRIUS_TARGET_AGNOS
+        var c_pl = sh_try_pipeline_launch(c_cmd, c_mode);   # `cmd1 | cmd2` before bareword
+        if (c_pl >= 0) { return c_pl; }
         var c_bw = sh_try_bareword_launch(c_cmd, c_mode);
         if (c_bw >= 0) { return c_bw; }
         #endif

@@ -203,4 +203,104 @@ fn sh_try_bareword_launch(line, mode): i64 {
     if (bg == 1) { return sh_run_program_bg(cmd, mode); }   # `prog &` → non-blocking #43 + job table
     return sh_run_program(cmd, mode);
 }
+
+# ===================================================================================
+# Two-stage pipelines `cmd1 | cmd2` (e.g. `iam | anuenue`) — agnos has no streaming
+# pipes, so this is STORE-AND-FORWARD over the kernel's 4088-byte pipe buffer: cmd1
+# runs to completion under execwait #37 with its stdout redirected into the pipe, then
+# cmd2 runs with its stdin redirected from the pipe and drains it. EOF is free —
+# pipe_read returns 0 once drained, and cmd1 has already exited, so no write-end close
+# is needed (sequencing IS the EOF). Kernel building blocks: pipe()#25, exec_redirect#62
+# (a one-shot fd swap consumed by the NEXT #37), and the read#5 VFS_DEVICE tag guard
+# (a redirected fd 0 reaches pipe_read instead of the keyboard).
+#
+# LIMITS (MVP — documented, not enforceable client-side): cmd1's stdout must fit the
+# 4088-byte buffer (pipe_write silently wraps+overwrites past it, giving no overflow
+# signal the driver could see); pipes are single-foreground only — the redirect swaps
+# the GLOBAL fd table so this is correct only under #37 run-to-completion, NOT SMP
+# STEP-2-safe (per-process fd tables are the follow-on). 2-stage only (no N-stage chain).
+
+# Offset of the SPACE before a ' | ' (space-pipe-space) separator, or -1 if absent.
+# Matches Interpreter_parse's ' | ' convention (interpreter.cyr).
+fn _sh_find_pipe(line): i64 {
+    var i = 0;
+    while (load8(line + i) != 0) {
+        if (load8(line + i) == 32) {                # ' '
+            if (load8(line + i + 1) == 124) {       # '|'
+                if (load8(line + i + 2) == 32) { return i; }   # ' '
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Build "/bin/" + line[start..end], leading/trailing spaces trimmed, NUL-terminated.
+# Returns a freshly alloc'd cstr, or 0 on an empty/alloc-failed segment.
+fn _sh_bin_segment(line, start, end): i64 {
+    while (start < end) { if (load8(line + start) == 32) { start = start + 1; } else { break; } }  # ltrim
+    while (end > start) { if (load8(line + end - 1) == 32) { end = end - 1; } else { break; } }    # rtrim
+    var sl = end - start;
+    if (sl <= 0) { return 0; }
+    var cmd = alloc(5 + sl + 1);
+    if (cmd == 0) { return 0; }
+    store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);   # "/bi"
+    store8(cmd + 3, 110); store8(cmd + 4, 47);                        # "n/"
+    var k = 0;
+    while (k < sl) { store8(cmd + 5 + k, load8(line + start + k)); k = k + 1; }
+    store8(cmd + 5 + sl, 0);
+    return cmd;
+}
+
+# Thin syscall wrappers — literals, same convention as the literal-37/43 execwait/spawn
+# calls above (the agnos syscall enum has no slot for these, so there's no constant).
+fn sh_pipe(fds_ptr): i64 { return syscall(25, fds_ptr); }             # pipe(): rfd@[0], wfd@[8]
+fn sh_exec_redirect(src, dst): i64 { return syscall(62, src, dst); }  # one-shot, consumed by next #37
+
+# Run a 2-stage pipeline. Returns cmd2's exit code (>=0), or 1 on setup/validation failure.
+fn sh_run_pipeline(line, mode): i64 {
+    var pi = _sh_find_pipe(line);
+    if (pi < 0) { return 0 - 1; }                   # no ' | ' → not a pipeline (caller falls through)
+    var llen = 0;
+    while (load8(line + llen) != 0) { llen = llen + 1; }
+    var cmd1 = _sh_bin_segment(line, 0, pi);
+    var cmd2 = _sh_bin_segment(line, pi + 3, llen);
+    if (cmd1 == 0) { println("run: empty pipeline stage before '|'"); return 1; }
+    if (cmd2 == 0) { println("run: empty pipeline stage after '|'"); return 1; }
+    # Validate EACH stage individually — the ' | ' is split out, so no stage holds it.
+    if (is_safe_path(cmd1) == 0) { println("run: unsafe path in pipeline stage 1"); return 1; }
+    if (is_safe_path(cmd2) == 0) { println("run: unsafe path in pipeline stage 2"); return 1; }
+    # HUMAN/STRICT confirm the whole pipeline BEFORE arming any redirect (verb_confirm
+    # never execs, so it can't consume the one-shot redirect).
+    if (mode_needs_confirm(mode) == 1) {
+        if (verb_confirm(str_cat3_cstr("run pipeline: ", line, "")) == 0) { return 1; }
+    }
+    # Wire the pipe. var X[N] is N BYTES at function scope, so [16] = two u64 slots.
+    var fds[16];
+    if (sh_pipe(&fds) != 0) { println("run: pipe() failed"); return 1; }
+    var rfd = load64(&fds);
+    var wfd = load64(&fds + 8);
+    # Stage 1: stdout -> pipe write end; runs to completion, fills the buffer, exits
+    # (the kernel auto-restores fd 1 on resume). Nothing between the arm and the #37
+    # issues another syscall (sh_build_env_blob inside sh_exec_line is pure memory).
+    sh_exec_redirect(1, wfd);
+    var rc1 = sh_exec_line(cmd1);
+    # Stage 2: stdin -> pipe read end; drains the buffer, sees EOF (pipe_read 0) when done.
+    # rfd/wfd stay open across both stages — close ONLY after cmd2, else fd 0 would copy a
+    # freed slot at exec time and cmd2's read(0) would return -1.
+    sh_exec_redirect(0, rfd);
+    var rc2 = sh_exec_line(cmd2);
+    sys_close(rfd);
+    sys_close(wfd);
+    return rc2;
+}
+
+# Dispatch hook — checked BEFORE sh_try_bareword_launch (whose is_safe_path rejects the
+# '|') and before the NL-intent path. Returns >=0 (handled, = cmd2 exit or a handled
+# error) when the line is a ' | ' pipeline; -1 when there's no pipe so the caller falls
+# through. Does NOT mutate `line` (the fall-through path sees the original).
+fn sh_try_pipeline_launch(line, mode): i64 {
+    if (_sh_find_pipe(line) < 0) { return 0 - 1; }
+    return sh_run_pipeline(line, mode);
+}
 #endif
