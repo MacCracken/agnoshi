@@ -4,7 +4,44 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] — cyrius 6.3.x migration + test-suite hardening
+
+### Changed
+- **Toolchain pin `6.2.25` → `6.3.33` (`cyrius.cyml`).** CI reads the pin from the manifest.
+- **`src/security.cyr` uses stdlib syscall wrappers instead of raw `syscall(SYS_*)`.**
+  Root-identity now reads via `sys_getuid` / `sys_getgid` / `sys_geteuid` and the
+  root warning via `sys_write`. The wrappers carry the correct arity (silencing the
+  6.3.x syscall-arity lint) and route to the agnos syscall numbers under `--agnos`,
+  where `geteuid` folds onto `getuid`.
+- **Test suite reorganized onto a shared harness (`tests/harness.cyr`).** `check()` /
+  `report()`, the pass/fail tally, and the `agnsh.cyr` / `ui.cyr` forward-ref stubs
+  (`ui_show_error`, `ui_show_warning`, `read_line`, `chrono_now_rfc3339`) now live in
+  one include consumed by `test_core.tcyr`, `test_security.tcyr`, and `bench_core.bcyr`
+  — eliminating the triplicated boilerplate. Adds `tests/README.md` documenting the
+  suite, the single-pass include-order contract, and the byte-sized-`var[]` gotcha.
+  CI `fmt` / `lint` globs widened to `tests/*.cyr` so the harness is gated. `getenv` is
+  no longer stubbed in the tests — it resolves to `lib/io.cyr`'s real reader. Test
+  entry points switched from `var r = main(); syscall(60, r)` to the canonical bare
+  `_entry()` call + `SYS_EXIT`.
+
+### Fixed
+- **`verify_sudo_path` stack smash (`src/security.cyr`).** Its `struct stat` buffer was
+  `var stat_buf[18]` — 18 u64 slots (144 B) under the pre-6.3.13 heap-local model, but
+  an 18-**byte** stack buffer since cyrius 6.3.13 moved function-local `var X[N]` onto
+  the stack. `sys_stat`'s 144-byte write overran it and smashed the return address
+  (SIGSEGV) the moment sudo re-verification ran with `/usr/bin/sudo` present. Sized to
+  `var stat_buf[144]` (matches the stdlib `dynlib.cyr` convention). This crash detonated
+  the core test during the migration; a clean compile did not reveal it — only running
+  the suite did.
+- **`build_safe_env` Str/cstring fault (`src/sanitize.cyr`).** `str_cat(str_from("HOME="), home)`
+  passed getenv's raw cstring where `str_cat` expects a `Str`, so it read the cstring as a
+  Str header and faulted. Now `str_from`-wraps the value. Latent (build_safe_env isn't wired
+  into an exec path yet, and the core test previously stubbed `getenv`→0, skipping the
+  branch), surfaced when the suite migration dropped that stub.
+- **Root-warning write truncation (`src/security.cyr`).** The "running as root" stderr
+  message passed length 64 for a 65-byte string, dropping the trailing newline.
+- **`--agnos` build: `_agnos_init_rsp` → `_agnos_argv_base()` (`src/run_agnos.cyr`).** The
+  retired init-stack global replaced by the r15-parked accessor (cyrius 6.1.32+).
 
 ## [1.8.1] — 2026-06-27 (pipe separator robustness)
 

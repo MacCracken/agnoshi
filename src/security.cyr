@@ -8,9 +8,12 @@ struct SecurityContext {
     sudo_available;
 }
 fn SecurityContext_new(restricted) {
-    var uid = syscall(SYS_GETUID);
-    var gid = syscall(SYS_GETGID);
-    var euid = syscall(SYS_GETEUID);
+    # stdlib wrappers, not raw syscall(SYS_GETUID) — the wrappers carry the
+    # correct arity (silencing the 6.3.x syscall-arity lint) and route to the
+    # agnos numbers (where geteuid folds onto getuid) under --agnos.
+    var uid = sys_getuid();
+    var gid = sys_getgid();
+    var euid = sys_geteuid();
     var is_root = 0;
     if (uid == 0) { is_root = 1; }
     if (euid == 0) { is_root = 1; }
@@ -19,7 +22,7 @@ fn SecurityContext_new(restricted) {
     var actual_restricted = restricted;
     if (is_root == 1) {
         actual_restricted = 1;
-        syscall(SYS_WRITE, 2, "WARNING: Shell running as root - AI features disabled for safety\n", 64);
+        sys_write(2, "WARNING: Shell running as root - AI features disabled for safety\n", 65);
     }
     var p = alloc(56);
     store64(p, uid);
@@ -84,7 +87,13 @@ fn security_get_username_safe(uid) {
 # (Cyrius 6.0 renamed cc5 → cycc, cc5_aarch64 → cycc_aarch64.)
 fn verify_sudo_path(sudo_path) {
     if (file_exists(sudo_path) == 0) { return 0; }
-    var stat_buf[18];
+    # `struct stat` is 144 bytes on x86-64 Linux (st_uid at offset 28). At
+    # function scope `var X[N]` is N BYTES (cyrius 6.3.13+ put locals on the
+    # stack), so this MUST be [144] — the historical [18] read as 18 u64 slots
+    # (=144 B) when locals were heap-slotted, but now [18] is an 18-byte stack
+    # buffer and sys_stat's 144-byte write smashes the return address. Matches
+    # the stdlib convention (dynlib.cyr `var statbuf[144]`).
+    var stat_buf[144];
     var stat_result = sys_stat(sudo_path, &stat_buf);
     if (stat_result != 0) { return 0; }
     #ifdef CYRIUS_ARCH_X86

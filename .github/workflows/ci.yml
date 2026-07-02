@@ -85,7 +85,7 @@ jobs:
         # a no-op in cyrius 5.9.x so we rely on diff for the gate.)
         run: |
           fail=0
-          for f in src/*.cyr tests/*.tcyr tests/*.bcyr; do
+          for f in src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr; do
             [ -f "$f" ] || continue
             if ! diff -q <(cyrius fmt "$f" 2>/dev/null) "$f" > /dev/null; then
               echo "needs fmt: $f"
@@ -99,7 +99,7 @@ jobs:
         # Treat any warning as a failure.
         run: |
           fail=0
-          for f in src/*.cyr tests/*.tcyr tests/*.bcyr; do
+          for f in src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr; do
             [ -f "$f" ] || continue
             out=$(cyrius lint "$f" 2>&1)
             echo "$out"

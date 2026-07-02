@@ -11,27 +11,15 @@ include "lib/fs.cyr"
 include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 
-fn getenv(name) { return 0; }
-fn ui_show_error(m) { return 0; }
+# Shared suite harness: check()/report(), the pass/fail tally, and the
+# agnsh.cyr / ui.cyr forward-ref stubs (see tests/harness.cyr).
+include "tests/harness.cyr"
 
 include "src/sanitize.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/intent.cyr"
 include "src/commands.cyr"
-
-var pass_count = 0;
-var fail_count = 0;
-
-fn check(name, condition) {
-    if (condition == 1) {
-        pass_count = pass_count + 1;
-    } else {
-        fail_count = fail_count + 1;
-        str_print(str_from("FAIL: "));
-        println(name);
-    }
-}
 
 fn main() {
     alloc_init();
@@ -84,20 +72,8 @@ fn main() {
     check("perm_req sys", perm_requires_approval(PermissionLevel.SYSTEM_WRITE) == 1);
     check("perm_req safe", perm_requires_approval(PermissionLevel.SAFE) == 0);
 
-    println("");
-    str_print(str_from("Passed: "));
-    print_num(pass_count);
-    str_print(str_from(" / "));
-    print_num(pass_count + fail_count);
-    println("");
-    if (fail_count > 0) {
-        str_print(str_from("FAILED: "));
-        print_num(fail_count);
-        println(" tests");
-        return 1;
-    }
-    println("All security tests passed.");
-    return 0;
+    return report();
 }
-var r = main();
-syscall(60, r);
+# Bare top-level call + SYS_EXIT — the canonical entry form (see CLAUDE.md § Cyrius).
+fn _entry(): i64 { var rr = main(); syscall(SYS_EXIT, rr); return 0; }
+_entry();

@@ -121,9 +121,14 @@ fn sh_run_program_bg(cmd, mode): i64 {
 # agnos and PATH are flagged candidates, not added here). [128] = 1024 B (8N).
 var sh_env_blob[128];
 fn sh_build_env_blob(): i64 {
-    if (_agnos_init_rsp == 0) { return 0; }
-    var acnt = load64(_agnos_init_rsp);
-    var base = _agnos_init_rsp + 8 + (acnt + 1) * 8;   # &envp[0]
+    # cyrius 6.1.32+ parks the exec init-stack base in r15 at entry, read via
+    # _agnos_argv_base() (was the _agnos_init_rsp global, retired with the old
+    # capture-after-gvar-init scheme). Same ABI §4.6 shape: [base]=argc, argv,
+    # NULL, envp.
+    var irsp = _agnos_argv_base();
+    if (irsp == 0) { return 0; }
+    var acnt = load64(irsp);
+    var base = irsp + 8 + (acnt + 1) * 8;   # &envp[0]
     var off = 0;
     var j = 0;
     while (j < 16) {

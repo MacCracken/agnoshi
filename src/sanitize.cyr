@@ -339,17 +339,22 @@ fn json_escape(s) {
 fn build_safe_env() {
     var env = vec_new();
     vec_push(env, "PATH=/usr/bin:/bin:/usr/sbin:/sbin");
+    # getenv returns a raw cstring; str_cat wants (Str, Str), so wrap the
+    # value in str_from. Passing the bare cstring made str_cat read it as a
+    # Str header and fault — latent because build_safe_env isn't wired into an
+    # exec path yet and the core test formerly stubbed getenv→0 (skipping this
+    # branch entirely). Surfaced by the 6.3.x test migration.
     var home = getenv("HOME");
     if (home != 0) {
-        vec_push(env, str_cat(str_from("HOME="), home));
+        vec_push(env, str_cat(str_from("HOME="), str_from(home)));
     }
     var lang = getenv("LANG");
     if (lang != 0) {
-        vec_push(env, str_cat(str_from("LANG="), lang));
+        vec_push(env, str_cat(str_from("LANG="), str_from(lang)));
     }
     var term = getenv("TERM");
     if (term != 0) {
-        vec_push(env, str_cat(str_from("TERM="), term));
+        vec_push(env, str_cat(str_from("TERM="), str_from(term)));
     }
     return env;
 }

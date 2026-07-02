@@ -11,10 +11,11 @@ include "lib/fs.cyr"
 include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 
-fn getenv(name) { return 0; }
-fn ui_show_error(m) { return 0; }
-fn ui_show_warning(m) { return 0; }
-fn chrono_now_rfc3339() { return str_from("2026-01-01T00:00:00Z"); }
+# Shared suite harness: check()/report(), the pass/fail tally, and the
+# agnsh.cyr / ui.cyr forward-ref stubs. Must sit after the lib includes and
+# before the src modules under test (see tests/harness.cyr for the ordering
+# contract).
+include "tests/harness.cyr"
 
 include "lib/process.cyr"
 
@@ -30,9 +31,6 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/security.cyr"
 
-var pass_count = 0;
-var fail_count = 0;
-
 # Compose a SecurityContext (56 bytes — uid, gid, euid, username,
 # is_root, restricted, sudo_available) by hand for the security tests
 # so each gated state can be exercised independently of the runtime UID.
@@ -46,16 +44,6 @@ fn _mock_sec(is_root, restricted, sudo_available) {
     store64(p + 40, restricted);
     store64(p + 48, sudo_available);
     return p;
-}
-
-fn check(name, condition) {
-    if (condition == 1) {
-        pass_count = pass_count + 1;
-    } else {
-        fail_count = fail_count + 1;
-        str_print(str_from("FAIL: "));
-        println(name);
-    }
 }
 
 fn main() {
@@ -948,34 +936,30 @@ fn main() {
     # back. Verifies the file is created with append-mode and a
     # newline terminator, the end-to-end shape lands on disk.
     var log_path = "/tmp/.agnsh-test-audit.log";
-    # Truncate any stale file from a previous test run.
-    syscall(87, log_path);
+    # Truncate any stale file from a previous test run. Use the stdlib
+    # syscall wrappers (sys_unlink/sys_open/sys_read/sys_close) rather than
+    # raw syscall(N, …): the wrappers carry the correct arity — raw
+    # `syscall(2, path, flags)` is open() with the mode arg dropped, which
+    # trips the 6.3.x syscall-arity lint — and they route to agnos numbers
+    # under --agnos should these tests ever cross-build.
+    sys_unlink(log_path);
     var logger = AuditLogger_new(log_path);
     AuditLogger_log(logger, ae);
     AuditLogger_log(logger, ae_deny);
     var rbuf[2048];
-    var rfd = syscall(2, log_path, 0);
+    var rfd = sys_open(log_path, 0, 0);
     check("audit log file opened for read", rfd >= 0);
-    var rn = syscall(0, rfd, &rbuf, 2047);
-    syscall(3, rfd);
+    var rn = sys_read(rfd, &rbuf, 2047);
+    sys_close(rfd);
     store8(&rbuf + rn, 0);
     check("audit log has two lines",
     rn > 0);
 
-    println("");
-    str_print(str_from("Passed: "));
-    print_num(pass_count);
-    str_print(str_from(" / "));
-    print_num(pass_count + fail_count);
-    println("");
-    if (fail_count > 0) {
-        str_print(str_from("FAILED: "));
-        print_num(fail_count);
-        println(" tests");
-        return 1;
-    }
-    println("All tests passed.");
-    return 0;
+    return report();
 }
-var r = main();
-syscall(60, r);
+# Bare top-level call + SYS_EXIT (not `var r = main()` / literal 60) — the
+# canonical entry form: correct on host and, if cross-built, on agnos where
+# exit is syscall 0 and a module-scope `var r = main()` would run before the
+# arg-capture. See CLAUDE.md § Cyrius.
+fn _entry(): i64 { var rr = main(); syscall(SYS_EXIT, rr); return 0; }
+_entry();

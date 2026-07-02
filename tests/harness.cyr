@@ -1,0 +1,54 @@
+# harness.cyr -- shared unit-test harness for the agnoshi test suite.
+#
+# INCLUDE ORDER MATTERS (cyrius is single-pass):
+#   1. all the lib/*.cyr includes   (check/report use str_from/println/print_num)
+#   2. THIS file                     (its stubs satisfy forward refs into the
+#                                     src modules that resolve to agnsh.cyr /
+#                                     ui.cyr, which live outside a test's set)
+#   3. the src/*.cyr modules under test
+#
+# getenv is deliberately NOT stubbed here: lib/io.cyr provides the real reader
+# and build_safe_env str_from-wraps its result, so tests exercise the real env
+# path. A test that wants determinism can define its own getenv stub AFTER this
+# include (last-def-wins).
+
+var pass_count = 0;
+var fail_count = 0;
+
+# Assert `condition == 1`; on failure print "FAIL: <name>" and tally it.
+fn check(name, condition) {
+    if (condition == 1) {
+        pass_count = pass_count + 1;
+    } else {
+        fail_count = fail_count + 1;
+        str_print(str_from("FAIL: "));
+        println(name);
+    }
+}
+
+# Print the pass/fail summary. Returns the intended process exit code:
+# 0 when everything passed, 1 when any check failed.
+fn report() {
+    println("");
+    str_print(str_from("Passed: "));
+    print_num(pass_count);
+    str_print(str_from(" / "));
+    print_num(pass_count + fail_count);
+    println("");
+    if (fail_count > 0) {
+        str_print(str_from("FAILED: "));
+        print_num(fail_count);
+        println(" tests");
+        return 1;
+    }
+    println("All tests passed.");
+    return 0;
+}
+
+# Forward-ref stubs for symbols the src modules reference but that are defined
+# only in agnsh.cyr / ui.cyr (interactive UI + line input). The unit tests do
+# not drive interactive input, so no-ops are correct and keep them deterministic.
+fn ui_show_error(m) { return 0; }
+fn ui_show_warning(m) { return 0; }
+fn read_line(buf, maxlen) { return 0; }
+fn chrono_now_rfc3339() { return str_from("2026-01-01T00:00:00Z"); }
