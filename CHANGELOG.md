@@ -4,10 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — cyrius 6.3.x migration + test-suite hardening
+## [Unreleased]
+
+## [1.8.2] — 2026-07-02 (cyrius 6.3.x migration + test-suite hardening)
 
 ### Changed
-- **Toolchain pin `6.2.25` → `6.3.33` (`cyrius.cyml`).** CI reads the pin from the manifest.
+- **Toolchain pin `6.2.25` → `6.3.34` (`cyrius.cyml`).** CI reads the pin from the manifest.
 - **`src/security.cyr` uses stdlib syscall wrappers instead of raw `syscall(SYS_*)`.**
   Root-identity now reads via `sys_getuid` / `sys_getgid` / `sys_geteuid` and the
   root warning via `sys_write`. The wrappers carry the correct arity (silencing the
