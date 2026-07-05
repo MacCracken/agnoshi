@@ -165,6 +165,7 @@ hoosh-side modernization (external, user-owned)
 ## v1.5.x and beyond — Demand-gated
 
 ### Systems features
+- **★ NEXT (AGNOS 1.53.x-aligned) — `>` / `>>` output redirection.** `cmd > file` (truncate) + `cmd >> file` (append): the natural next cmdln-parsing feature after `|` pipes (1.46.11). **The hard part is already done** — the kernel `exec_redirect#62` primitive (the same one the pipe path uses) redirects a child's fd 1 to *any* destination fd, and agnsh already opens files for writing (the 1.41.7 write-fd path). So it's a parser branch + a file-open, structurally identical to the pipe path: split on byte 62 like it splits on 124 for `|`, `open(file, O_CREAT|O_WRONLY|O_TRUNC)`, `exec_redirect(1, fd)`, `execwait`, `close` — the pipe path opens a *pipe* fd as the dst, `>` opens a *file* fd instead. **Prioritized for the agnos 1.53.x (kernel FP/SIMD) window because it replaces FB-photo capture for iron diagnosis:** archaemenid has no serial, so today every iron result is a photograph — `klug > kernel.txt` after boot captures dropped log lines to a file, and a test-harness run can redirect its output into `tests/` for a second capture pass. That directly de-risks the 1.53.x FP math-test iron burns (a verifiable file instead of a photo). First of a broader cmdln-parsing lane (`>>`, `<` stdin-from-file, `2>` stderr, globbing, …) to open as demand warrants.
 - Docker compatibility layer — translate docker CLI syntax to stiva commands
 - SSH key management — generate, add, list, agent
 - VPN/proxy configuration intents
