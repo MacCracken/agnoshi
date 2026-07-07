@@ -276,6 +276,11 @@ fn sh_run_pipeline(line, mode): i64 {
     # Validate EACH stage individually — the '|' is split out, so no stage holds it.
     if (is_safe_path(cmd1) == 0) { println("run: unsafe path in pipeline stage 1"); return 1; }
     if (is_safe_path(cmd2) == 0) { println("run: unsafe path in pipeline stage 2"); return 1; }
+    # Both stages must EXIST before we open the pipe + arm any redirect — else a missing
+    # cmd1/cmd2 fails its #37 with the fd-swap armed, dangling onto the NEXT command (same
+    # one-shot-redirect hazard the `>` path guards against).
+    if (_sh_bin_probe(cmd1) == 0) { println("run: no such command in pipeline stage 1"); return 1; }
+    if (_sh_bin_probe(cmd2) == 0) { println("run: no such command in pipeline stage 2"); return 1; }
     # HUMAN/STRICT confirm the whole pipeline BEFORE arming any redirect (verb_confirm
     # never execs, so it can't consume the one-shot redirect).
     if (mode_needs_confirm(mode) == 1) {
@@ -308,5 +313,107 @@ fn sh_run_pipeline(line, mode): i64 {
 fn sh_try_pipeline_launch(line, mode): i64 {
     if (_sh_find_pipe(line) < 0) { return 0 - 1; }
     return sh_run_pipeline(line, mode);
+}
+
+# ===================================================================================
+# Output redirection `cmd > file` — the write sibling of the pipeline. exec_redirect#62
+# copies the DST fd's vfs-table entry into the child's SRC slot, so DST can be a plain
+# FILE fd (not just a pipe): open FILE for write, arm (1 -> FILE), run cmd under #37,
+# and cmd's stdout lands straight in FILE — no intermediate pipe, so no 4088-byte cap.
+# The kernel auto-restores fd 1 on #37 resume; we close FILE after.
+#
+# SAFETY (why this does NOT reopen audit C2's execve-injection hole): '>' is a shell
+# metacharacter is_safe_path rejects, exactly like '|'. We never pass it THROUGH to a
+# subprocess — we split it out structurally here, then validate the command and the
+# target path INDIVIDUALLY (each side is metachar-free, so no `$()`/backtick/`;` rides
+# into execve). The '>' is consumed by this parser alone.
+#
+# MVP scope: a single `cmd > file` (truncate; AO_WRONLY|AO_CREAT|AO_TRUNC = 0x301). `>>`
+# append, multiple `>`, and combined pipe+redirect are NOT supported — each safely fails
+# the is_safe_path check on the residual '>' rather than misbehaving. The target should
+# be an absolute path (agnos userland has no cwd). Agnos-only, like the pipeline.
+
+# Offset of the FIRST '>' (byte 62), or -1 if absent. Spaces around it are optional
+# (_sh_bin_segment / _sh_path_segment trim each side), same tolerance as the pipe split.
+fn _sh_find_redirect(line): i64 {
+    var i = 0;
+    while (load8(line + i) != 0) {
+        if (load8(line + i) == 62) { return i; }   # '>'
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# line[start..end] trimmed + NUL-terminated, VERBATIM (no "/bin/" prefix — this is a
+# file path, not a program). Fresh alloc, or 0 on an empty / alloc-failed segment.
+fn _sh_path_segment(line, start, end): i64 {
+    while (start < end) { if (load8(line + start) == 32) { start = start + 1; } else { break; } }
+    while (end > start) { if (load8(line + end - 1) == 32) { end = end - 1; } else { break; } }
+    var sl = end - start;
+    if (sl <= 0) { return 0; }
+    var p = alloc(sl + 1);
+    if (p == 0) { return 0; }
+    var k = 0;
+    while (k < sl) { store8(p + k, load8(line + start + k)); k = k + 1; }
+    store8(p + sl, 0);
+    return p;
+}
+
+# "/bin/<word>" (the FIRST token of a "/bin/<word> [args]" cmd) exists on disk?
+# 1 = yes, 0 = no / empty. Mirrors the sh_try_bareword_launch probe (O_RDONLY open +
+# close). Used to refuse arming a redirect/pipe for a command that can't launch.
+fn _sh_bin_probe(cmd): i64 {
+    var tl = 0;
+    while (load8(cmd + tl) != 0) { if (load8(cmd + tl) == 32) { break; } tl = tl + 1; }
+    if (tl == 0) { return 0; }
+    var probe = alloc(tl + 1);
+    if (probe == 0) { return 0; }
+    var i = 0;
+    while (i < tl) { store8(probe + i, load8(cmd + i)); i = i + 1; }
+    store8(probe + tl, 0);
+    var fd = sys_open(probe, strlen(probe), 0x0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return 1;
+}
+
+# Run `cmd > file`. Returns cmd's exit code (>=0), or 1 on setup/validation failure.
+fn sh_run_redirect(line, mode): i64 {
+    var ri = _sh_find_redirect(line);
+    if (ri < 0) { return 0 - 1; }                    # no '>' → not a redirect (caller falls through)
+    var llen = 0;
+    while (load8(line + llen) != 0) { llen = llen + 1; }
+    var cmd = _sh_bin_segment(line, 0, ri);          # "/bin/<cmd [args]>"
+    var file = _sh_path_segment(line, ri + 1, llen); # the target file path
+    if (cmd == 0) { println("run: empty command before '>'"); return 1; }
+    if (file == 0) { println("run: no file after '>'"); return 1; }
+    # Validate EACH side individually — the '>' is split out, so neither holds it. This is
+    # the injection guard (audit C2): a metachar in cmd or file is rejected right here.
+    if (is_safe_path(cmd) == 0) { println("run: unsafe path in command"); return 1; }
+    if (is_safe_path(file) == 0) { println("run: unsafe redirect target"); return 1; }
+    # Probe the command EXISTS before opening the target or arming the one-shot redirect.
+    # Otherwise a typo (`notacmd > f`) would arm exec_redirect#62, then #37 fails on the
+    # missing binary BEFORE the kernel consumes/restores it — leaving the redirect live to
+    # swallow the NEXT command's stdout. Probing first = no dangling arm, and no empty
+    # target file created for a typo.
+    if (_sh_bin_probe(cmd) == 0) { println("run: no such command"); return 1; }
+    # HUMAN/STRICT confirm BEFORE opening/arming (verb_confirm never execs, so it can't
+    # consume the one-shot redirect).
+    if (mode_needs_confirm(mode) == 1) {
+        if (verb_confirm(str_cat3_cstr("run redirect: ", line, "")) == 0) { return 1; }
+    }
+    # Open FILE for write, truncating. agnos AO_WRONLY|AO_CREAT|AO_TRUNC = 0x1|0x100|0x200.
+    var fd = sys_open(file, strlen(file), 0x301);
+    if (fd < 0) { println("run: cannot open redirect target"); return 1; }
+    # Arm stdout -> FILE, then run cmd to completion (kernel auto-restores fd 1 on resume).
+    sh_exec_redirect(1, fd);
+    var rc = sh_exec_line(cmd);
+    sys_close(fd);
+    return rc;
+}
+
+fn sh_try_redirect_launch(line, mode): i64 {
+    if (_sh_find_redirect(line) < 0) { return 0 - 1; }
+    return sh_run_redirect(line, mode);
 }
 #endif

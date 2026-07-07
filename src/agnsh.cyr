@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.8.2";
+var VERSION_STR = "agnoshi 1.8.3";
 
 fn print_version() {
     println(VERSION_STR);
@@ -583,6 +583,12 @@ fn interactive_loop() {
             CommandHistory_add(history, &buf);
             continue;
         }
+        # `cmd > file` output redirect — after the pipeline split, before the bareword
+        # launcher (whose is_safe_path rejects the '>'). Non-redirect lines return -1.
+        if (sh_try_redirect_launch(&buf, cur_mode) >= 0) {
+            CommandHistory_add(history, &buf);
+            continue;
+        }
         if (sh_try_bareword_launch(&buf, cur_mode) >= 0) {
             CommandHistory_add(history, &buf);
             continue;
@@ -662,6 +668,8 @@ fn main() {
         #ifdef CYRIUS_TARGET_AGNOS
         var c_pl = sh_try_pipeline_launch(c_cmd, c_mode);   # `cmd1 | cmd2` before bareword
         if (c_pl >= 0) { return c_pl; }
+        var c_rd = sh_try_redirect_launch(c_cmd, c_mode);   # `cmd > file` before bareword
+        if (c_rd >= 0) { return c_rd; }
         var c_bw = sh_try_bareword_launch(c_cmd, c_mode);
         if (c_bw >= 0) { return c_bw; }
         #endif

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.3] — 2026-07-07 (`cmd > file` output redirection)
+
+### Added
+
+- **`cmd > file` output redirection on agnos** (`src/run_agnos.cyr`, `src/agnsh.cyr`) — the write sibling of the 1.5.0 `|` pipeline. `exec_redirect#62` copies the destination fd's vfs-table entry into the child's fd 1, so the target can be a plain FILE fd (not just a pipe): agnsh opens FILE with `AO_WRONLY|AO_CREAT|AO_TRUNC` (0x301), arms `exec_redirect(1, fd)`, runs the command under `execwait#37`, and its stdout lands straight in the ext2 file — **no intermediate pipe, so no 4088-byte cap** (unlike the pipe path). New `sh_run_redirect` / `sh_try_redirect_launch` + `_sh_find_redirect` (splits on byte 62) + `_sh_path_segment`, dispatched after the pipeline split and before the bareword launcher in both the interactive loop and `-c`. **Chief use case: iron diagnosis** — archaemenid has no serial, so `klug > /f/kernel.txt` after boot (or a test-harness run redirected into `tests/`) captures dropped log lines to a *verifiable file* instead of an FB photo. MVP scope: a single `cmd > file` truncate; `>>` append, `<` stdin, `2>` stderr, and multiple/combined redirects safely error. Agnos-only (`#ifdef CYRIUS_TARGET_AGNOS`), like the pipeline. Validated by `agnos/scripts/redirect-smoke.py` (`owl -p /hello.txt > /outfile` → OWLPROOF off the console, present in the file on readback).
+
+### Security
+
+- **`>` reopens no injection surface (audit C2 preserved).** `>` stays a rejected shell metacharacter; the parser splits it out STRUCTURALLY and validates each side (command + file path) INDIVIDUALLY with `is_safe_path` — exactly the pattern the proven `|` pipeline uses — so no `$()`/backtick/`;` rides into `execve`. Adversarially verified across five dimensions (injection / traversal / edge-cases / fd-lifecycle / symlink-TOCTOU): injection and edge-cases clean; neither the `>` nor the target open ever hands a metacharacter to a subprocess.
+- **Fixed a dangling one-shot-redirect hazard** (`_sh_bin_probe`, `src/run_agnos.cyr`). `exec_redirect#62` is armed for the NEXT `execwait#37`. A typo (`notacmd > f`) would arm the redirect, then `#37` fails on the missing binary BEFORE the kernel consumes/restores it — leaving the redirect live to swallow the *next* command's stdout. `sh_run_redirect` now probes `/bin/<cmd>` exists (mirroring the bareword launcher) BEFORE opening the target or arming; the same probe was added to `sh_run_pipeline`'s two stages, closing the identical latent hazard there.
+
+### Deferred (tracked hardening — low-severity, not shipped)
+
+- **Symlink-TOCTOU on the redirect target open** — `sys_open(file, …, 0x301)` follows a symlink at the final path component and agnos has no `AO_NOFOLLOW` flag, so a pre-placed symlink (attacker with prior write access to a dir in agnsh's write path) can redirect the write. Needs a kernel `AO_NOFOLLOW` bit threaded into `ext2_path_lookup` + the client OR-ing it into the open. Tracked with the existing state-file symlink item (`docs/guides/security-model.md`); note that doc's `O_NOFOLLOW` values are Linux constants and do not apply to the agnos `AO_*` namespace.
+- **Robust kernel-side clear of the one-shot redirect on `#37` failure** — the client probe covers the common missing-binary case; a kernel fix (clear the pending redirect on every `#37` early-return) would cover the rarer failure paths and both the redirect and pipeline uniformly.
+- **System-path write policy** — `> /bin/agnsh` / `/boot/agnos` overwrite is possible but equivalent to existing `kriya cp/tee` (agnos is single-user, no per-path write ACL); a shared writable-target denylist would close the foot-gun uniformly.
+
+### Tests
+
+- `agnos/scripts/redirect-smoke.py` — new QEMU smoke (fresh agnsh + owl; `>`-to-ext2-file + idempotent readback with keystroke-drop retry). Host smoke 59/0; `pipe-smoke.py` green with the new both-stage existence probe.
+
 ## [1.8.2] — 2026-07-02 (cyrius 6.3.x migration + test-suite hardening)
 
 ### Changed
