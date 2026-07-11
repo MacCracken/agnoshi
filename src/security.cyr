@@ -20,10 +20,18 @@ fn SecurityContext_new(restricted) {
     var username = security_get_username_safe(uid);
     var sudo_available = security_check_sudo();
     var actual_restricted = restricted;
+    # Root-restrict is a LINUX-HOST-ONLY heuristic. On a dev host, running the AI shell as root is a
+    # genuine footgun (an AI-suggested action could rm -rf as root), so degrade to restricted there.
+    # On AGNOS it is WRONG and self-defeating: agnos is single-owner, has NO Unix uid model (getuid
+    # is hardcoded 0), and gates privilege PER-ACTION via capabilities + agnsh's approval/permission
+    # layer — so uid 0 is the normal state, not an escalation. Applying it would permanently disable
+    # AI on the AI-native OS. So it is compiled out under CYRIUS_TARGET_AGNOS.
+    #ifndef CYRIUS_TARGET_AGNOS
     if (is_root == 1) {
         actual_restricted = 1;
         sys_write(2, "WARNING: Shell running as root - AI features disabled for safety\n", 65);
     }
+    #endif
     var p = alloc(56);
     store64(p, uid);
     store64(p + 8, gid);

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.4] — 2026-07-10 — AI stays enabled on agnos
+
+### Fixed
+- **AI is no longer disabled on agnos** (`src/security.cyr`). The `uid == 0 → restricted (AI
+  features disabled)` heuristic is a Linux-host safety measure (running the AI shell as root on a
+  dev box is a footgun). On agnos it was actively wrong and self-defeating: agnos is single-owner,
+  has no Unix uid model (`getuid` is hardcoded 0), and gates privilege **per-action** via
+  capabilities + agnsh's approval/permission layer — so uid 0 is the normal state, not an
+  escalation, and the rule would *permanently disable AI on the AI-native OS*. The root-restrict is
+  now compiled out under `CYRIUS_TARGET_AGNOS`; the Linux-host behavior is unchanged.
+
 ## [1.8.3] — 2026-07-07 (`cmd > file` output redirection)
 
 ### Added
