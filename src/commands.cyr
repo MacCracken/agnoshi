@@ -7,6 +7,9 @@ fn is_builtin(cmd) {
     if (streq(cmd, "mode") == 1) { return 1; }
     if (streq(cmd, "history") == 1) { return 1; }
     if (streq(cmd, "undo") == 1) { return 1; }
+    if (streq(cmd, "reboot") == 1) { return 1; }
+    if (streq(cmd, "poweroff") == 1) { return 1; }
+    if (streq(cmd, "halt") == 1) { return 1; }
     return 0;
 }
 fn builtin_description(cmd) {
@@ -18,6 +21,9 @@ fn builtin_description(cmd) {
     if (streq(cmd, "mode") == 1) { return "Show or change operating mode"; }
     if (streq(cmd, "history") == 1) { return "Show command history"; }
     if (streq(cmd, "undo") == 1) { return "Undo last destructive operation"; }
+    if (streq(cmd, "reboot") == 1) { return "Restart the machine"; }
+    if (streq(cmd, "poweroff") == 1) { return "Shut the machine down"; }
+    if (streq(cmd, "halt") == 1) { return "Stop the machine without powering off"; }
     return "";
 }
 fn split_command_line(input, first_word_out, args_out) {

@@ -14,6 +14,9 @@ fn CompletionEngine_new() {
     vec_push(builtins, "history");
     vec_push(builtins, "mode");
     vec_push(builtins, "undo");
+    vec_push(builtins, "reboot");
+    vec_push(builtins, "poweroff");
+    vec_push(builtins, "halt");
     var keywords = vec_new();
     vec_push(keywords, "show");
     vec_push(keywords, "list");

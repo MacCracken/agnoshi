@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.5] — 2026-07-19 — platform power control: `reboot` / `poweroff` / `halt`
+
+The userland half of the agnos 1.55.x shutdown arc. agnos had no shutdown sequence at all — `exit`
+returned to an init that fell into an unrecoverable `cli; hlt; jmp $` with the ext2 superblock still
+marked dirty. The kernel side now flushes, quiesces every DMA engine and resets; these are the
+builtins that reach it.
+
+### Added
+
+- **`reboot`, `poweroff`, `halt` builtins** (`src/agnsh.cyr`). Each calls agnos syscall **#13** with
+  the kernel's arming token and a command code (3 / 2 / 1). None returns when it succeeds; the
+  message after the call only prints if the platform declined, which is the honest outcome to show.
+- Registered across the shell's five discovery surfaces so they behave like real builtins rather
+  than a hidden path: the banner, `help`, tab-completion (`src/completion.cyr`), and
+  `is_builtin` + `builtin_description` (`src/commands.cyr`).
+
+### Notes
+
+- **Called by RAW SYSCALL NUMBER, deliberately.** cyrius exposes `sys_reboot()` as a **nullary**
+  wrapper, but agnos #13 now takes `(magic1, magic2, cmd, arg)`. The cyrius `syscall()` builtin pops
+  exactly the argument registers its call site names, so the old nullary form delivers **garbage** in
+  `rdi`/`rsi`/`rdx`. The magic pair (`0x50575231`/`0x50575232` = `"PWR1"`/`"PWR2"`) is precisely what
+  makes those stale callers fail closed instead of resetting the machine at random — the same reason
+  Linux's `reboot(2)` carries magics. A cyrius issue is filed to widen the wrapper; until it lands,
+  the raw call is the correct shape, not a shortcut.
+- `poweroff` currently halts rather than powering off: the kernel's ACPI S5 path is a later bite. The
+  kernel says so on the console instead of silently halting, since a poweroff that quietly halts is a
+  lie the operator would have to discover by watching the power LED.
+
 ## [1.8.4] — 2026-07-10 — AI stays enabled on agnos
 
 ### Fixed

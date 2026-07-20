@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.8.4";
+var VERSION_STR = "agnoshi 1.8.5";
 
 fn print_version() {
     println(VERSION_STR);
@@ -439,7 +439,7 @@ fn sh_run_program(path, mode) {
 fn interactive_loop() {
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
-    println("Built-ins: help, version, mode, history, clear, exit");
+    println("Built-ins: help, version, mode, history, clear, exit, reboot, poweroff, halt");
     println("Files: cp mv rm ls mkdir rmdir touch echo wc find grep (kriya) - owl FILE (cat)   Run: run");
     println("");
 
@@ -468,6 +468,29 @@ fn interactive_loop() {
 
         if (streq(&buf, "exit") == 1) { break; }
         if (streq(&buf, "quit") == 1) { break; }
+        # Platform power control. Calls agnos syscall #13 by RAW NUMBER rather than
+        # cyrius's sys_reboot(): that wrapper is nullary, and #13 now takes
+        # (magic1, magic2, cmd, arg). The magic pair is the kernel's arming token —
+        # it exists precisely so the stale nullary callers, which deliver garbage in
+        # the argument registers, fail closed instead of resetting the machine. A
+        # cyrius issue is filed to widen the wrapper; until it lands this is the
+        # correct call shape. 0x50575231/0x50575232 = "PWR1"/"PWR2"; cmd 3 = reboot,
+        # 2 = power off, 1 = halt. None of these returns when it succeeds.
+        if (streq(&buf, "reboot") == 1) {
+            syscall(13, 0x50575231, 0x50575232, 3, 0);
+            println("reboot: platform did not reset");
+            continue;
+        }
+        if (streq(&buf, "poweroff") == 1) {
+            syscall(13, 0x50575231, 0x50575232, 2, 0);
+            println("poweroff: platform did not power off");
+            continue;
+        }
+        if (streq(&buf, "halt") == 1) {
+            syscall(13, 0x50575231, 0x50575232, 1, 0);
+            println("halt: platform did not halt");
+            continue;
+        }
         if (streq(&buf, "history") == 1) {
             var recent = CommandHistory_get_recent(history, 20);
             var rcount = vec_len(recent);
