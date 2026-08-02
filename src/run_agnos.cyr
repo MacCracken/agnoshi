@@ -107,6 +107,49 @@ fn sh_run_program_bg(cmd, mode): i64 {
     return 0;
 }
 
+# Foreground launch WITHOUT freezing the scheduler: spawn_path(#43) + a non-blocking
+# waitpid(#4) poll, instead of the blocking execwait(#37).
+#
+# ⛔ WHY THIS REPLACED execwait FOR THE FOREGROUND. execwait runs the child to completion
+# INSIDE agnsh's own syscall frame. agnos has one shared per-CPU syscall stack (the serial-kstack
+# invariant), so for the whole life of that child NOTHING ELSE CAN BE SCHEDULED — including
+# processes the child itself spawns. The sovereign compositor is exactly that shape: it starts,
+# then `spawn_path`s its setu clients and waits for them to connect. Under execwait those clients
+# were created READY and never executed a single instruction; the desktop drew its own chrome
+# perfectly and no app ever appeared. Measured 2026-08-02: 2938 frames over 30 000 ms with
+# `sched_yield` every frame, zero clients connected, zero client output.
+#
+# ⛔ THE WORKAROUND WAS TO MAKE THE USER TYPE `aethersafha &`, WHICH IS NOT A FIX. Backgrounding
+# the desktop is not a thing to ask of anyone, and the foreground desktop was never the broken
+# part — it renders fine; only its children were starved.
+#
+# ⭐ The prompt still WAITS, so the user-visible behaviour is unchanged: this blocks in a ring-3
+# poll rather than in a kernel frame, and `sched_yield` between polls is what lets the child (and
+# the child's children) run. waitpid #4 is non-blocking and returns -2 while the child lives, so
+# there is no `hlt`-with-IF=0 spin — the hard-hang that made the OLD lib run() path unusable and
+# that execwait was originally adopted to avoid. Same yield-to-make-progress shape as the two-proc
+# audio recipe.
+#
+# ⚠ Pipes still use execwait (sh_pipe_*): that path needs the kernel's stdout redirection, and a
+# store-and-forward stage has no concurrent child to starve.
+# Returns the child's exit code (agnos waitpid yields it directly), or -1 on launch failure.
+fn sh_exec_line_fg(line): i64 {
+    var len = 0;
+    while (load8(line + len) != 0) { len = len + 1; }
+    if (len > 127) { return 0 - 1; }          # spawn_path path-length cap (kernel: arg2 > 127)
+    var blen = sh_build_env_blob();
+    var pid = 0 - 1;
+    if (blen > 0) { pid = syscall(43, line, len, &sh_env_blob, blen); }
+    else { pid = syscall(43, line, len, 0, 0); }
+    if (pid < 0) { return 0 - 1; }
+    while (1 == 1) {
+        var r = syscall(SYS_WAITPID, pid);
+        if (r != 0 - 2) { return r; }         # -2 = still alive (WOULD_BLOCK); anything else = exit code
+        sys_sched_yield();                    # cede the slice — this is what lets the child progress
+    }
+    return 0;
+}
+
 # ===================================================================================
 # Per-process env (agnos 1.44.19): children INHERIT agnsh's environment. agnsh walks its
 # OWN envp off the exec init stack (_agnos_init_rsp, the _agnos_getenv shape — ABI §4.6)

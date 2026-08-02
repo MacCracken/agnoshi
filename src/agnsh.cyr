@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.8.5";
+var VERSION_STR = "agnoshi 1.8.6";
 
 fn print_version() {
     println(VERSION_STR);
@@ -407,7 +407,12 @@ fn sh_run_program(path, mode) {
     # stages argv from the full command line. The vendored lib run() is sys_spawn-based
     # (no argv, hard-hangs on iron) so it is NOT used here.
     #ifdef CYRIUS_TARGET_AGNOS
-    var ecode = sh_exec_line(path);
+    # ⛔ NOT execwait #37. That ran the child inside agnsh's own syscall frame, and agnos's shared
+    # per-CPU syscall stack means nothing else could be scheduled for the child's whole life —
+    # including processes the child spawned. The sovereign desktop is exactly that shape, so
+    # `aethersafha` drew its chrome and its setu clients never executed one instruction. The prompt
+    # still waits; it just waits in ring 3 now. See sh_exec_line_fg (run_agnos.cyr).
+    var ecode = sh_exec_line_fg(path);
     if (ecode < 0) {
         println("run: failed to launch program");
         return 1;

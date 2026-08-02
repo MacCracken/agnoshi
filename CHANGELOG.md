@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.6] — 2026-08-02 — a foreground program no longer freezes the scheduler
+
+### Fixed — ⛔ `execwait #37` MADE EVERY FOREGROUND PROGRAM EXCLUSIVE, WHICH BROKE THE DESKTOP
+
+`sh_run_program` launched through `execwait` (#37), which runs the child **to completion inside
+agnsh's own syscall frame**. agnos has a single shared per-CPU syscall stack (the serial-kstack
+invariant), so for the child's entire life **nothing else could be scheduled** — including processes
+the child itself spawned.
+
+⛔ **That is exactly the shape of the sovereign compositor.** `aethersafha` starts, `spawn_path`s its
+setu clients, and waits for them to connect. Under `execwait` those clients were created READY and
+**never executed a single instruction**: measured in QEMU at 2938 frames over 30 000 ms with
+`sched_yield` called every frame, zero clients connected, and zero output from either client — while
+the same binaries connect and present fine when the compositor is launched any other way. The
+desktop drew its own chrome perfectly, so it looked like a compositor problem for two iron burns.
+
+⚠ **The workaround was to tell the user to type `aethersafha &`.** Backgrounding a desktop is not a
+fix, and the foreground desktop was never the broken part — it renders correctly; only its children
+were starved.
+
+**Fix:** the foreground path now uses `spawn_path` (#43) plus a **non-blocking `waitpid` (#4) poll**
+with `sched_yield` between polls — the same machinery `&` already used, minus the backgrounding.
+
+⭐ **User-visible behaviour is unchanged: the prompt still waits for the program.** It waits in ring 3
+instead of in a kernel frame, which is what lets the child — and the child's children — run.
+⚠ `waitpid` #4 is non-blocking and returns -2 while the child lives, so there is no `hlt`-with-IF=0
+spin. That spin is what made the old lib `run()` path hard-hang the box on iron and is the reason
+`execwait` was adopted in the first place; this keeps the property that motivated it.
+⚠ **Pipes still use `execwait`** (`sh_pipe_*`): that path needs the kernel's stdout redirection, and
+a store-and-forward stage has no concurrent child to starve.
+
+### Verified
+
+QEMU, at the `[ASSIST] >` prompt, `aethersafha` with **no `&`**: both setu clients connect and
+present, confirmed on the **framebuffer** — `present_probe` and crab's dual-pane file manager
+composited as windows.
+
 ## [1.8.5] — 2026-07-19 — platform power control: `reboot` / `poweroff` / `halt`
 
 The userland half of the agnos 1.55.x shutdown arc. agnos had no shutdown sequence at all — `exit`
