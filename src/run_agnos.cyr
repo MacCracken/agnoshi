@@ -107,49 +107,6 @@ fn sh_run_program_bg(cmd, mode): i64 {
     return 0;
 }
 
-# Foreground launch WITHOUT freezing the scheduler: spawn_path(#43) + a non-blocking
-# waitpid(#4) poll, instead of the blocking execwait(#37).
-#
-# ⛔ WHY THIS REPLACED execwait FOR THE FOREGROUND. execwait runs the child to completion
-# INSIDE agnsh's own syscall frame. agnos has one shared per-CPU syscall stack (the serial-kstack
-# invariant), so for the whole life of that child NOTHING ELSE CAN BE SCHEDULED — including
-# processes the child itself spawns. The sovereign compositor is exactly that shape: it starts,
-# then `spawn_path`s its setu clients and waits for them to connect. Under execwait those clients
-# were created READY and never executed a single instruction; the desktop drew its own chrome
-# perfectly and no app ever appeared. Measured 2026-08-02: 2938 frames over 30 000 ms with
-# `sched_yield` every frame, zero clients connected, zero client output.
-#
-# ⛔ THE WORKAROUND WAS TO MAKE THE USER TYPE `aethersafha &`, WHICH IS NOT A FIX. Backgrounding
-# the desktop is not a thing to ask of anyone, and the foreground desktop was never the broken
-# part — it renders fine; only its children were starved.
-#
-# ⭐ The prompt still WAITS, so the user-visible behaviour is unchanged: this blocks in a ring-3
-# poll rather than in a kernel frame, and `sched_yield` between polls is what lets the child (and
-# the child's children) run. waitpid #4 is non-blocking and returns -2 while the child lives, so
-# there is no `hlt`-with-IF=0 spin — the hard-hang that made the OLD lib run() path unusable and
-# that execwait was originally adopted to avoid. Same yield-to-make-progress shape as the two-proc
-# audio recipe.
-#
-# ⚠ Pipes still use execwait (sh_pipe_*): that path needs the kernel's stdout redirection, and a
-# store-and-forward stage has no concurrent child to starve.
-# Returns the child's exit code (agnos waitpid yields it directly), or -1 on launch failure.
-fn sh_exec_line_fg(line): i64 {
-    var len = 0;
-    while (load8(line + len) != 0) { len = len + 1; }
-    if (len > 127) { return 0 - 1; }          # spawn_path path-length cap (kernel: arg2 > 127)
-    var blen = sh_build_env_blob();
-    var pid = 0 - 1;
-    if (blen > 0) { pid = syscall(43, line, len, &sh_env_blob, blen); }
-    else { pid = syscall(43, line, len, 0, 0); }
-    if (pid < 0) { return 0 - 1; }
-    while (1 == 1) {
-        var r = syscall(SYS_WAITPID, pid);
-        if (r != 0 - 2) { return r; }         # -2 = still alive (WOULD_BLOCK); anything else = exit code
-        sys_sched_yield();                    # cede the slice — this is what lets the child progress
-    }
-    return 0;
-}
-
 # ===================================================================================
 # Per-process env (agnos 1.44.19): children INHERIT agnsh's environment. agnsh walks its
 # OWN envp off the exec init stack (_agnos_init_rsp, the _agnos_getenv shape — ABI §4.6)
@@ -199,6 +156,54 @@ fn sh_exec_line(line): i64 {
     var blen = sh_build_env_blob();
     if (blen > 0) { return syscall(37, line, len, &sh_env_blob, blen); }   # 5-arg: a3/a4 explicit
     return syscall(37, line, len, 0, 0);               # explicit zeros — never garbage a3/a4
+}
+
+# Foreground launch under the SCHEDULER: spawn_path (#43) + a non-blocking waitpid poll,
+# instead of execwait #37's run-to-completion. Returns the child's exit code — the SAME
+# contract as sh_exec_line — or -1 on launch failure.
+#
+# WHY THIS EXISTS. #37 runs the child inside agnsh's own syscall frame with IF CLEARED, and
+# the child is deliberately state=3 (never schedulable — kernel elf.cyr). So for the child's
+# entire life NOTHING else on the box runs, including processes the child itself spawns. A
+# compositor launched that way paints its chrome perfectly and its setu clients never execute
+# a single instruction: measured at 2938 frames / 30 s with zero client output, while the same
+# binaries print freely the moment the compositor is launched any other way. sched_yield does
+# not help — the kernel refuses it for IF=0 callers and during a #37 nest (sched.cyr).
+#
+# #43 makes the child an ordinary scheduled proc. agnsh then holds the PROMPT, not the kernel:
+# waitpid #4 is non-blocking here (-2 = WOULD_BLOCK while the child lives, and it reaps on
+# exit), so this is a poll + slice donation — the same shape as the bg-job loop in agnsh.cyr.
+# The child and the child's children all get scheduled, which is the entire point.
+#
+# ⚠ THE 1.8.6 REVERT IS ADDRESSED, NOT IGNORED. This routing was tried before and reverted
+# because a 15.6 MB compositor spawned this way was #PF-killed on archaemenid (`run: exit 142`).
+# The cause was an agnos kernel defect, fixed in 1.56.35: the #37 handler restored the CPU's
+# SYSCALL kernel stack to the RAW identity VA 0xF10000 instead of its direct-map alias, so every
+# completed foreground run re-armed a fault for any later process whose image reached past
+# 15.06 MB. Demonstrated with a control in QEMU: on the unfixed kernel the armed sequence
+# (a foreground run, THEN the compositor) triple-faults the machine; on the fixed kernel it
+# reaches two clients connected and presented.
+# ⛔ Iron has NOT re-confirmed this yet. If `run` regresses on archaemenid for large binaries,
+# this routing is the first suspect and sh_exec_line is one line away.
+#
+# ⚠ #43 caps the path at 127 bytes; #37 has no such cap, so longer lines fall back to it.
+fn sh_exec_line_sched(line): i64 {
+    var len = 0;
+    while (load8(line + len) != 0) { len = len + 1; }
+    if (len > 127) { return sh_exec_line(line); }      # spawn_path path cap -> #37 handles it
+    var blen = sh_build_env_blob();
+    var pid = 0 - 1;
+    if (blen > 0) { pid = syscall(43, line, len, &sh_env_blob, blen); }
+    else { pid = syscall(43, line, len, 0, 0); }
+    if (pid < 0) { return 0 - 1; }
+    var code = 0 - 1;
+    var done = 0;
+    while (done == 0) {
+        var r = syscall(SYS_WAITPID, pid);
+        if (r == 0 - 2) { syscall(44); }               # alive: donate the slice, poll again
+        else { code = r; done = 1; }                   # exited: #4 already reaped; r = exit code
+    }
+    return code;
 }
 
 # Bareword program launch. If the first word of `line` names an executable at
