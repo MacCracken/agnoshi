@@ -311,6 +311,31 @@ fn _sh_bin_segment(line, start, end): i64 {
 fn sh_pipe(fds_ptr): i64 { return syscall(25, fds_ptr); }             # pipe(): rfd@[0], wfd@[8]
 fn sh_exec_redirect(src, dst): i64 { return syscall(62, src, dst); }  # one-shot, consumed by next #37
 
+# Spawn `cmd` via the non-blocking `#43` and return its pid WITHOUT waiting. The pipeline needs this
+# and nothing else does: `sh_exec_line` (#37) is run-to-completion and `sh_exec_line_sched` (#43) polls
+# to completion, so both leave exactly ONE stage alive at a time.
+fn _sh_pipe_spawn(cmd): i64 {
+    var len = 0;
+    while (load8(cmd + len) != 0) { len = len + 1; }
+    if (len > 127) { return 0 - 1; }               # #43 path cap
+    var blen = sh_build_env_blob();
+    if (blen > 0) { return syscall(43, cmd, len, &sh_env_blob, blen); }
+    return syscall(43, cmd, len, 0, 0);
+}
+
+# Reap `pid`, donating the slice while it lives. Returns its exit code.
+fn _sh_pipe_reap(pid): i64 {
+    if (pid < 0) { return 0 - 1; }
+    var code = 0 - 1;
+    var done = 0;
+    while (done == 0) {
+        var r = syscall(SYS_WAITPID, pid);
+        if (r == 0 - 2) { syscall(44); }
+        else { code = r; done = 1; }
+    }
+    return code;
+}
+
 # Run a 2-stage pipeline. Returns cmd2's exit code (>=0), or 1 on setup/validation failure.
 fn sh_run_pipeline(line, mode): i64 {
     var pi = _sh_find_pipe(line);
@@ -342,22 +367,39 @@ fn sh_run_pipeline(line, mode): i64 {
     # Stage 1: stdout -> pipe write end; runs to completion, fills the buffer, exits
     # (the kernel auto-restores fd 1 on resume). Nothing between the arm and the #37
     # issues another syscall (sh_build_env_blob inside sh_exec_line is pure memory).
+    # ⭐⭐ STAGE 1 IS SPAWNED, NOT RUN TO COMPLETION (agnos ipc bite 11) — this is what makes the
+    # pipeline STREAM. `sh_exec_line` uses execwait `#37`, which runs the child inside agnsh's own
+    # syscall frame with IF CLEARED and the child deliberately non-schedulable: for its entire life
+    # NOTHING else on the box runs, so stage 2 could not possibly be alive at the same time. That is
+    # why every pipeline until now was store-and-forward, capped at one buffer of output.
+    # `sh_exec_line_sched` uses the non-blocking `#43`, which makes the child an ordinary scheduled
+    # proc — producer and consumer alive together, which is the whole bite.
+    # ⚠ It still WAITS for stage 1 here. Full duplex needs stage 2 spawned too, and this ordering
+    # (producer first, then the consumer draining) is the shape that keeps `rc1` meaningful and the
+    # exit-code contract identical to before.
+    # ⭐⭐ BOTH STAGES ARE SPAWNED, AND NEITHER IS WAITED FOR UNTIL BOTH EXIST (agnos ipc bite 11).
+    # That is what makes a pipeline STREAM, and both halves are required:
+    #   · `sh_exec_line` (#37) runs the child inside agnsh's own syscall frame with IF CLEARED and the
+    #     child non-schedulable — for its entire life NOTHING else on the box runs.
+    #   · `sh_exec_line_sched` (#43) fixes the scheduling but still POLLS TO COMPLETION.
+    # Either leaves exactly one stage alive at a time, so the producer can only ever deliver one
+    # ring-full before a consumer exists. Measured with stage 1 on `sh_exec_line_sched`:
+    # `grep . /etc/ssl/cert.pem | wc` reported **4080** — the ring size, to the byte.
     sh_exec_redirect(1, wfd);
-    var rc1 = sh_exec_line(cmd1);
-    # ⭐ CLOSE THE WRITE END NOW — BEFORE stage 2, not after it (agnos ipc bite 11).
-    # ⛔ THE SHELL IS THE ONLY THING THAT CAN DECLARE "NO MORE INPUT". agnos 1.56.40 makes
-    # `pipe_read` answer -2 (WOULD_BLOCK) for an empty pipe whose write end is still OPEN, and 0
-    # (EOF) only once the last writer closes — the distinction streaming needs, and one the kernel
-    # cannot make on its own: cmd1 exiting does NOT close this fd, because WE own it, not cmd1.
-    # Leaving it open until after cmd2 (as this did) means cmd2 drains the buffer and then reads -2
-    # forever instead of EOF. This is exactly what a POSIX shell does with the ends it does not need.
-    # ⚠ Only the WRITE end. `rfd` must stay open: `sh_exec_redirect(0, rfd)` copies its fd slot at
-    # exec time, and a freed slot would make cmd2's `read(0)` return -1.
+    var pid1 = _sh_pipe_spawn(cmd1);
+    if (pid1 < 0) { println("run: failed to launch pipeline stage 1"); sys_close(wfd); sys_close(rfd); return 1; }
+    # ⛔ CLOSE OUR WRITE END NOW, BEFORE STAGE 2 EXISTS. The kernel decides EOF by scanning for ANY
+    # open write end anywhere on the box; stage 1 holds its own copy, so this drops only the SHELL's
+    # claim. Leave it open and stage 2 never sees EOF even after the producer exits — and cmd1 exiting
+    # cannot drop it either, because this fd belongs to US, not to cmd1.
     sys_close(wfd);
-    # Stage 2: stdin -> pipe read end; drains the buffer, then sees a genuine EOF (0) because the
-    # writer above is gone.
+    # Stage 2: stdin -> the read end, ALSO spawned, so producer and consumer are alive together. It
+    # drains while stage 1 writes and sees a genuine EOF once stage 1's write end is gone.
     sh_exec_redirect(0, rfd);
-    var rc2 = sh_exec_line(cmd2);
+    var pid2 = _sh_pipe_spawn(cmd2);
+    if (pid2 < 0) { println("run: failed to launch pipeline stage 2"); _sh_pipe_reap(pid1); sys_close(rfd); return 1; }
+    var rc2 = _sh_pipe_reap(pid2);
+    _sh_pipe_reap(pid1);                            # producer normally exits first; reap it regardless
     sys_close(rfd);
     return rc2;
 }

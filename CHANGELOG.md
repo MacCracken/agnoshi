@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — the shell closes the pipe's write end between stages (agnos ipc bite 11)
+## [1.8.8] - 2026-08-07 — pipelines STREAM: both stages run concurrently (agnos ipc bite 11)
 
 ⛔ **THE SHELL IS THE ONLY THING THAT CAN SAY "NO MORE INPUT".** agnos 1.56.40 makes `pipe_read` answer
 -2 (WOULD_BLOCK) for an empty pipe whose write end is still open, reserving 0 for a genuine EOF — the
@@ -15,6 +15,28 @@ the drain would read -2 forever instead of finishing.
 `sys_close(wfd)` now runs between the stages, which is exactly what a POSIX shell does with the ends it
 does not need. ⚠ Only the WRITE end — `rfd` must stay open, because `sh_exec_redirect(0, rfd)` copies
 its fd slot at exec time and a freed slot would make cmd2's `read(0)` return -1.
+
+### Changed — BOTH pipeline stages are spawned; neither is waited for until both exist
+
+⭐⭐ **This is what makes a pipeline stream.** `grep . /etc/ssl/cert.pem | wc` now returns
+**185191 bytes / 3112 lines** — byte-exact against the host's own `grep | wc` — through a 4080-byte
+pipe. The same line previously reported **4080**: the ring size, to the byte.
+
+⛔ **Both of the existing launch paths leave exactly ONE stage alive at a time**, which is why neither
+could stream:
+- `sh_exec_line` (`#37`) runs the child inside agnsh's own syscall frame with **IF cleared** and the
+  child deliberately non-schedulable — for its entire life nothing else on the box runs.
+- `sh_exec_line_sched` (`#43`) fixes the scheduling but still **polls to completion**. Measured with
+  stage 1 on it: 4080 bytes, exactly one ring.
+
+`_sh_pipe_spawn` launches via `#43` and returns the pid **without waiting**; `_sh_pipe_reap` collects
+afterwards. Stage 1 starts, the shell drops its own write end, stage 2 starts, and only then does the
+shell wait.
+
+⚠ **Order is load-bearing.** The shell's write end must close BEFORE stage 2 exists but AFTER stage 1
+is spawned — stage 1 holds its own copy, so this drops only the shell's claim. Close it earlier and
+the producer has no pipe; leave it open and stage 2 never sees EOF, because cmd1 exiting cannot drop
+an fd that belongs to the shell.
 
 ⚠ **Not observable from userland today, and that is worth knowing.** Existing consumers branch on
 `read() <= 0`, so -2 and 0 are the same answer to them. Measured with this change reverted:
