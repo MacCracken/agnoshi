@@ -177,7 +177,7 @@ fn sh_exec_line(line): i64 {
 #
 # ⚠ THE 1.8.6 REVERT IS ADDRESSED, NOT IGNORED. This routing was tried before and reverted
 # because a 15.6 MB compositor spawned this way was #PF-killed on archaemenid (`run: exit 142`).
-# The cause was an agnos kernel defect, fixed in 1.56.35: the #37 handler restored the CPU's
+# The cause was an agnos kernel defect, fixed in 1.56.34: the #37 handler restored the CPU's
 # SYSCALL kernel stack to the RAW identity VA 0xF10000 instead of its direct-map alias, so every
 # completed foreground run re-armed a fault for any later process whose image reached past
 # 15.06 MB. Demonstrated with a control in QEMU: on the unfixed kernel the armed sequence

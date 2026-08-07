@@ -416,7 +416,7 @@ fn sh_run_program(path, mode) {
     # ⚠ This routing was reverted once (1.8.6) after a 15.6 MB compositor was #PF-killed on
     # archaemenid (`run: exit 142`). That was an agnos kernel defect — the #37 handler restored the
     # CPU's SYSCALL kstack to the raw identity VA instead of its direct-map alias, re-arming a fault
-    # for any later proc whose image reached past 15.06 MB — fixed in 1.56.35 and demonstrated with a
+    # for any later proc whose image reached past 15.06 MB — fixed in 1.56.34 and demonstrated with a
     # QEMU control (unfixed kernel triple-faults the armed sequence; fixed kernel reaches 2 clients).
     # ⛔ NOT yet re-confirmed on iron. If large-binary `run` regresses there, swap this one call back
     # to sh_exec_line and the old behaviour returns exactly.
