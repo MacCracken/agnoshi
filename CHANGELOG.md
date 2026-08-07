@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — `-2` is "not yet", never EOF (agnos ipc bite 9)
+
+⛔ **A PTY-HOSTED agnsh WOULD HAVE DIED BEFORE ITS FIRST PROMPT.** `read_line`'s no-bg-jobs path took
+the efficient BLOCKING read and fell straight into its `rl_len <= 0` EOF check. That is correct for the
+keyboard, whose blocking read genuinely waits for a full line — and fatal the moment stdin is a
+**channel**: the agnos kernel never blocks on one (planning/ipc.md §9.4 — one SYSCALL stack per CPU, so
+N blocked waiters would need N kernel stacks), so a channel read answers `-2` immediately whatever `a4`
+says. agnsh read that as EOF and exited.
+
+⭐ **The bg-jobs path already had the rule.** The two paths now agree, and that is the actual fix: the
+difference between them is whether background jobs get reaped, not what `-2` means.
+
+⛔ The retry is a **preemptible spin plus a yield**, not `sleep_ms#41` and not `sched_yield` alone.
+`sleep_ms` is `preempt_disable; sti; hlt` — on a PTY it would starve the terminal being waited on — and
+`sched_yield` is a documented silent no-op under four guards, so it cannot be the only thing standing
+between the shell and a busy loop.
+
+Proven on agnos 1.56.40 via `agnos/scripts/harness/pty-host-test.py`: agnsh spawned onto an endowed
+channel prints its `[ASSIST] >` prompt, takes a command typed into the host's endpoint, and answers —
+21 records over the channel. Both targets build.
+
 ## [Unreleased]
 
 ## [1.8.6] — 2026-08-02 — a foreground program no longer freezes the scheduler

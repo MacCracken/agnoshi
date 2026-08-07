@@ -322,7 +322,34 @@ fn read_line(buf, maxlen) {
                     } else { rl_len = r; done = 1; }                  # a complete line (or EOF 0)
                 }
             } else {
-                rl_len = syscall(SYS_READ, 0, &rl_buf, 4095, 0);      # a4=0 -> blocking
+                # ⛔ -2 IS "NOT YET", NEVER EOF — AND THE NO-JOBS PATH USED TO MISS THAT.
+                # This branch took the efficient BLOCKING read and fell straight into the
+                # `rl_len <= 0` EOF check below. That is correct for the keyboard, whose blocking
+                # read genuinely waits for a full line — and fatal the moment stdin is a CHANNEL.
+                # The kernel NEVER blocks on a channel (agnos planning/ipc.md §9.4: one SYSCALL
+                # stack per CPU, so N blocked waiters would need N kernel stacks), so a channel
+                # read answers -2 immediately whatever a4 says. agnsh read that as EOF and exited
+                # — a PTY-hosted shell would have died before printing its first prompt.
+                # ⭐ The jobs branch above already had this rule. The two paths now agree, which is
+                # the actual fix: the difference between them is whether bg jobs get reaped, not
+                # what -2 means.
+                var done2 = 0;
+                while (done2 == 0) {
+                    var r2 = syscall(SYS_READ, 0, &rl_buf, 4095, 0);  # a4=0 -> blocking (keyboard)
+                    if (r2 == 0 - 2) {
+                        # ⛔ A PREEMPTIBLE SPIN, NOT sleep_ms#41 AND NOT ONLY sched_yield. sleep_ms
+                        # is `preempt_disable; sti; hlt` — on a PTY it would starve the terminal we
+                        # are waiting on — and sched_yield is a documented silent no-op under four
+                        # guards (§9.4), so it cannot be the only thing standing between us and a
+                        # busy loop. Donate the slice, then spin briefly so progress does not depend
+                        # on the yield having done anything.
+                        syscall(44);
+                        var sp = 0;
+                        while (sp < 20000) { sp = sp + 1; }
+                    } elif (r2 == 0 - 3) {                            # PARTIAL line in the kernel
+                        syscall(44);
+                    } else { rl_len = r2; done2 = 1; }                # a complete line, or EOF 0
+                }
             }
             #endif
             #ifndef CYRIUS_TARGET_AGNOS
