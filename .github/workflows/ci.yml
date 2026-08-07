@@ -136,6 +136,19 @@ jobs:
             echo "ERROR: build/agnsh-aarch64 is not an aarch64 ELF"; exit 1; }
           echo "agnsh-aarch64: $(wc -c < build/agnsh-aarch64) bytes"
 
+      - name: Build (agnos target)
+        # ⛔ CI BUILT LINUX AND aarch64 — NEITHER OF WHICH COMPILES THE agnos ARM. Large parts of
+        # `read_line` (the whole schedulable-stdin path) live inside `#ifdef CYRIUS_TARGET_AGNOS`, so a
+        # defect there passes every gate above untouched. 1.8.7 fixed exactly such a defect: the
+        # no-bg-jobs read treated the kernel's `-2` (WOULD_BLOCK) as EOF, which killed a PTY-hosted
+        # agnsh before its first prompt — and nothing in this pipeline could have seen it.
+        # ⚠ It cannot be RUN here (no agnos host), so the gate is the BUILD. That is enough: the
+        # failure class this closes is compile-visible on that arm.
+        run: |
+          mkdir -p build
+          cyrius build --agnos src/agnsh.cyr build/agnsh_agnos
+          echo "agnsh (agnos): $(wc -c < build/agnsh_agnos) bytes"
+
       - name: Smoke test
         run: sh scripts/smoke-test.sh build/agnsh
 
