@@ -344,13 +344,21 @@ fn sh_run_pipeline(line, mode): i64 {
     # issues another syscall (sh_build_env_blob inside sh_exec_line is pure memory).
     sh_exec_redirect(1, wfd);
     var rc1 = sh_exec_line(cmd1);
-    # Stage 2: stdin -> pipe read end; drains the buffer, sees EOF (pipe_read 0) when done.
-    # rfd/wfd stay open across both stages — close ONLY after cmd2, else fd 0 would copy a
-    # freed slot at exec time and cmd2's read(0) would return -1.
+    # ⭐ CLOSE THE WRITE END NOW — BEFORE stage 2, not after it (agnos ipc bite 11).
+    # ⛔ THE SHELL IS THE ONLY THING THAT CAN DECLARE "NO MORE INPUT". agnos 1.56.40 makes
+    # `pipe_read` answer -2 (WOULD_BLOCK) for an empty pipe whose write end is still OPEN, and 0
+    # (EOF) only once the last writer closes — the distinction streaming needs, and one the kernel
+    # cannot make on its own: cmd1 exiting does NOT close this fd, because WE own it, not cmd1.
+    # Leaving it open until after cmd2 (as this did) means cmd2 drains the buffer and then reads -2
+    # forever instead of EOF. This is exactly what a POSIX shell does with the ends it does not need.
+    # ⚠ Only the WRITE end. `rfd` must stay open: `sh_exec_redirect(0, rfd)` copies its fd slot at
+    # exec time, and a freed slot would make cmd2's `read(0)` return -1.
+    sys_close(wfd);
+    # Stage 2: stdin -> pipe read end; drains the buffer, then sees a genuine EOF (0) because the
+    # writer above is gone.
     sh_exec_redirect(0, rfd);
     var rc2 = sh_exec_line(cmd2);
     sys_close(rfd);
-    sys_close(wfd);
     return rc2;
 }
 

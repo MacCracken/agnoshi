@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — the shell closes the pipe's write end between stages (agnos ipc bite 11)
+
+⛔ **THE SHELL IS THE ONLY THING THAT CAN SAY "NO MORE INPUT".** agnos 1.56.40 makes `pipe_read` answer
+-2 (WOULD_BLOCK) for an empty pipe whose write end is still open, reserving 0 for a genuine EOF — the
+distinction streaming needs. The kernel cannot make it alone: **`cmd1` exiting does not close that fd,
+because the SHELL owns it, not cmd1.** `sh_run_pipeline` held both ends open until after stage 2, so
+the drain would read -2 forever instead of finishing.
+
+`sys_close(wfd)` now runs between the stages, which is exactly what a POSIX shell does with the ends it
+does not need. ⚠ Only the WRITE end — `rfd` must stay open, because `sh_exec_redirect(0, rfd)` copies
+its fd slot at exec time and a freed slot would make cmd2's `read(0)` return -1.
+
+⚠ **Not observable from userland today, and that is worth knowing.** Existing consumers branch on
+`read() <= 0`, so -2 and 0 are the same answer to them. Measured with this change reverted:
+`iam | anuenue` still passed, and `iam | wc` still passed. The fix is correct and required for any
+consumer that handles -2 (agnsh itself now does, since 1.8.7), but no current program can tell.
+
 ## [1.8.7] - 2026-08-07 — `-2` is "not yet", never EOF (agnos ipc bite 9)
 
 ⛔ **A PTY-HOSTED agnsh WOULD HAVE DIED BEFORE ITS FIRST PROMPT.** `read_line`'s no-bg-jobs path took
