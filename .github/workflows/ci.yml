@@ -279,10 +279,41 @@ jobs:
           test -d docs/audit && ls docs/audit/*.md > /dev/null && echo "OK: audit reports present" || { echo "MISSING: docs/audit/"; exit 1; }
 
       - name: Verify version consistency
+        # ⛔⛔ THIS GATE SHIPPED A LYING BINARY THROUGH TWO RELEASES. It is named for exactly the
+        # problem it missed: it checked CHANGELOG.md and the manifest, and NOT the one literal that
+        # actually drifts — `var VERSION_STR = "agnoshi X.Y.Z"` in src/agnsh.cyr, which the running
+        # binary prints. VERSION went 1.8.6 -> 1.8.7 -> 1.8.8 while the literal stayed at 1.8.6, so
+        # `agnsh --version` and the boot banner both reported 1.8.6 from a current build, and CI was
+        # green the whole way.
+        #
+        # ⚠ THE REPAIR MECHANISM ALREADY EXISTED AND WAS SIMPLY NOT RUN. `scripts/version-bump.sh`
+        # seds this literal and even carries a count-guard that fails loud if it moves — it was added
+        # after the SAME desync hit the 14115 iron burn (banner said 1.8.4-era while VERSION differed).
+        # ⇒ A bump script that can be skipped is a CONVENTION, not a mechanism. The gate is what makes
+        # it a mechanism, so the check belongs here rather than in more discipline.
+        #
+        # ⛔ It cost a real false finding on 2026-08-07: a desktop burn log showed `agnoshi 1.8.6` and
+        # was written up as "the burn ran a two-versions-stale shell". The staged binary was
+        # byte-identical to a fresh build. The log was fine; the string lied.
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
           echo "VERSION file: $VERSION"
           grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in CHANGELOG.md"; exit 1; }
           grep -q '^version = "\${file:VERSION}"' cyrius.cyml || {
             echo "FAIL: cyrius.cyml version must be \${file:VERSION}"; exit 1; }
-          echo "Version consistent (manifest pulls VERSION via \${file:VERSION})"
+          # The literal the BINARY prints. Fail on absence as well as mismatch: a moved or reshaped
+          # literal must not read as "nothing to check" (that is how a silent skip becomes a desync).
+          VS_COUNT=$(grep -c '^var VERSION_STR = "agnoshi ' src/agnsh.cyr || true)
+          [ "$VS_COUNT" -eq 1 ] || {
+            echo "FAIL: expected exactly 1 'var VERSION_STR = \"agnoshi …\"' in src/agnsh.cyr, found $VS_COUNT"
+            echo "      the banner literal moved or changed shape — this gate and scripts/version-bump.sh"
+            echo "      both key on that pattern and can no longer keep it in sync with VERSION."
+            exit 1; }
+          grep -q "^var VERSION_STR = \"agnoshi $VERSION\";\$" src/agnsh.cyr || {
+            echo "FAIL: src/agnsh.cyr VERSION_STR does not match VERSION ($VERSION)."
+            echo "      found: $(grep '^var VERSION_STR = ' src/agnsh.cyr)"
+            echo "      The RUNNING BINARY prints this string, so a mismatch means every log, banner and"
+            echo "      burn readout misreports which agnsh is installed."
+            echo "      Fix: sh scripts/version-bump.sh \"\$(cat VERSION)\""
+            exit 1; }
+          echo "Version consistent: VERSION == CHANGELOG == manifest == VERSION_STR ($VERSION)"

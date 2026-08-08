@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8.9] - 2026-08-07 — the binary stops lying about its own version
+
+### Fixed — `agnsh --version` and the boot banner reported **1.8.6** from a 1.8.8 build
+
+⛔ **`var VERSION_STR = "agnoshi 1.8.6"` (`src/agnsh.cyr:47`) had not moved since 1.8.6, while `VERSION`
+went to 1.8.7 and then 1.8.8.** Both places that print it — the `version` builtin and the startup banner —
+therefore misreported a current build, and **nothing in the source was stale**: the drift was one literal.
+
+⛔ **It produced a real false finding on 2026-08-07.** A desktop iron burn's readout showed `agnoshi 1.8.6`
+and was written up as *"the burn's own oracle ran two versions behind"*. The staged `/bin/agnsh` was
+**byte-identical** to a fresh `--agnos` build. The log was correct; the string lied, and a reader trusted
+the string. ⇒ **A burn log could not be used to tell which shell was installed.**
+
+⚠ **The repair mechanism already existed and was simply not run.** `scripts/version-bump.sh` seds this
+literal and carries a count-guard that fails loud if it moves — added after the *same* desync hit the 14115
+iron burn. Nothing forced anyone to use it.
+
+### Added — the version-consistency gate now checks the literal the BINARY prints
+
+⛔ **CI's step is *named* "Verify version consistency" and it checked `CHANGELOG.md` and `cyrius.cyml`
+while omitting the one value that actually drifts.** The gate existed, was named for this exact class, and
+was green through both bad releases. ⇒ **A bump script that can be skipped is a convention, not a
+mechanism; the gate is what makes it a mechanism.**
+
+It now also requires `VERSION_STR` to equal `VERSION` exactly, and **fails on absence as well as
+mismatch** — a moved or reshaped literal must not read as "nothing to check", because that is precisely how
+a silent skip becomes a desync. Verified in both directions before shipping: the gate fails on a seeded
+mismatch and passes on the synced tree.
+
+⚠ No behavioural change to the shell. Same code as 1.8.8 plus an honest version string.
+
 ## [1.8.8] - 2026-08-07 — pipelines STREAM: both stages run concurrently (agnos ipc bite 11)
 
 ⛔ **THE SHELL IS THE ONLY THING THAT CAN SAY "NO MORE INPUT".** agnos 1.56.40 makes `pipe_read` answer
