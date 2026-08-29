@@ -1,0 +1,120 @@
+# statepaths.cyr — where the shell's state files live.
+#
+# Split out of src/agnsh.cyr in 1.9.7. These are ordinary library functions with
+# no dependency on the entry point, but living in agnsh.cyr made them
+# UNTESTABLE: a test binary cannot include the entry (it owns `main` and the
+# top-level `_entry()` call), so every function in that file scored 0% coverage
+# — 14 of them, including the audit-record and path helpers that decide where a
+# security log is written and under what name. Moving them here makes them
+# reachable from tests/test_core.tcyr.
+
+# Build "/tmp/<stem>.<uid>" as a NUL-terminated cstring.
+#
+# ⛔ The HOME-unset fallbacks used to be the FIXED paths "/tmp/agnsh_history"
+# and "/tmp/agnsh_audit.log". /tmp is world-writable and shared, so on any
+# multi-user host those names are a collision between every user running agnsh
+# — and worse, they are predictable, so another user can create the file FIRST
+# and then own the shell's audit trail: the open succeeds (the file exists and
+# is writable), agnsh appends its record of every command to a file it does not
+# own, and the 0600 it sets afterwards does not undo the ownership.
+#
+# Qualifying by uid removes the collision and the pre-creation race between
+# DIFFERENT users. Residual, stated rather than papered over: a same-uid
+# attacker is unaffected, and /tmp is still the wrong place for an audit log —
+# this is the fallback for a broken environment, not a supported configuration.
+# O_NOFOLLOW (1.9.1) already blocks the symlink variant.
+fn tmp_state_path(stem) {
+    var uid = sys_getuid();
+    if (uid < 0) { uid = 0; }
+    # decimal uid, at most 20 digits
+    var ubuf[3];
+    var ulen = 0;
+    if (uid == 0) { store8(&ubuf, 48); ulen = 1; }
+    else {
+        var tmp = uid;
+        var digits = 0;
+        while (tmp > 0) { digits = digits + 1; tmp = tmp / 10; }
+        ulen = digits;
+        tmp = uid;
+        var k = digits;
+        while (k > 0) {
+            k = k - 1;
+            store8(&ubuf + k, 48 + (tmp % 10));
+            tmp = tmp / 10;
+        }
+    }
+    var prefix = "/tmp/";
+    var plen = strlen(prefix);
+    var slen = strlen(stem);
+    var buf = alloc(plen + slen + 1 + ulen + 1);
+    if (buf == 0) { return stem; }
+    memcpy(buf, prefix, plen);
+    memcpy(buf + plen, stem, slen);
+    store8(buf + plen + slen, 46);                 # '.'
+    memcpy(buf + plen + slen + 1, &ubuf, ulen);
+    store8(buf + plen + slen + 1 + ulen, 0);
+    return buf;
+}
+
+fn history_path() {
+    # Mirrors audit_log_path's shape — cstring with manual concat so
+    # file_exists/read/write can use it directly. `$HOME/.agnsh_history`
+    # matches the docs/agnsh.1 convention.
+    #
+    # agnos: resolve the path WITHOUT calling getenv. The kernel default env is
+    # always HOME=/ (elf.cyr stages it), so $HOME/.agnsh_history is statically
+    # /.agnsh_history — no envp walk needed; this is just a simplification.
+    # NB: the old "getenv's buf[8192] overflows the ~12 KB ring-3 stack" rationale
+    # for avoiding getenv here was WRONG — a Cyrius function-local `var X[N]` is a
+    # .bss global (0 stack bytes), so getenv never cost stack. The real agnoshi_147
+    # banner-hang cause was cyrius lib/fnptr.cyr's fncall0..8 missing a
+    # CYRIUS_TARGET_AGNOS asm branch (every fncallN returned 0 → alloc_via/vec_new
+    # returned 0 → CommandHistory_new null-deref before the first prompt). Fixed by
+    # the agnoshi stopgap scripts/patch-fnptr-agnos.py; durable fix tracked in
+    # cyrius issue 2026-06-08-fnptr-fncall-missing-agnos-branch.md.
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/.agnsh_history";
+    #endif
+    # host: full $HOME resolution; falls back to /tmp when HOME is unset.
+    var home = getenv("HOME");
+    if (home == 0) { return tmp_state_path("agnsh_history"); }
+    var hlen = strlen(home);
+    # Drop one trailing '/' so HOME=/ → /.agnsh_history (not //.agnsh_history);
+    # HOME=/root stays /root/.agnsh_history. The suffix carries the separator.
+    if (hlen > 0) { if (load8(home + hlen - 1) == 47) { hlen = hlen - 1; } }
+    var suffix = "/.agnsh_history";
+    var slen = strlen(suffix);
+    var buf = alloc(hlen + slen + 1);
+    memcpy(buf, home, hlen);
+    memcpy(buf + hlen, suffix, slen);
+    store8(buf + hlen + slen, 0);
+    return buf;
+}
+fn audit_log_path() {
+    # `$HOME/.agnsh_audit.log` is the v1.0 convention (per docs/agnsh.1).
+    # Returns a NULL-TERMINATED cstring (not a Str) because AuditLogger_log
+    # passes the path to syscall(SYS_OPEN) directly, and str_cat allocates
+    # a length-prefixed buffer with no trailing zero. Falls back to /tmp
+    # when HOME is unset (test harness / restricted envs).
+    #
+    # agnos: resolve WITHOUT getenv — HOME=/ is the fixed kernel default, so this
+    # is statically /.agnsh_audit.log (a simplification, not a fix). See
+    # history_path for why the old "getenv overflows the ring-3 stack" rationale was
+    # wrong (the real agnoshi_147 cause was cyrius fnptr.cyr's missing agnos branch).
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/.agnsh_audit.log";
+    #endif
+    # host: full $HOME resolution; falls back to /tmp when HOME is unset.
+    var home = getenv("HOME");
+    if (home == 0) { return tmp_state_path("agnsh_audit.log"); }
+    var hlen = strlen(home);
+    # Drop one trailing '/' (HOME=/ → /.agnsh_audit.log); the suffix has the sep.
+    if (hlen > 0) { if (load8(home + hlen - 1) == 47) { hlen = hlen - 1; } }
+    var suffix = "/.agnsh_audit.log";
+    var slen = strlen(suffix);
+    var buf = alloc(hlen + slen + 1);
+    memcpy(buf, home, hlen);
+    memcpy(buf + hlen, suffix, slen);
+    store8(buf + hlen + slen, 0);
+    return buf;
+}

@@ -102,3 +102,27 @@ fn ModeManager_toggle(self) {
     store64(self, new_mode);
     return 0;
 }
+
+# (moved out of src/agnsh.cyr in 1.9.7 so it is reachable from tests)
+fn try_mode_switch(mgr, arg_cstr) {
+    # Maps a CLI mode name to the enum and switches the ModeManager.
+    # Returns 1 on success, 0 on unknown name. Names match the four
+    # `mode_display` labels lowercased (auto / assist / human / strict).
+    if (streq(arg_cstr, "auto") == 1) {
+        ModeManager_switch(mgr, Mode.AI_AUTONOMOUS);
+        return 1;
+    }
+    if (streq(arg_cstr, "assist") == 1) {
+        ModeManager_switch(mgr, Mode.AI_ASSISTED);
+        return 1;
+    }
+    if (streq(arg_cstr, "human") == 1) {
+        ModeManager_switch(mgr, Mode.HUMAN);
+        return 1;
+    }
+    if (streq(arg_cstr, "strict") == 1) {
+        ModeManager_switch(mgr, Mode.STRICT);
+        return 1;
+    }
+    return 0;
+}

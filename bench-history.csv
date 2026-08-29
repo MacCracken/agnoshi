@@ -157,3 +157,14 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-08-29T23:20:20Z,01de23b,main,sanitize/basename,45
 2026-08-29T23:20:20Z,01de23b,main,sanitize/safe_path,62
 2026-08-29T23:20:20Z,01de23b,main,history/add_at_cap,310
+2026-08-29T23:28:50Z,49da968,main,parse/list_files,1300
+2026-08-29T23:28:50Z,49da968,main,parse/cd,1299
+2026-08-29T23:28:50Z,49da968,main,parse/find_files,1652
+2026-08-29T23:28:50Z,49da968,main,parse/git_status,2293
+2026-08-29T23:28:50Z,49da968,main,parse/shell_cmd,6164
+2026-08-29T23:28:50Z,49da968,main,translate/list_files,122
+2026-08-29T23:28:50Z,49da968,main,translate/cd,183
+2026-08-29T23:28:50Z,49da968,main,perm/classify_5,1280
+2026-08-29T23:28:50Z,49da968,main,sanitize/basename,43
+2026-08-29T23:28:50Z,49da968,main,sanitize/safe_path,57
+2026-08-29T23:28:50Z,49da968,main,history/add_at_cap,302

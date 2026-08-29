@@ -4,6 +4,94 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.7] - 2026-08-29 — the coverage gate was measuring the modules it already knew were covered
+
+Sixth slice of the v1.9.x hardening arc
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)). Two of this slice's three
+items had already been closed by 1.9.2 and 1.9.3; the live one turned out to be the largest.
+
+### Fixed — the gate's denominator had drifted away from the binary
+
+⛔ **`check-coverage.sh` carried a hardcoded seven-module list and a comment claiming everything
+else was "reserved for the deferred main.cyr wire-up".** That stopped being true as modules were
+wired in one at a time: `approval`, `audit`, `history` and `run_agnos` all became part of the
+shipping binary while the gate went on ignoring them, and `src/agnsh.cyr` itself was never counted
+at all.
+
+| | tested / total | reported |
+|---|---|---|
+| gate, 7 hardcoded modules | 117 / 138 | **84%** |
+| honest, 12 modules actually in the binary | 139 / 200 | **69%** |
+
+⇒ **The gate was measuring the modules it already knew were well covered**, and had been green
+through every release that widened the binary underneath it. The 80% threshold was being cleared by
+a denominator that excluded the untested code.
+
+**The denominator is now derived from `src/agnsh.cyr`'s own include list**, so wiring a module in
+puts it in scope automatically and the two cannot drift apart again. Demonstrated: adding
+`include "src/checkpoint.cyr"` moves the gate from 13 modules / 88% to 14 modules / 85% with no
+edit to the script. Before this change it would have reported exactly the same number.
+
+### Changed — the entry file's library functions are reachable now
+
+⛔ **`src/agnsh.cyr` scored 0 / 14 for a structural reason, not a quality one**: a test binary
+cannot include an entry file that owns `main` and calls `_entry()` at top level. But most of what
+lived there was not entry scaffolding — it was the code that decides **where a security log is
+written, under what name, and what it says about an action**. Untestable purely by accident of
+which file it sat in.
+
+Moved to reachable homes, unchanged:
+
+- `tmp_state_path` / `audit_log_path` / `history_path` → **new `src/statepaths.cyr`**
+- `classify_audit_result`, `audit_one_shot`, `audit_set_context`, `audit_exec`, `audit_exec_ctx`,
+  `audit_exec_bg_done` and the audit-context globals → **`src/audit.cyr`**, beside the record they
+  build
+- `try_mode_switch` → **`src/mode.cyr`**
+
+`main`, `interactive_loop`, `read_line`, `sh_run_program` and the `print_*` helpers stay in the
+entry, where they belong, and are excluded from the denominator as scaffolding.
+
+### Changed — two numbers, because one would lie either way
+
+The gate now reports **host-reachable** coverage (what the threshold applies to) and
+**agnos-only** functions separately. Functions inside `#ifdef CYRIUS_TARGET_AGNOS` are absent from
+a host build, so a host test cannot reach them — counting them in the gated denominator would
+punish the suite for a platform boundary, and silently dropping them would hide the exact gap the
+roadmap tracks as verification debt. **18 agnos-only functions** are now reported by name-count on
+every run, pointing at the agnos smoke run that would close them.
+
+### Tests
+
+**441 → 506 unit** (+65), 26 security, 88 smoke. The new assertions are the point of the slice, not
+a way to move the number — they cover code that had **no** prior assertion:
+
+- `classify_audit_result`, all six parse-time labels, including the ordering rule that PIPELINE must
+  beat the `"Unknown intent"` stamp (a pipeline shares that description with a real safety
+  rejection, so without tag-priority it would be logged as a refusal that never happened).
+- The safety predicates: `has_path_traversal_cstr`, `has_shell_metachars_cstr`,
+  `has_shell_metachars`, `path_traversal_in_str`, `shell_metachars_in_str`.
+- `mode_from_name` in both directions — including that an unknown name returns the **supplied
+  default**, which is the mechanism behind the 1.9.1 fail-open.
+- `extract_between`'s fallback-to-remainder behaviour, pinned deliberately: it is load-bearing, and
+  1.9.5's first fix attempt was wrong precisely because it assumed the function returned 0 instead.
+- `is_admin_command` including a same-first-byte non-member (`awk` vs `apt`), which exercises
+  1.9.6's first-byte gate on a second table.
+- `sh_first_word_eq`'s word boundary (`cat` and `cat x` match, `catalog` must not),
+  `input_starts_with`, `extract_last_arg`, `CommandHistory_get_recent` / `_search`,
+  `builtin_description`, `AuditFilter_default`, and the state-file path shapes.
+
+### Notes
+
+- Binary unchanged at 323,968 B — this slice moved code between files and added tests; it changed
+  no behaviour. All three targets warning-free, all gates green, benchmarks unchanged.
+- Final honest figure: **159 / 179 host-reachable (88%)** across 13 derived modules, plus 18
+  agnos-only reported as debt.
+- The 20 still-untested host-reachable functions are the ones that read stdin
+  (`ApprovalManager_request`, `verb_read_yes`), execute programs (`sh_run_program`), or write to
+  the real audit log. They are listed by name on every gate run rather than excluded, so the gap
+  stays visible instead of becoming another silent exclusion.
+
+
 ## [1.9.6] - 2026-08-29 — measured optimization: 8 of 11 benchmarks 39–72% faster
 
 Fifth slice of the v1.9.x hardening arc

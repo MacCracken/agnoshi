@@ -16,7 +16,7 @@ deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
 severity, not by convenience. (1.9.2 exec-audit, 1.9.3 exec-path error handling,
 1.9.4 state-file/error-output hygiene, 1.9.5 parser shadowing and
-1.9.6 measured optimization have shipped — see the CHANGELOG. The untested agnos half of
+1.9.6 measured optimization and 1.9.7 test reachability have shipped — see the CHANGELOG. The untested agnos half of
 1.9.2/1.9.3 is recorded below as verification debt.)
 
 ### Verification debt — the agnos exec surface has never been executed
@@ -36,6 +36,10 @@ has never been run**:
 - the two sentinel collapses (a failed redirect or pipeline no longer reads as "not mine")
 - the three `exec_redirect#62` arm-return checks
 - the pre-spawn job-table capacity check
+
+As of 1.9.7 this is no longer only prose: `scripts/check-coverage.sh` reports the agnos-only
+function count on every run (**18** at time of writing), separately from the gated host-reachable
+figure, so the debt shows up in CI output rather than living solely in this document.
 
 **What would close it** — an agnos smoke run on iron asserting, for `cmd1 | cmd2`, `cmd > file` and
 `prog &`: a `launched` record followed by a matching outcome record; `> /.agnsh_audit.log` refused
@@ -87,16 +91,24 @@ change wearing a performance costume, and 1.9.5 just spent a whole slice on what
 wrong parser claims something. Pair it with the dispatch-ordering decision above — they are the
 same question asked twice.
 
-### 1.9.7 — Test reachability
+### Carried from 1.9.7 — 20 host-reachable functions still have no assertion
 
-- ✅ *(largely closed in 1.9.3)* `run_agnos.cyr`'s **pure** parsers — `sh_scan_trailing_amp`,
-  `_sh_find_pipe`, `_sh_find_redirect`, `_sh_bin_segment`, `_sh_path_segment` — were hoisted out
-  of the `#ifdef` and now have host unit coverage (the "host-compilable extraction" option was
-  the one taken). What remains untestable on the host is everything that needs a syscall:
-  `_sh_bin_probe` and the launchers themselves — see the verification-debt entry above.
-- **The coverage gate's denominator omits five modules that are in the binary today**, so the
-  reported figure overstates real coverage.
-- ✅ *(closed in 1.9.2)* Smoke now asserts the exec audit end-to-end: log created, launch/outcome pair present, refusal recorded with `approved:0`, `exit_code` null rather than the sentinel when inapplicable, and every line valid JSON. Still missing: the same assertions on the **agnos-only** launchers — see the 1.9.3 carry-over.
+The corrected coverage gate reports these by name on every run rather than excluding them, so the
+gap stays visible. They are the ones that are genuinely awkward, not merely skipped:
+
+- **Read stdin**: `ApprovalManager_request`, `verb_read_yes`. Testing them needs a way to feed the
+  approval prompt — either a seam that takes an input source, or a pty-driven smoke case.
+- **Execute programs**: `sh_run_program`. Covered end-to-end by the smoke suite (which asserts the
+  audit records it produces), but has no unit assertion.
+- **Write to the real audit log**: `audit_one_shot`, `audit_exec`, `audit_exec_ctx`,
+  `audit_set_context`, `audit_exec_bg_done`, `AuditLogger_log` callers. A unit test would write to
+  the developer's `$HOME`. Wants a path seam so the target is injectable — which would also let a
+  test assert the record CONTENT rather than only its shape via smoke.
+- **Known-broken**: `audit_format_table` passes a variable-held cstring to Str-typed
+  `str_builder_add` (see 1.9.8) — write the test with the fix, not before it.
+
+Also open: `_cmd_eq` and `_hist_read_tail` are exercised indirectly (by the permission tables and
+the oversized-history smoke case) but have no direct assertion.
 
 ### 1.9.8 — Latent defects in the non-compiled modules
 

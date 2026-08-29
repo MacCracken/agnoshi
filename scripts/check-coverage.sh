@@ -1,23 +1,37 @@
 #!/bin/sh
 # check-coverage.sh -- agnoshi test-coverage gate
 #
-# Cyrius doesn't ship line-coverage instrumentation (no probe inserter,
-# no .gcov equivalent), so we measure function coverage: every top-level
-# `fn` defined in src/*.cyr should be referenced by at least one assertion
-# in tests/test_core.tcyr or tests/test_security.tcyr. The threshold is
-# the v1.2.0 roadmap target (>=80%). CI fails below threshold.
+# Cyrius doesn't ship line-coverage instrumentation (no probe inserter, no
+# .gcov equivalent), so we measure FUNCTION coverage: every top-level `fn`
+# compiled into the agnsh binary should be referenced by at least one assertion
+# in tests/test_core.tcyr or tests/test_security.tcyr.
 #
-# Excludes (intentionally not counted toward coverage):
-# - `fn main()` and `fn print_*` entry/io scaffolding in src/agnsh.cyr
-# - The 4 cc3-era stubs in src/agnsh.cyr (ui_show_error, ui_show_warning,
-#   chrono_now_rfc3339) — placeholder shims for modules not pulled into
-#   the binary's include graph; they get covered when src/main.cyr is
-#   wired in at 1.2.x.
-# - The duplicate-helper block in src/main.cyr (legacy pre-port entry,
-#   never linked into the agnsh binary; queued for removal).
+# ⛔ THE DENOMINATOR IS DERIVED, NOT LISTED. Until 1.9.7 this script carried a
+# hardcoded seven-module list and a comment claiming the rest were "reserved for
+# the deferred main.cyr wire-up". That stopped being true as modules were wired
+# in one by one: approval, audit, history and run_agnos all became part of the
+# binary while the gate went on ignoring them, and src/agnsh.cyr itself was
+# never counted at all. The gate reported 84% against a real figure of 69% —
+# it was measuring the modules it already knew were well covered.
 #
-# Usage: sh scripts/check-coverage.sh [threshold-percent]
-#   threshold defaults to 80.
+# The include list is now read out of src/agnsh.cyr, so wiring a module in
+# automatically puts it in scope and the two can no longer drift apart.
+#
+# ── Two numbers, because one would lie either way ──
+# GATED: functions reachable from a host test binary. This is what the
+#   threshold applies to.
+# AGNOS-ONLY: functions inside `#ifdef CYRIUS_TARGET_AGNOS`. They are absent
+#   from a host build, so a host test CANNOT reach them — counting them in the
+#   gated denominator would punish the suite for a platform boundary. But they
+#   DO ship on agnos, untested, so silently dropping them would hide exactly
+#   the gap the roadmap tracks as verification debt. They are reported
+#   separately and loudly instead.
+#
+# Excluded from the denominator (entry scaffolding, not library code):
+#   main / _entry / _agnos_entry / print_* / interactive_loop / read_line
+#   and the ui_show_* + chrono_now_rfc3339 shims in src/agnsh.cyr.
+#
+# Usage: sh scripts/check-coverage.sh [threshold-percent]   (default 80)
 
 set -e
 
@@ -26,31 +40,51 @@ THRESHOLD="${1:-80}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Scope: modules linked into the agnsh binary (per src/agnsh.cyr's
-# include list). Modules reserved for the deferred main.cyr full
-# wire-up (session, ui, prompt, checkpoint, audit, history, aliases,
-# completion, output, security, approval, config) are excluded from
-# the denominator — they have their own follow-up coverage slot in
-# the 1.2.x interactive-shell work.
-IN_BINARY_FILES="src/sanitize.cyr src/mode.cyr src/permissions.cyr src/intent.cyr src/commands.cyr src/translate.cyr src/interpreter.cyr"
+ENTRY="src/agnsh.cyr"
 
-ALL_FNS=$(awk '
+# Derive the module set from the entry's own include list, plus the entry.
+IN_BINARY_FILES=$(grep -oE '^include "src/[^"]+"' "$ENTRY" \
+    | sed 's/^include "//; s/"$//' | tr '\n' ' ')
+IN_BINARY_FILES="$IN_BINARY_FILES $ENTRY"
+
+# Emit "<file> <fn> <host|agnos>" for every top-level fn, tracking whether the
+# definition sits inside a CYRIUS_TARGET_AGNOS block.
+FN_TABLE=$(awk '
+    FNR == 1 { depth = 0; agnos = 0 }
+    /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_AGNOS/ { depth++; agnos = 1; next }
+    /^[ \t]*#ifdef/ || /^[ \t]*#ifndef/ { if (agnos) depth++; next }
+    /^[ \t]*#endif/ { if (agnos) { depth--; if (depth <= 0) agnos = 0 } next }
     /^fn [A-Za-z_][A-Za-z0-9_]*\(/ {
         match($0, /^fn [A-Za-z_][A-Za-z0-9_]*/)
-        print substr($0, RSTART+3, RLENGTH-3)
+        name = substr($0, RSTART + 3, RLENGTH - 3)
+        print FILENAME " " name " " (agnos ? "agnos" : "host")
     }
-' $IN_BINARY_FILES 2>/dev/null | grep -v '^$' | sort -u)
+' $IN_BINARY_FILES 2>/dev/null)
 
-# Exclude entry / scaffolding fns from the denominator.
-EXCLUDE_RE='^(main|print_usage|print_version|print_intent_result|ui_show_error|ui_show_warning|chrono_now_rfc3339)$'
-
-COUNTED_FNS=$(echo "$ALL_FNS" | grep -vE "$EXCLUDE_RE" || true)
+EXCLUDE_RE='^(main|_entry|_agnos_entry|print_usage|print_version|print_intent_result|interactive_loop|read_line|ui_show_error|ui_show_warning|chrono_now_rfc3339)$'
 
 TOTAL=0
 TESTED=0
 UNTESTED=""
+AGNOS_TOTAL=0
+AGNOS_UNTESTED=""
 
-for fn in $COUNTED_FNS; do
+# Field 2 = fn name, field 3 = host|agnos.
+echo "$FN_TABLE" | sort -u -k2,2 | while read -r _f _n _s; do
+    :
+done
+
+for row in $(echo "$FN_TABLE" | sort -u -k2,2 | awk '{print $2 ":" $3}'); do
+    fn=${row%:*}
+    scope=${row#*:}
+    echo "$fn" | grep -qE "$EXCLUDE_RE" && continue
+    if [ "$scope" = "agnos" ]; then
+        AGNOS_TOTAL=$((AGNOS_TOTAL + 1))
+        if ! grep -qwE "$fn" tests/test_core.tcyr tests/test_security.tcyr 2>/dev/null; then
+            AGNOS_UNTESTED="$AGNOS_UNTESTED $fn"
+        fi
+        continue
+    fi
     TOTAL=$((TOTAL + 1))
     if grep -qwE "$fn" tests/test_core.tcyr tests/test_security.tcyr 2>/dev/null; then
         TESTED=$((TESTED + 1))
@@ -60,26 +94,36 @@ for fn in $COUNTED_FNS; do
 done
 
 if [ "$TOTAL" -eq 0 ]; then
-    echo "ERROR: no fns discovered in src/ — coverage check broken"
+    echo "ERROR: no fns discovered in the include graph — coverage check broken"
     exit 1
 fi
 
 PERCENT=$(( (TESTED * 100) / TOTAL ))
 
 echo "agnoshi test coverage (fn-level):"
-echo "  tested:   $TESTED / $TOTAL ($PERCENT%)"
-echo "  threshold: ${THRESHOLD}%"
+echo "  modules in scope: $(echo $IN_BINARY_FILES | wc -w) (derived from $ENTRY)"
+echo "  host-reachable:   $TESTED / $TOTAL ($PERCENT%)"
+echo "  threshold:        ${THRESHOLD}%"
 
 if [ -n "$UNTESTED" ]; then
-    echo "  untested fns:"
-    for fn in $UNTESTED; do
-        echo "    - $fn"
-    done
+    echo "  untested (host-reachable):"
+    for fn in $UNTESTED; do echo "    - $fn"; done
+fi
+
+AGNOS_UNTESTED_N=$(echo $AGNOS_UNTESTED | wc -w)
+if [ "$AGNOS_TOTAL" -gt 0 ]; then
+    echo ""
+    echo "  agnos-only fns (absent from a host build, NOT gated): $AGNOS_TOTAL"
+    echo "    of which untested: $AGNOS_UNTESTED_N"
+    echo "    These need an agnos smoke run on iron, not a host unit test."
+    echo "    Tracked as verification debt in docs/development/roadmap.md."
 fi
 
 if [ "$PERCENT" -lt "$THRESHOLD" ]; then
-    echo "FAIL: coverage $PERCENT% < $THRESHOLD% threshold"
+    echo ""
+    echo "FAIL: host-reachable coverage $PERCENT% < $THRESHOLD% threshold"
     exit 1
 fi
 
+echo ""
 echo "OK: coverage gate passed"

@@ -7,6 +7,7 @@ agnoshi
 ├── src/
 │   ├── agnsh.cyr           -- binary entry point (CLI + interactive loop)
 │   ├── sanitize.cyr        -- input validation, JSON escape, env whitelist
+│   ├── statepaths.cyr      -- where the state files live ($HOME / uid-qualified /tmp)
 │   ├── mode.cyr            -- operating mode (human/assist/auto/strict)
 │   ├── permissions.cyr     -- command classification (6-tier permission model)
 │   ├── intent.cyr          -- Intent + Translation types, 44 intent tags
@@ -17,7 +18,7 @@ agnoshi
 │   ├── security.cyr        -- SecurityContext, privilege escalation
 │   ├── session.cyr         -- shell session lifecycle
 │   ├── checkpoint.cyr      -- destructive op rollback
-│   ├── audit.cyr           -- JSON audit log
+│   ├── audit.cyr           -- JSON audit log + audit-record construction
 │   ├── history.cyr         -- command history (0600 perms)
 │   ├── aliases.cyr         -- user-defined aliases
 │   ├── completion.cyr      -- tab completion engine
@@ -28,7 +29,7 @@ agnoshi
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 356 unit tests
+│   ├── test_core.tcyr      -- 506 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
 │   ├── bench_core.bcyr     -- 11 criterion-style benchmarks
 │   └── test.sh             -- run all test suites

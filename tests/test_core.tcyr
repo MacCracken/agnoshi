@@ -20,6 +20,7 @@ include "tests/harness.cyr"
 include "lib/process.cyr"
 
 include "src/sanitize.cyr"
+include "src/statepaths.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/config.cyr"
@@ -55,6 +56,20 @@ fn _mock_sec(is_root, restricted, sudo_available) {
 # Copy a cstring literal into a scratch buffer. The amp cases need a WRITABLE
 # buffer so the "does not mutate" assertions are meaningful — asserting
 # non-mutation of a read-only literal would prove nothing.
+# Does `cstr` end with `suffix`? Test-local: the source has no suffix helper
+# and adding one for a single assertion would be inventing API to satisfy a test.
+fn _t_ends_with(cstr, suffix): i64 {
+    var cl = strlen(cstr);
+    var sl = strlen(suffix);
+    if (sl > cl) { return 0; }
+    var off = cl - sl;
+    var i = 0;
+    while (i < sl) {
+        if (load8(cstr + off + i) != load8(suffix + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
 fn _t_cpy(dst, src): i64 {
     var i = 0;
     while (load8(src + i) != 0) { store8(dst + i, load8(src + i)); i = i + 1; }
@@ -1293,6 +1308,155 @@ fn main() {
       load64(Interpreter_parse(sh, str_from("show me all files"))) == IntentTag.LIST_FILES);
     check("list files in /tmp stays LIST_FILES",
       load64(Interpreter_parse(sh, str_from("list files in /tmp"))) == IntentTag.LIST_FILES);
+
+    # ---- 1.9.7: functions that were unreachable while they lived in agnsh.cyr ----
+    # src/agnsh.cyr scored 0/14 on coverage for a structural reason, not a
+    # quality one: a test binary cannot include an entry file that owns `main`
+    # and calls `_entry()` at top level. These moved to statepaths.cyr /
+    # audit.cyr / mode.cyr in 1.9.7 and are now assertable.
+
+    # classify_audit_result — the six PARSE-time labels. This is the function
+    # that decides what a security log says about an action the shell declined
+    # to run, and it had no direct assertion at all.
+    check("audit class: question -> needs_llm",
+      streq(classify_audit_result(IntentTag.QUESTION, PermissionLevel.SAFE, "x"), "needs_llm") == 1);
+    check("audit class: pipeline -> needs_exec",
+      streq(classify_audit_result(IntentTag.PIPELINE, PermissionLevel.SAFE, "x"), "needs_exec") == 1);
+    check("audit class: unknown-intent -> rejected_safety",
+      streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.SAFE,
+          "Unknown intent"), "rejected_safety") == 1);
+    check("audit class: blocked -> blocked",
+      streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.BLOCKED, "x"), "blocked") == 1);
+    check("audit class: admin -> needs_approval",
+      streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.ADMIN, "x"), "needs_approval") == 1);
+    check("audit class: system_write -> needs_approval",
+      streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.SYSTEM_WRITE, "x"), "needs_approval") == 1);
+    check("audit class: safe -> proposed",
+      streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.SAFE, "x"), "proposed") == 1);
+    check("audit class: read_only -> proposed",
+      streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.READ_ONLY, "x"), "proposed") == 1);
+    # Tag order matters: PIPELINE has no translator arm, so it falls to
+    # translate_unknown and carries the SAME "Unknown intent" description as a
+    # real safety rejection. The tag must win, or a pipeline would be logged as
+    # a safety refusal that never happened.
+    check("audit class: pipeline beats the unknown-intent stamp",
+      streq(classify_audit_result(IntentTag.PIPELINE, PermissionLevel.SAFE, "Unknown intent"), "needs_exec") == 1);
+
+    # The exec-surface vocabulary must stay disjoint from the parse-time one, so
+    # one `select` separates what the shell DID from what it merely considered.
+    check("exec and parse label sets are disjoint",
+      streq(audit_exec_outcome(0), "proposed") == 0);
+
+    # tmp_state_path — the HOME-unset fallback. Uid-qualified since 1.9.4 so two
+    # users on one box cannot collide (or pre-create each other's audit log).
+    var tsp = tmp_state_path("agnsh_audit.log");
+    check("tmp path is under /tmp", cstr_starts_with(tsp, "/tmp/agnsh_audit.log.") == 1);
+    check("tmp path is uid-qualified (longer than the bare name)",
+      strlen(tsp) > strlen("/tmp/agnsh_audit.log"));
+
+    # try_mode_switch — the CLI/interactive mode gate. Unknown names must be
+    # REFUSED, not silently downgraded (the 1.9.1 fail-open).
+    var tms = ModeManager_new(Mode.HUMAN, 1);
+    check("mode switch auto", try_mode_switch(tms, "auto") == 1);
+    check("mode switch applied", ModeManager_current(tms) == Mode.AI_AUTONOMOUS);
+    check("mode switch strict", try_mode_switch(tms, "strict") == 1);
+    check("mode switch assist", try_mode_switch(tms, "assist") == 1);
+    check("mode switch human", try_mode_switch(tms, "human") == 1);
+    check("mode switch rejects a typo", try_mode_switch(tms, "assit") == 0);
+    check("mode unchanged after a rejected switch", ModeManager_current(tms) == Mode.HUMAN);
+
+    # ---- 1.9.7: safety predicates and helpers with no prior assertion ----
+    # These are all pure and were simply never asserted. The corrected coverage
+    # gate surfaced them; testing them is the point of the slice, not a way to
+    # move the number.
+    check("traversal cstr detects ..", has_path_traversal_cstr("/tmp/../etc") == 1);
+    check("traversal cstr plain ok", has_path_traversal_cstr("/tmp/ok") == 0);
+    check("traversal cstr single dot ok", has_path_traversal_cstr("/tmp/.x") == 0);
+    check("traversal cstr null", has_path_traversal_cstr(0) == 0);
+    check("metachar cstr detects ;", has_shell_metachars_cstr("a;b") == 1);
+    check("metachar cstr plain ok", has_shell_metachars_cstr("plain") == 0);
+    check("metachar cstr null", has_shell_metachars_cstr(0) == 0);
+    check("metachar str detects pipe", has_shell_metachars(str_from("a|b")) == 1);
+    check("metachar str plain ok", has_shell_metachars(str_from("plain")) == 0);
+    check("traversal str detects ..", path_traversal_in_str(str_from("../x")) == 1);
+    check("traversal str plain ok", path_traversal_in_str(str_from("/tmp/x")) == 0);
+    check("metachar_in_str detects backtick",
+      shell_metachars_in_str(str_from("a`b")) == 1);
+    check("metachar_in_str plain ok", shell_metachars_in_str(str_from("plain")) == 0);
+
+    # input_starts_with gates the interrogative parses ("is X running"), so a
+    # statement like "the app is running" must NOT match.
+    check("starts_with matches", input_starts_with(str_from("is nginx running"), "is ") == 1);
+    check("starts_with rejects mid-string",
+      input_starts_with(str_from("the app is running"), "is ") == 0);
+    check("starts_with is case-insensitive",
+      input_starts_with(str_from("IS nginx running"), "is ") == 1);
+
+    # extract_between / extract_last_arg — the extractors 1.9.5 showed can
+    # silently return the wrong span. extract_between FALLS BACK to "everything
+    # after before_kw" when after_kw is absent; that behaviour is load-bearing
+    # and must stay pinned, because 1.9.5's first fix attempt assumed it
+    # returned 0 instead.
+    check("extract_between spans",
+      streq(str_cstr(extract_between(str_from("copy a.txt to b.txt"), "copy ", " to ")), "a.txt") == 1);
+    check("extract_between falls back when after_kw is absent",
+      streq(str_cstr(extract_between(str_from("copy a.txt"), "copy ", " to ")), "a.txt") == 1);
+    check("extract_between missing before_kw -> 0",
+      extract_between(str_from("nope"), "copy ", " to ") == 0);
+    check("extract_last_arg takes the final token",
+      streq(str_cstr(extract_last_arg(str_from("add user alice"))), "alice") == 1);
+    check("extract_last_arg ignores trailing spaces",
+      streq(str_cstr(extract_last_arg(str_from("add user bob   "))), "bob") == 1);
+
+    # mode_from_name — the CLI mode parser. Its DEFAULT parameter is the
+    # fail-open hazard 1.9.1 closed at the call site, so pin both directions.
+    check("mode_from_name auto", mode_from_name("auto", 0 - 1) == Mode.AI_AUTONOMOUS);
+    check("mode_from_name assist", mode_from_name("assist", 0 - 1) == Mode.AI_ASSISTED);
+    check("mode_from_name human", mode_from_name("human", 0 - 1) == Mode.HUMAN);
+    check("mode_from_name strict", mode_from_name("strict", 0 - 1) == Mode.STRICT);
+    check("mode_from_name unknown returns the supplied default",
+      mode_from_name("assit", 0 - 1) == 0 - 1);
+
+    # is_admin_command — 32 table entries, no prior assertion. Also exercises
+    # the 1.9.6 first-byte gate on a table other than the blocked one.
+    check("admin cmd apt", is_admin_command("apt") == 1);
+    check("admin cmd systemctl", is_admin_command("systemctl") == 1);
+    check("admin cmd useradd", is_admin_command("useradd") == 1);
+    check("admin cmd not ls", is_admin_command("ls") == 0);
+    # same first byte as "apt" but not in the table — the gate must not pass it
+    check("admin cmd not awk", is_admin_command("awk") == 0);
+
+    check("builtin_description known", strlen(builtin_description("help")) > 0);
+    check("builtin_description unknown is empty", strlen(builtin_description("nope")) == 0);
+
+    var afd = AuditFilter_default();
+    check("audit filter default limit", load64(afd + 16) == 0 - 1);
+
+    # History accessors over a constructed (file-less) history.
+    var hq = CommandHistory_new("/nonexistent/agnsh-test-hist3", 100);
+    CommandHistory_add(hq, "git status");
+    CommandHistory_add(hq, "ls -la");
+    CommandHistory_add(hq, "git log");
+    check("history len", CommandHistory_len(hq) == 3);
+    check("history recent returns n", vec_len(CommandHistory_get_recent(hq, 2)) == 2);
+    check("history recent clamps to len", vec_len(CommandHistory_get_recent(hq, 99)) == 3);
+    check("history search matches", vec_len(CommandHistory_search(hq, str_from("git"))) == 2);
+    check("history search no match", vec_len(CommandHistory_search(hq, str_from("zzz"))) == 0);
+
+    # sh_first_word_eq — the word-boundary check behind the cat->owl nudge. The
+    # boundary is the whole point: `cat` and `cat x` match, `catalog` must not.
+    check("first_word_eq exact", sh_first_word_eq("cat", "cat") == 1);
+    check("first_word_eq with args", sh_first_word_eq("cat file.txt", "cat") == 1);
+    check("first_word_eq rejects a longer word", sh_first_word_eq("catalog", "cat") == 0);
+    check("first_word_eq rejects a different word", sh_first_word_eq("dog", "cat") == 0);
+    check("first_word_eq rejects a prefix of the needle", sh_first_word_eq("ca", "cat") == 0);
+
+    # The state-file paths. Pure resolution, no I/O — assert the shape rather
+    # than a literal, since HOME differs per environment.
+    check("audit path ends with the conventional name",
+      _t_ends_with(audit_log_path(), ".agnsh_audit.log") == 1);
+    check("history path ends with the conventional name",
+      _t_ends_with(history_path(), ".agnsh_history") == 1);
 
     # ---- 1.9.6 optimization: behaviour pinned across the rewrites ----
     # is_safe_path was four passes (two predicates, each with its own strlen and
