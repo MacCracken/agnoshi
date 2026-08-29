@@ -6,39 +6,57 @@ fn Interpreter_new() {
 }
 fn input_has_word(input, word) {
     # Compound phrases (internal whitespace, e.g. "go to", "contents of",
-    # " in ") match as case-insensitive substrings — their interior
-    # spaces naturally anchor at word boundaries in the input. Single-
-    # token keywords (e.g. "move", "rm", "file", "ip") go through
-    # is_word_prefix so "file" finds "files" but "move" does NOT find
-    # "remove". Auto-dispatch by inspecting the needle for internal
-    # whitespace after trimming any leading/trailing space.
-    var wlen = strlen(word);
+    # " in ") match as case-insensitive substrings — their interior spaces
+    # naturally anchor at word boundaries in the input. Single-token keywords
+    # (e.g. "move", "rm", "file", "ip") go through the token-prefix matcher so
+    # "file" finds "files" but "move" does NOT find "remove".
+    #
+    # ⚡ HOT: the parser makes DOZENS of these per input, and `parse/shell_cmd`
+    # falls through the entire natural-language cascade to SHELL_COMMAND, paying
+    # ~79 of them for one line. This used to cost SIX passes over the needle —
+    # strlen, trim-forward, trim-backward, internal-space scan, and then
+    # is_word_prefix repeating the strlen and both trims — all over a
+    # compile-time literal.
+    #
+    # Structured around the overwhelmingly common case: a needle with NO
+    # whitespace at all. One pass answers both "how long" and "any space", and
+    # a spaceless needle needs no trimming and cannot be a phrase, so it goes
+    # straight to the matcher with bounds already known. Only the handful of
+    # padded/compound needles pay the careful path.
+    var i = 0;
+    var anysp = 0;
+    while (1 == 1) {
+        var c = load8(word + i);
+        if (c == 0) { break; }
+        if (c == 32) { anysp = 1; }
+        if (c == 9) { anysp = 1; }
+        i = i + 1;
+    }
+    if (anysp == 0) {
+        if (i == 0) { return 1; }
+        return is_word_prefix_range(input, word, 0, i);
+    }
+    # Whitespace present: it is either padding to trim or a real phrase.
     var w_start = 0;
-    var w_end = wlen;
+    var w_end = i;
     while (w_start < w_end) {
-        var c = load8(word + w_start);
-        if (c != 32) {
-            if (c != 9) { break; }
-        }
+        var c2 = load8(word + w_start);
+        if (c2 != 32) { if (c2 != 9) { break; } }
         w_start = w_start + 1;
     }
     while (w_end > w_start) {
-        var c = load8(word + w_end - 1);
-        if (c != 32) {
-            if (c != 9) { break; }
-        }
+        var c3 = load8(word + w_end - 1);
+        if (c3 != 32) { if (c3 != 9) { break; } }
         w_end = w_end - 1;
     }
-    var has_internal_space = 0;
+    if (w_start >= w_end) { return 1; }        # all-whitespace needle
     for (var k = w_start; k < w_end; k = k + 1) {
-        var c = load8(word + k);
-        if (c == 32) { has_internal_space = 1; }
-        if (c == 9) { has_internal_space = 1; }
+        var c4 = load8(word + k);
+        if (c4 == 32) { return str_contains_ci(input, word); }
+        if (c4 == 9) { return str_contains_ci(input, word); }
     }
-    if (has_internal_space == 1) {
-        return str_contains_ci(input, word);
-    }
-    return is_word_prefix(input, word);
+    # Padded but single-token (e.g. " rm "): trimmed bounds, no re-derivation.
+    return is_word_prefix_range(input, word, w_start, w_end);
 }
 fn extract_last_arg(input) {
     var len = str_len(input);

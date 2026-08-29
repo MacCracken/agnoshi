@@ -4,6 +4,97 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.6] - 2026-08-29 — measured optimization: 8 of 11 benchmarks 39–72% faster
+
+Fifth slice of the v1.9.x hardening arc
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)). **No behaviour change** —
+441 unit + 26 security + 88 smoke pass unchanged, and every rewritten function gained pin-tests
+before the numbers were claimed.
+
+### Performance
+
+Medians of 9 runs, against the 1.9.5 tree:
+
+| benchmark | 1.9.5 | 1.9.6 | delta |
+|---|---|---|---|
+| `perm/classify_5` | 4720ns | **1311ns** | **−72.2%** |
+| `parse/find_files` | 3437ns | **1670ns** | **−51.4%** |
+| `parse/list_files` | 2620ns | **1331ns** | **−49.2%** |
+| `parse/git_status` | 4294ns | **2318ns** | **−46.0%** |
+| `sanitize/basename` | 79ns | **43ns** | **−45.6%** |
+| `sanitize/safe_path` | 104ns | **58ns** | **−44.2%** |
+| `parse/shell_cmd` | 10414ns | **5998ns** | **−42.4%** |
+| `parse/cd` | 2101ns | **1280ns** | **−39.1%** |
+| `translate/cd` | 203ns | **174ns** | −14.3% |
+| `translate/list_files` | 125ns | 125ns | 0.0% |
+| `history/add_at_cap` | 302ns | 308ns | +2.0% (noise) |
+
+Binary size unchanged at 323,968 B.
+
+### Changed — five hot-path rewrites
+
+**Compare loops now stop at the first mismatch.** Five case-insensitive comparators in
+`sanitize.cyr` set a `found = 0` flag and then kept comparing the remaining bytes anyway. A single
+`break` was the largest win in the slice on its own: **−24% to −48% across every parse benchmark.**
+
+**`input_has_word` characterised its needle six times over.** It ran `strlen`, trimmed forward,
+trimmed backward, scanned for an internal space — then handed the *raw* needle to
+`is_word_prefix`, which redid the `strlen` and both trims. All of it over a compile-time literal,
+dozens of times per input; `parse/shell_cmd` falls through the entire NL cascade and pays ~79 such
+probes for one line. Now: one pass, and `is_word_prefix_range` takes the already-trimmed bounds
+(`is_word_prefix` keeps its signature for callers holding only a raw needle).
+
+**The permission tables walked the command 81 times.** `streq` calls `strlen` on **both**
+arguments before comparing a byte (`lib/string.cyr`), and the five tables hold 81
+`streq(cmd, "...")` entries — so one classification walked `cmd` 81 times plus 81 literals. A
+first-byte gate rejects the ~95% that cannot match without touching `strlen` at all: **−72.2%**,
+the single largest result here.
+
+**`is_safe_path` made four passes to answer two questions** — `has_path_traversal_cstr` then
+`has_shell_metachars_cstr`, each with its own `strlen` and scan. Fused into one pass; both
+predicates reject, so whichever condition appears first decides and the verdict is identical.
+The Str-side twin `safe_path_in_str` — the one the 12 live translators actually call — got the same
+treatment, which is where `translate/cd`'s −14.3% comes from.
+
+**`get_command_basename` called `strlen` and then re-walked the same bytes.** ⚠ The roadmap
+suggested scanning backward from the end instead; **fusing the two forward passes is strictly
+cheaper than either version**, because a backward scan still needs `strlen` to find the end, and
+the NUL search and the slash search are the same walk.
+
+### Method
+
+⚠ **One change was measured, rejected, and replaced — the numbers are the reason.** A single-pass
+needle characteriser looked obviously better than four passes, and on four parse benchmarks it was
+(up to −7.8%). But interleaved A/B showed it made `parse/shell_cmd` — the benchmark it was written
+for — **2.5% worse**: the per-byte bookkeeping cost more than the passes it saved on short
+single-token needles. It was replaced with a spaceless fast path, which beat the original on
+**every** parse benchmark including a −6.7% on `shell_cmd`. Had it been judged by the four
+benchmarks it helped, the regression would have shipped.
+
+⚠ **Sequential runs were not trustworthy at this resolution.** An early measurement showed the new
+code 3–6% slower on benchmarks that *do not touch any changed function* — machine drift, not the
+change. Every attribution here comes from **interleaved A/B** of two binaries with medians (not
+means, because the `max` column carries 2–5× scheduler outliers), using the untouched benchmarks as
+a drift control: when `sanitize/basename` and `history/add_at_cap` read 0.0%, the parse deltas are
+real.
+
+### Tests
+
+441 unit (was 419) + 26 security + 88 smoke. 22 new pin-tests were added **before** claiming the
+numbers, covering exactly what the rewrites could break: the fused dot logic (a single dot is fine,
+two consecutive are traversal, dots separated by other characters must reset), basename with
+absolute / relative / bare / trailing-slash / empty inputs, and `is_word_prefix` vs
+`is_word_prefix_range` agreeing on padded and phrase needles. The security tables are covered by
+the existing 1.9.1 end-to-end anchors, re-verified by hand: `dd`/`mkfs`/`shred` still CRIT,
+`su`/`apt`/`cp /etc` still HIGH, `ls` still LOW.
+
+### Notes
+
+- All three targets warning-free; all gates green; `lint-cstr-str` clean.
+- `translate/list_files` and `history/add_at_cap` are unchanged, as expected — neither touches a
+  rewritten function. They are the control, not an oversight.
+
+
 ## [1.9.5] - 2026-08-29 — parser shadowing: four reasonable sentences, four wrong commands
 
 Fourth slice of the v1.9.x hardening arc

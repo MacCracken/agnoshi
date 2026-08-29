@@ -97,7 +97,7 @@ fn str_contains_ci(haystack, needle) {
             var nc = load8(needle + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
-            if (hc != nc) { found = 0; }
+            if (hc != nc) { found = 0; break; }
         }
         if (found == 1) { return 1; }
     }
@@ -116,7 +116,7 @@ fn str_find_ci(haystack, needle) {
             var nc = load8(needle + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
-            if (hc != nc) { found = 0; }
+            if (hc != nc) { found = 0; break; }
         }
         if (found == 1) { return i; }
     }
@@ -135,7 +135,7 @@ fn str_find_ci_from(haystack, needle, from) {
             var nc = load8(needle + j);
             if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
             if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
-            if (hc != nc) { found = 0; }
+            if (hc != nc) { found = 0; break; }
         }
         if (found == 1) { return i; }
     }
@@ -199,6 +199,18 @@ fn is_word_prefix(input, word) {
         }
         w_end = w_end - 1;
     }
+    return is_word_prefix_range(input, word, w_start, w_end);
+}
+# The matcher proper, over an ALREADY-TRIMMED needle range.
+#
+# Split out because input_has_word (interpreter.cyr) has to characterise the
+# needle anyway — strlen, trim both ends, then scan for an internal space to
+# decide which matcher to dispatch to — and then called is_word_prefix, which
+# did the strlen and both trims AGAIN. Every single-token keyword probe in the
+# parser paid that twice, and the parser makes dozens per input. Passing the
+# bounds through does the work once. is_word_prefix keeps its original
+# signature for the call sites that have only a raw needle.
+fn is_word_prefix_range(input, word, w_start, w_end) {
     var wlen = w_end - w_start;
     if (wlen <= 0) { return 1; }
     var hlen = str_len(input);
@@ -222,7 +234,7 @@ fn is_word_prefix(input, word) {
                 var nc = load8(word + w_start + j);
                 if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
                 if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
-                if (hc != nc) { matched = 0; }
+                if (hc != nc) { matched = 0; break; }
             }
             if (matched == 1) { return 1; }
         }
@@ -263,7 +275,7 @@ fn input_has_exact_word(input, word) {
                 var nc = load8(word + j);
                 if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
                 if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
-                if (hc != nc) { matched = 0; }
+                if (hc != nc) { matched = 0; break; }
             }
             if (matched == 1) {
                 var e = i + wlen;
@@ -331,9 +343,31 @@ fn has_shell_metachars_cstr(path) {
     return 0;
 }
 fn is_safe_path(path) {
+    # ⚡ ONE FUSED PASS. This used to call has_path_traversal_cstr then
+    # has_shell_metachars_cstr, and each of those does its own strlen and its own
+    # scan — four traversals of the path to answer two questions that can be
+    # answered together. Both predicates reject, so whichever condition appears
+    # first in the string decides, and the verdict is identical either way.
+    #
+    # is_shell_metachar is still CALLED rather than inlined: it is the single
+    # source of truth for the metacharacter table (pinned by its own tests), and
+    # a second copy here would be free to drift from it. The call is the price of
+    # not having two tables.
     if (path == 0) { return 0; }
-    if (has_path_traversal_cstr(path) == 1) { return 0; }
-    if (has_shell_metachars_cstr(path) == 1) { return 0; }
+    var i = 0;
+    var prev_dot = 0;
+    while (1 == 1) {
+        var c = load8(path + i);
+        if (c == 0) { break; }
+        if (is_shell_metachar(c) == 1) { return 0; }
+        if (c == 46) {
+            if (prev_dot == 1) { return 0; }
+            prev_dot = 1;
+        } else {
+            prev_dot = 0;
+        }
+        i = i + 1;
+    }
     return 1;
 }
 # Str-aware variants of the safety predicates. The parser side
@@ -373,9 +407,26 @@ fn shell_metachars_in_str(s) {
     return 0;
 }
 fn safe_path_in_str(s) {
+    # Str-side twin of the fused is_safe_path: one pass answering both
+    # predicates instead of path_traversal_in_str followed by
+    # shell_metachars_in_str, each with its own str_len and its own scan. This
+    # is the variant the 12 live translators actually call, so it runs on every
+    # parsed filesystem intent.
     if (s == 0) { return 0; }
-    if (path_traversal_in_str(s) == 1) { return 0; }
-    if (shell_metachars_in_str(s) == 1) { return 0; }
+    var len = str_len(s);
+    var i = 0;
+    var prev_dot = 0;
+    while (i < len) {
+        var c = str_byte_at(s, i);
+        if (is_shell_metachar(c) == 1) { return 0; }
+        if (c == 46) {
+            if (prev_dot == 1) { return 0; }
+            prev_dot = 1;
+        } else {
+            prev_dot = 0;
+        }
+        i = i + 1;
+    }
     return 1;
 }
 fn safe_arg_in_str(s) {
@@ -401,18 +452,21 @@ fn safe_commit_message_in_str(s) {
     return 1;
 }
 fn get_command_basename(cmd) {
+    # ⚡ ONE PASS. This called strlen and THEN scanned the same bytes again to
+    # find the last slash. The roadmap suggested scanning backward from the end
+    # instead, but that still needs strlen to find the end — fusing the two
+    # forward passes into one is strictly cheaper than either version, since the
+    # NUL search and the slash search are the same walk.
     if (cmd == 0) { return cmd; }
-    var len = strlen(cmd);
-    if (len == 0) { return cmd; }
+    var i = 0;
     var last_slash = 0 - 1;
-    for (var i = 0; i < len; i = i + 1) {
-        if (load8(cmd + i) == 47) {
-            last_slash = i;
-        }
+    while (1 == 1) {
+        var c = load8(cmd + i);
+        if (c == 0) { break; }
+        if (c == 47) { last_slash = i; }
+        i = i + 1;
     }
-    if (last_slash >= 0) {
-        return cmd + last_slash + 1;
-    }
+    if (last_slash >= 0) { return cmd + last_slash + 1; }
     return cmd;
 }
 fn is_safe_username(name) {

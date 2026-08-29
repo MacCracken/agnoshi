@@ -26,100 +26,120 @@ fn check_permission(user, required) {
     if (required == PermissionLevel.BLOCKED) { return 0; }
     return 0;
 }
+# Cheap-reject comparison against a command-table literal.
+#
+# ⚡ `streq` calls strlen on BOTH arguments before comparing a single byte
+# (lib/string.cyr), so the permission tables — 81 `streq(cmd, "...")` entries
+# across five functions — walked `cmd` 81 times over for one classification,
+# plus 81 walks of the literals. Testing the first byte first rejects the ~95%
+# of entries that cannot match without touching strlen at all; only entries
+# sharing an initial letter pay the full comparison.
+#
+# `c0` is the caller's already-loaded first byte of `cmd`, hoisted out of the
+# table so it is read once rather than per entry.
+fn _cmd_eq(cmd, c0, lit): i64 {
+    if (c0 != load8(lit)) { return 0; }
+    return streq(cmd, lit);
+}
 fn is_blocked_command(cmd) {
-    if (streq(cmd, "dd") == 1) { return 1; }
-    if (streq(cmd, "mkfs") == 1) { return 1; }
-    if (streq(cmd, "fdisk") == 1) { return 1; }
-    if (streq(cmd, "parted") == 1) { return 1; }
-    if (streq(cmd, "chmod") == 1) { return 1; }
-    if (streq(cmd, "chown") == 1) { return 1; }
-    if (streq(cmd, "chgrp") == 1) { return 1; }
-    if (streq(cmd, "shred") == 1) { return 1; }
+    var c0 = load8(cmd);
+    if (_cmd_eq(cmd, c0, "dd") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "mkfs") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "fdisk") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "parted") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "chmod") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "chown") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "chgrp") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "shred") == 1) { return 1; }
     return 0;
 }
 fn is_admin_command(cmd) {
-    if (streq(cmd, "apt") == 1) { return 1; }
-    if (streq(cmd, "yum") == 1) { return 1; }
-    if (streq(cmd, "dnf") == 1) { return 1; }
-    if (streq(cmd, "pacman") == 1) { return 1; }
-    if (streq(cmd, "systemctl") == 1) { return 1; }
-    if (streq(cmd, "service") == 1) { return 1; }
-    if (streq(cmd, "useradd") == 1) { return 1; }
-    if (streq(cmd, "userdel") == 1) { return 1; }
-    if (streq(cmd, "usermod") == 1) { return 1; }
-    if (streq(cmd, "groupadd") == 1) { return 1; }
-    if (streq(cmd, "mount") == 1) { return 1; }
-    if (streq(cmd, "umount") == 1) { return 1; }
-    if (streq(cmd, "modprobe") == 1) { return 1; }
-    if (streq(cmd, "insmod") == 1) { return 1; }
-    if (streq(cmd, "rmmod") == 1) { return 1; }
-    if (streq(cmd, "kill") == 1) { return 1; }
-    if (streq(cmd, "killall") == 1) { return 1; }
-    if (streq(cmd, "pkill") == 1) { return 1; }
-    if (streq(cmd, "reboot") == 1) { return 1; }
-    if (streq(cmd, "shutdown") == 1) { return 1; }
-    if (streq(cmd, "poweroff") == 1) { return 1; }
-    if (streq(cmd, "halt") == 1) { return 1; }
-    if (streq(cmd, "iptables") == 1) { return 1; }
-    if (streq(cmd, "ip6tables") == 1) { return 1; }
-    if (streq(cmd, "nft") == 1) { return 1; }
-    if (streq(cmd, "ufw") == 1) { return 1; }
-    if (streq(cmd, "crontab") == 1) { return 1; }
-    if (streq(cmd, "visudo") == 1) { return 1; }
-    if (streq(cmd, "su") == 1) { return 1; }
-    if (streq(cmd, "swapoff") == 1) { return 1; }
-    if (streq(cmd, "swapon") == 1) { return 1; }
-    if (streq(cmd, "mknod") == 1) { return 1; }
+    var c0 = load8(cmd);
+    if (_cmd_eq(cmd, c0, "apt") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "yum") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "dnf") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "pacman") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "systemctl") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "service") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "useradd") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "userdel") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "usermod") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "groupadd") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "mount") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "umount") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "modprobe") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "insmod") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "rmmod") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "kill") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "killall") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "pkill") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "reboot") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "shutdown") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "poweroff") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "halt") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "iptables") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ip6tables") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "nft") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ufw") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "crontab") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "visudo") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "su") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "swapoff") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "swapon") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "mknod") == 1) { return 1; }
     return 0;
 }
 fn is_write_command(cmd) {
-    if (streq(cmd, "cp") == 1) { return 1; }
-    if (streq(cmd, "mv") == 1) { return 1; }
-    if (streq(cmd, "ln") == 1) { return 1; }
-    if (streq(cmd, "touch") == 1) { return 1; }
-    if (streq(cmd, "mkdir") == 1) { return 1; }
-    if (streq(cmd, "rmdir") == 1) { return 1; }
-    if (streq(cmd, "tee") == 1) { return 1; }
-    if (streq(cmd, "sed") == 1) { return 1; }
-    if (streq(cmd, "awk") == 1) { return 1; }
+    var c0 = load8(cmd);
+    if (_cmd_eq(cmd, c0, "cp") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "mv") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ln") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "touch") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "mkdir") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "rmdir") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "tee") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "sed") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "awk") == 1) { return 1; }
     return 0;
 }
 fn is_readonly_command(cmd) {
-    if (streq(cmd, "ls") == 1) { return 1; }
-    if (streq(cmd, "cat") == 1) { return 1; }
-    if (streq(cmd, "head") == 1) { return 1; }
-    if (streq(cmd, "tail") == 1) { return 1; }
-    if (streq(cmd, "less") == 1) { return 1; }
-    if (streq(cmd, "more") == 1) { return 1; }
-    if (streq(cmd, "grep") == 1) { return 1; }
-    if (streq(cmd, "find") == 1) { return 1; }
-    if (streq(cmd, "ps") == 1) { return 1; }
-    if (streq(cmd, "top") == 1) { return 1; }
-    if (streq(cmd, "htop") == 1) { return 1; }
-    if (streq(cmd, "df") == 1) { return 1; }
-    if (streq(cmd, "du") == 1) { return 1; }
-    if (streq(cmd, "free") == 1) { return 1; }
-    if (streq(cmd, "uptime") == 1) { return 1; }
-    if (streq(cmd, "uname") == 1) { return 1; }
-    if (streq(cmd, "ifconfig") == 1) { return 1; }
-    if (streq(cmd, "ip") == 1) { return 1; }
-    if (streq(cmd, "netstat") == 1) { return 1; }
-    if (streq(cmd, "ss") == 1) { return 1; }
-    if (streq(cmd, "pwd") == 1) { return 1; }
-    if (streq(cmd, "echo") == 1) { return 1; }
-    if (streq(cmd, "date") == 1) { return 1; }
-    if (streq(cmd, "whoami") == 1) { return 1; }
-    if (streq(cmd, "id") == 1) { return 1; }
+    var c0 = load8(cmd);
+    if (_cmd_eq(cmd, c0, "ls") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "cat") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "head") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "tail") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "less") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "more") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "grep") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "find") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ps") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "top") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "htop") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "df") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "du") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "free") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "uptime") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "uname") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ifconfig") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ip") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "netstat") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "ss") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "pwd") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "echo") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "date") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "whoami") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "id") == 1) { return 1; }
     return 0;
 }
 fn is_safe_command(cmd) {
-    if (streq(cmd, "cd") == 1) { return 1; }
-    if (streq(cmd, "pwd") == 1) { return 1; }
-    if (streq(cmd, "clear") == 1) { return 1; }
-    if (streq(cmd, "exit") == 1) { return 1; }
-    if (streq(cmd, "history") == 1) { return 1; }
-    if (streq(cmd, "help") == 1) { return 1; }
-    if (streq(cmd, "agnsh") == 1) { return 1; }
+    var c0 = load8(cmd);
+    if (_cmd_eq(cmd, c0, "cd") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "pwd") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "clear") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "exit") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "history") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "help") == 1) { return 1; }
+    if (_cmd_eq(cmd, c0, "agnsh") == 1) { return 1; }
     return 0;
 }
 fn cstr_starts_with(s, prefix) {

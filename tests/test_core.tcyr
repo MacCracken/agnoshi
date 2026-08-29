@@ -1294,6 +1294,42 @@ fn main() {
     check("list files in /tmp stays LIST_FILES",
       load64(Interpreter_parse(sh, str_from("list files in /tmp"))) == IntentTag.LIST_FILES);
 
+    # ---- 1.9.6 optimization: behaviour pinned across the rewrites ----
+    # is_safe_path was four passes (two predicates, each with its own strlen and
+    # scan) and is now one fused pass. The dot logic is the subtle part: a
+    # SINGLE dot is fine, two CONSECUTIVE dots are traversal, and dots separated
+    # by other characters must reset.
+    check("safe_path plain", is_safe_path("/tmp/file.txt") == 1);
+    check("safe_path single dot ok", is_safe_path("/tmp/.hidden") == 1);
+    check("safe_path dots not adjacent ok", is_safe_path("/tmp/a.b.c") == 1);
+    check("safe_path bare dot ok", is_safe_path(".") == 1);
+    check("safe_path double dot rejected", is_safe_path("..") == 0);
+    check("safe_path traversal rejected", is_safe_path("/tmp/../etc/shadow") == 0);
+    check("safe_path embedded double dot rejected", is_safe_path("a..b") == 0);
+    check("safe_path metachar rejected", is_safe_path("/tmp/x;evil") == 0);
+    check("safe_path backtick rejected", is_safe_path("/tmp/`whoami`") == 0);
+    check("safe_path null rejected", is_safe_path(0) == 0);
+
+    # get_command_basename fused strlen+scan into one pass.
+    check("basename of absolute", streq(get_command_basename("/usr/bin/dd"), "dd") == 1);
+    check("basename of relative", streq(get_command_basename("./chmod"), "chmod") == 1);
+    check("basename of bare", streq(get_command_basename("ls"), "ls") == 1);
+    check("basename trailing slash -> empty", streq(get_command_basename("/usr/bin/"), "") == 1);
+    check("basename of empty", streq(get_command_basename(""), "") == 1);
+
+    # is_word_prefix_range is the shared matcher input_has_word now calls with
+    # pre-trimmed bounds; is_word_prefix must still work from a raw needle.
+    check("word_prefix finds plural", is_word_prefix(str_from("show files"), "file") == 1);
+    check("word_prefix rejects substring", is_word_prefix(str_from("remove x"), "move") == 0);
+    check("word_prefix_range equivalent",
+      is_word_prefix_range(str_from("show files"), "file", 0, 4) == 1);
+    # A padded needle must trim to the same answer through either entry point.
+    check("word_prefix trims padding", is_word_prefix(str_from("show files"), " file ") == 1);
+    check("input_has_word trims padding", input_has_word(str_from("show files"), " file ") == 1);
+    # A phrase needle (internal space) must still dispatch to substring matching.
+    check("input_has_word phrase", input_has_word(str_from("go to /tmp"), "go to") == 1);
+    check("input_has_word phrase absent", input_has_word(str_from("goto /tmp"), "go to") == 0);
+
     # input_has_exact_word — the matcher the guards depend on.
     check("exact word matches a whole token",
       input_has_exact_word(str_from("delete user bob"), "user") == 1);

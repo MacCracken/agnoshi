@@ -15,7 +15,8 @@ Items leave this file when they ship; they are not marked done and kept.
 deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
 severity, not by convenience. (1.9.2 exec-audit, 1.9.3 exec-path error handling,
-1.9.4 state-file/error-output hygiene and 1.9.5 parser shadowing have shipped — see the CHANGELOG. The untested agnos half of
+1.9.4 state-file/error-output hygiene, 1.9.5 parser shadowing and
+1.9.6 measured optimization have shipped — see the CHANGELOG. The untested agnos half of
 1.9.2/1.9.3 is recorded below as verification debt.)
 
 ### Verification debt — the agnos exec surface has never been executed
@@ -72,25 +73,19 @@ accept guard-by-guard and write that down as the chosen posture so the next pers
 re-litigate it. Note the guards are not free — 1.9.5 measured one at +31% on `parse/list_files`
 before it was optimised down to +5%.
 
-### 1.9.6 — Measured optimization
+### Carried from 1.9.6 — the parse cascade is still linear
 
-All six carry a named benchmark; none is speculative.
+1.9.6 made every probe in the natural-language cascade much cheaper (`parse/shell_cmd` −42%), but
+it did **not** change the shape: SHELL_COMMAND is still the terminal fall-through, so a plain shell
+line still pays ~79 keyword probes before anything claims it. It is now ~6.0us instead of ~10.4us,
+and still 4× the next-slowest parse.
 
-- **Why `parse/shell_cmd` is 4× the next slowest parse** — SHELL_COMMAND is the terminal
-  fall-through, so it pays all 79 preceding match attempts. A cheap discriminator (first byte /
-  token count) before the NL cascade is the headline win.
-- Case-insensitive compare loops never `break` on mismatch — every probe pays the full needle
-  length at every offset (`sanitize.cyr`).
-- `analyze_command_permission` runs up to 75 full `streq` calls (two `strlen` walks each) with no
-  first-byte gate.
-- `input_has_word` characterises the needle, then `is_word_prefix` repeats the identical
-  `strlen` + trim. ⚠ **Now has a measured price tag**: 1.9.5 added two keyword guards on the
-  LIST_FILES path and paid **+31%** on `parse/list_files` for them (2.464us → 3.23us), reduced to
-  +5% only by gating them behind a shorter needle. Every guard the parser gains pays this twice
-  over, so fixing the double scan makes future correctness fixes cheaper, not just this one faster.
-- `is_safe_path` walks the path twice with two separate `strlen` calls where one fused pass
-  answers both predicates.
-- `get_command_basename` scans forward to find the *last* slash instead of scanning back.
+The remaining win is structural — a discriminator that recognises "this is not natural language"
+before entering the cascade, rather than making the cascade faster. **Deliberately not attempted in
+a measured-optimization slice**: it changes which parser claims an input, so it is a correctness
+change wearing a performance costume, and 1.9.5 just spent a whole slice on what happens when the
+wrong parser claims something. Pair it with the dispatch-ordering decision above — they are the
+same question asked twice.
 
 ### 1.9.7 — Test reachability
 
