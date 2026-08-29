@@ -1,4 +1,25 @@
 var _sanitize_loaded = 1;
+
+# O_NOFOLLOW — refuse to open a symlink at the final path component. Used on
+# the two shell state files ($HOME/.agnsh_audit.log, $HOME/.agnsh_history),
+# which an attacker with prior write access to $HOME could otherwise pre-place
+# as symlinks to redirect (and, via the follow-up chmod, re-permission) an
+# arbitrary user-owned file.
+#
+# ⚠ THERE IS NO PER-ARCH SPLIT, despite what the v1.3.1 audit and
+# docs/guides/security-model.md said until 1.9.1. Both are (1 << 17) = 131072:
+# asm-generic/fcntl.h defines O_NOFOLLOW as (1 << 17) and NEITHER x86_64 nor
+# aarch64 overrides it (32-bit arm does — that is where the confusion came
+# from). The previously-published aarch64 value 0o100000 = 32768 is
+# O_LARGEFILE: shipping it would have opened the audit log with O_LARGEFILE and
+# left the symlink race fully intact on the aarch64 release artifact, while the
+# CHANGELOG claimed it closed. Do not "restore" a per-arch #ifdef here.
+#
+# On agnos the bit is dropped, not miscompiled: file_open (lib/io.cyr:75) masks
+# only 3|64|512|1024 into the AO_* namespace, so this degrades gracefully until
+# agnos gains an AO_NOFOLLOW bit (tracked in the roadmap).
+var O_NOFOLLOW_LINUX = 131072;
+
 fn str_byte_at(s, i) {
     return load8(str_data(s) + i);
 }
@@ -269,6 +290,21 @@ fn safe_arg_in_str(s) {
     if (len > 4096) { return 0; }
     return (shell_metachars_in_str(s) == 0);
 }
+# Str-side twin of is_safe_commit_message (ADR-006). The cstring original is
+# handed a Str by translate_git_commit — the parser fills intent+8 via
+# extract_after, which returns str_trim(str_substr(...)) — so its strlen(msg)
+# walked the 16-byte Str header and load8(msg) read the low byte of the data
+# POINTER, never the message. The H7 leading-dash argument-injection guard was
+# therefore inert on the only path that calls it:
+# `git commit -m -oh-no-a-flag` was accepted and emitted verbatim, where git
+# reads the value as a flag rather than a message.
+fn safe_commit_message_in_str(s) {
+    if (s == 0) { return 0; }
+    var len = str_len(s);
+    if (len == 0) { return 0; }
+    if (str_byte_at(s, 0) == 45) { return 0; }
+    return 1;
+}
 fn get_command_basename(cmd) {
     if (cmd == 0) { return cmd; }
     var len = strlen(cmd);
@@ -318,21 +354,86 @@ fn print_str_safe(s) {
     var safe = strip_control_chars(s);
     str_print(safe);
 }
-fn json_escape(s) {
-    if (s == 0) { return "\"\""; }
+# Escape a Str for embedding inside a JSON string literal.
+#
+# Returns the escaped CONTENT ONLY — every caller supplies its own surrounding
+# quotes (audit.cyr's `"{\"input\":\""` + value + `"\",…"`, translate.cyr's
+# `"{\"agent\":\""` + value + `"\"}"`).
+#
+# ⛔ The null branch used to `return "\"\""` — a raw CSTRING, where every other
+# return is a Str, and carrying two quote characters the caller also emits. Both
+# halves were bugs: str_builder_add is declared `(sb, s: Str)` and reads
+# load64(s + 8) as a length, so a cstring return meant a memcpy of whatever the
+# adjacent .rodata happened to decode to; and the stray quotes would have closed
+# the JSON string early. Reachable because str_from returns 0 on allocation
+# failure (str_new_a -> `return 0`). This is also the source of the two
+# long-standing `assigning non-pointer to typed pointer` warnings at
+# translate.cyr:494/508 — the compiler could not settle the return type.
+#
+# ⛔ Bytes >= 0x80 used to be copied through unvalidated, so a single high byte
+# in NL input made the audit record invalid UTF-8 and therefore invalid JSON.
+# `jq`/serde/encoding_json all reject the line — and on a whole-file parse one
+# poisoned line takes the entire audit log down with it, which an actor whose
+# own entry would read `rejected_safety` could trigger deliberately.
+#
+# UTF-8 is VALIDATED rather than blanket-escaped: naively emitting \u00XX per
+# high byte is byte-exact but semantically wrong (é = C3 A9 would become the
+# mojibake "Ã©"), so well-formed sequences pass through verbatim and only
+# genuinely invalid bytes become U+FFFD. Overlong forms, surrogates and
+# out-of-range lead bytes are all rejected.
+fn json_escape(s): Str {
+    if (s == 0) { return str_from(""); }
     var len = str_len(s);
     var builder = str_builder_new();
-    for (var i = 0; i < len; i = i + 1) {
+    var i = 0;
+    while (i < len) {
         var ch = str_byte_at(s, i);
-        if (ch == 34) { str_builder_add(builder, "\\\""); }
-        elif (ch == 92) { str_builder_add(builder, "\\\\"); }
-        elif (ch == 10) { str_builder_add(builder, "\\n"); }
-        elif (ch == 13) { str_builder_add(builder, "\\r"); }
-        elif (ch == 9) { str_builder_add(builder, "\\t"); }
-        elif (ch == 8) { str_builder_add(builder, "\\b"); }
-        elif (ch == 12) { str_builder_add(builder, "\\f"); }
-        elif (ch < 32) { }
-        else { str_builder_add_byte(builder, ch); }
+        if (ch == 34) { str_builder_add(builder, "\\\""); i = i + 1; }
+        elif (ch == 92) { str_builder_add(builder, "\\\\"); i = i + 1; }
+        elif (ch == 10) { str_builder_add(builder, "\\n"); i = i + 1; }
+        elif (ch == 13) { str_builder_add(builder, "\\r"); i = i + 1; }
+        elif (ch == 9) { str_builder_add(builder, "\\t"); i = i + 1; }
+        elif (ch == 8) { str_builder_add(builder, "\\b"); i = i + 1; }
+        elif (ch == 12) { str_builder_add(builder, "\\f"); i = i + 1; }
+        elif (ch < 32) { i = i + 1; }
+        elif (ch == 127) { i = i + 1; }
+        elif (ch < 128) { str_builder_add_byte(builder, ch); i = i + 1; }
+        else {
+            var seqlen = 0;
+            var lo = 0x80;
+            var hi = 0xBF;
+            if (ch >= 0xC2 && ch <= 0xDF) { seqlen = 2; }
+            elif (ch >= 0xE0 && ch <= 0xEF) {
+                seqlen = 3;
+                if (ch == 0xE0) { lo = 0xA0; }
+                if (ch == 0xED) { hi = 0x9F; }
+            }
+            elif (ch >= 0xF0 && ch <= 0xF4) {
+                seqlen = 4;
+                if (ch == 0xF0) { lo = 0x90; }
+                if (ch == 0xF4) { hi = 0x8F; }
+            }
+            var ok = 0;
+            if (seqlen != 0 && i + seqlen <= len) {
+                ok = 1;
+                for (var k = 1; k < seqlen; k = k + 1) {
+                    var cb = str_byte_at(s, i + k);
+                    var blo = 0x80;
+                    var bhi = 0xBF;
+                    if (k == 1) { blo = lo; bhi = hi; }
+                    if (cb < blo || cb > bhi) { ok = 0; }
+                }
+            }
+            if (ok == 1) {
+                for (var m = 0; m < seqlen; m = m + 1) {
+                    str_builder_add_byte(builder, str_byte_at(s, i + m));
+                }
+                i = i + seqlen;
+            } else {
+                str_builder_add(builder, "\\ufffd");
+                i = i + 1;
+            }
+        }
     }
     return str_builder_build(builder);
 }

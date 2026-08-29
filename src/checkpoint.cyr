@@ -29,9 +29,17 @@ fn CheckpointManager_new() {
     # Check the return so a silent chmod failure can't leave the
     # checkpoint dir world-readable (contains pre-destructive-op
     # backups — meaningful security exposure).
-    var chmod_rc = sys_chmod(str_data(dir), 448);
+    # str_cstr, NOT str_data: str_data returns the Str's data pointer, which
+    # str_cat leaves WITHOUT a trailing NUL, so the kernel read past the buffer
+    # until it hit an incidental zero — acting on a path with attacker-adjacent
+    # heap bytes appended. Deferred in v1.3.1 "until checkpoint.cyr is wired in";
+    # str_cstr() shipping in the 6.5.36 stdlib made it a one-token fix, so it is
+    # closed here rather than left as a landmine for the wire-up slice.
+    var chmod_rc = sys_chmod(str_cstr(dir), 448);
     if (chmod_rc != 0) {
-        sys_write(2, "agnsh: warning: chmod 0700 failed on checkpoint dir\n", 53);
+        # strlen(), not a hand-counted literal (was 53 for a 52-byte string).
+        var cwarn = "agnsh: warning: chmod 0700 failed on checkpoint dir\n";
+        sys_write(2, cwarn, strlen(cwarn));
     }
     var p = alloc(24);
     store64(p, vec_new());

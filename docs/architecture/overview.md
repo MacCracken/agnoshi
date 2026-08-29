@@ -28,14 +28,14 @@ agnoshi
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 57 unit tests
+│   ├── test_core.tcyr      -- 356 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
-│   ├── bench_core.bcyr     -- 10 criterion-style benchmarks
+│   ├── bench_core.bcyr     -- 11 criterion-style benchmarks
 │   └── test.sh             -- run all test suites
 ├── scripts/
 │   ├── install.sh          -- install to /usr/local/bin
 │   ├── uninstall.sh        -- clean removal
-│   ├── smoke-test.sh       -- 20 end-to-end binary tests
+│   ├── smoke-test.sh       -- 59 end-to-end binary tests
 │   └── bench-history.sh    -- benchmark CSV tracker
 └── docs/
     ├── agnsh.1             -- man page
@@ -125,7 +125,7 @@ Every command is classified into one of six levels:
 - Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step. (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
 
 **Runtime:**
-- None (statically linked ELF, ~304 KB x86_64 / ~532 KB aarch64 on Cyrius 6.5.36; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
+- None (statically linked ELF, ~308 KB x86_64 / ~532 KB aarch64 on Cyrius 6.5.36; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 

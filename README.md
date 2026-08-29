@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.9.0 · Cyrius 6.5.36 · 22 modules · ~5 K src lines · 304 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 301 unit + 26 security + 59 smoke tests**
+**1.9.1 · Cyrius 6.5.36 · 22 modules · ~5 K src lines · 308 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 356 unit + 26 security + 59 smoke tests**
 
 ## Features
 
@@ -111,7 +111,7 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.5.36 is 304 KB (x86_64) / 532 KB (aarch64) — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 6.5.x plus the v1.2.0/v1.3.0 feature additions (approval, audit, history, security wired in), not from agnoshi-side bloat. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.5.36 is 308 KB (x86_64) / 532 KB (aarch64) — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 6.5.x plus the v1.2.0/v1.3.0 feature additions (approval, audit, history, security wired in), not from agnoshi-side bloat. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 

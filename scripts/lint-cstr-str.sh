@@ -181,6 +181,29 @@ done
 # one deferred (checkpoint.cyr) site in v1.3.1 slice 4.
 scan "sys_chmod return unchecked" '^\s*sys_chmod\('
 
+# Category G — `str_data(...)` handed to a syscall that expects a
+# NUL-TERMINATED PATH. Deferred in v1.3.1 slice 4 on false-positive
+# grounds ("some syscalls take ptr+len explicitly"), which was the right
+# call then and the wrong one now: the pattern below names the
+# path-taking calls EXPLICITLY rather than matching `syscall(` broadly,
+# so `sys_write(fd, str_data(s), len)` — the legitimate ptr+len shape —
+# is not matched at all.
+#
+# Why it matters: `str_data(s)` returns the Str's data pointer, which is
+# NOT NUL-terminated (str_cat/str_substr allocate length-prefixed buffers
+# with no trailing zero). A path-taking syscall reads past the buffer
+# until it finds an incidental zero, so the kernel can act on a path with
+# attacker-influenced trailing bytes from adjacent heap. Build a cstring
+# instead — `str_cstr(s)` (lib/str.cyr) does exactly this and shipped in
+# the 6.5.36 stdlib, which is what finally made this rule cheap to obey.
+#
+# Anchored on the three known-bad shapes in the tree (session.cyr's two
+# SYS_CHDIR sites, checkpoint.cyr's sys_chmod) plus the open/stat family.
+scan "str_data() into a path-taking syscall — use str_cstr() (Category G)" \
+     '(sys_chmod|sys_open|file_open|sys_stat|sys_unlink|sys_mkdir|sys_rmdir)\([[:space:]]*str_data\('
+scan "str_data() into a path-taking syscall — use str_cstr() (Category G)" \
+     'syscall\([[:space:]]*(SYS_CHDIR|SYS_OPEN|SYS_STAT|SYS_UNLINK|SYS_MKDIR|SYS_RMDIR|SYS_CHMOD)[[:space:]]*,[[:space:]]*str_data\('
+
 if [ $FAIL -eq 0 ]; then
     echo "lint-cstr-str: clean (no Str/cstring antipatterns in $SRC_DIRS/)"
     exit 0

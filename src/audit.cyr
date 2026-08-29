@@ -50,13 +50,33 @@ fn AuditLogger_log(self, entry) {
     # SYS_OPEN (= io_setup in its generic syscall table) and routes
     # the open through openat(AT_FDCWD, ...) inside `sys_open`. Direct
     # `syscall(SYS_OPEN, ...)` broke the cross-build at CI.
+    # ⛔ RAW `sys_open` IS NOT THE SAME FUNCTION ON BOTH TARGETS.
+    #   Linux/macOS: sys_open(path, flags, mode)
+    #   agnos:       sys_open(name, namelen, flags)
+    # The Linux-shaped `sys_open(load64(self), 1089, 384)` that used to live
+    # here passed 1089 as agnos's `namelen` and 384 as its `flags`, so on agnos
+    # every open was malformed and AUDIT LOGGING WAS SILENTLY DEAD on the
+    # primary target — the one platform where agnsh actually executes programs.
+    # `file_open` is the length-carrying bridge that exists precisely for this
+    # (lib/io.cyr:75); use it instead of hand-rolling the split.
+    #
+    # O_NOFOLLOW closes the pre-placed-symlink hijack of the audit trail: with
+    # a symlink at $HOME/.agnsh_audit.log, the old open followed it and wrote
+    # (and chmod'd 0600) an arbitrary user-owned file. file_open's agnos branch
+    # masks only bits 3|64|512|1024, so the extra bit is dropped there rather
+    # than corrupting the flags — graceful degrade until agnos gains AO_NOFOLLOW.
     var line = AuditEntry_to_json(entry);
-    var fd = sys_open(load64(self), 1089, 384);
+    var fd = file_open(load64(self), 1089 | O_NOFOLLOW_LINUX, 384);
     if (fd < 0) { return 0 - 1; }
     var len = str_len(line);
-    sys_write(fd, str_data(line), len);
-    sys_write(fd, "\n", 1);
-    sys_close(fd);
+    # Short writes are real on a full disk or a quota'd home, and a partial
+    # audit line is a CORRUPT audit line. Report failure instead of returning 0
+    # and letting the caller believe the action was recorded.
+    var w1 = file_write(fd, str_data(line), len);
+    var w2 = file_write(fd, "\n", 1);
+    file_close(fd);
+    if (w1 != len) { return 0 - 1; }
+    if (w2 != 1) { return 0 - 1; }
     return 0;
 }
 struct AuditFilter {

@@ -29,6 +29,7 @@ include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/approval.cyr"
 include "src/audit.cyr"
+include "src/history.cyr"
 include "src/security.cyr"
 
 # Compose a SecurityContext (56 bytes — uid, gid, euid, username,
@@ -115,12 +116,21 @@ fn main() {
     check("config ai", load64(config + 16) == 1);
     check("config approval", load64(config + 32) == 300);
 
-    check("builtin cd", is_builtin("cd") == 1);
+    # The table must describe the LIVE interactive loop in agnsh.cyr. Before
+    # 1.9.1 it claimed `cd` and `undo` (neither implemented in the shipped
+    # binary) and omitted `version` and `run` (both real arms), and this test
+    # locked the wrong answer in by asserting `cd`.
     check("builtin exit", is_builtin("exit") == 1);
     check("builtin help", is_builtin("help") == 1);
     check("builtin mode", is_builtin("mode") == 1);
+    check("builtin version", is_builtin("version") == 1);
+    check("builtin run", is_builtin("run") == 1);
     check("not builtin ls", is_builtin("ls") == 0);
     check("not builtin git", is_builtin("git") == 0);
+    # cd / undo live in the non-compiled session.cyr + checkpoint.cyr. They must
+    # NOT be advertised until those modules are actually wired in.
+    check("cd not yet a builtin", is_builtin("cd") == 0);
+    check("undo not yet a builtin", is_builtin("undo") == 0);
 
     var intent = Intent_new(IntentTag.LIST_FILES);
     check("intent tag", load64(intent) == IntentTag.LIST_FILES);
@@ -322,7 +332,7 @@ fn main() {
 
     # translate_change_dir — happy path + null fallback
     var cd_intent = Intent_new(IntentTag.CHANGE_DIR);
-    store64(cd_intent + 8, "/home");
+    store64(cd_intent + 8, str_from("/home"));
     var cd_t = translate_change_dir(cd_intent);
     check("translate_change_dir cmd", streq(load64(cd_t), "cd") == 1);
     check("translate_change_dir perm", load64(cd_t + 24) == PermissionLevel.SAFE);
@@ -438,13 +448,13 @@ fn main() {
 
     # translate_git_commit — happy path with safe message
     var gc_intent = Intent_new(IntentTag.GIT_COMMIT);
-    store64(gc_intent + 8, "wip: refactor");
+    store64(gc_intent + 8, str_from("wip: refactor"));
     var gc_t = translate_git_commit(gc_intent);
     check("translate_git_commit cmd", streq(load64(gc_t), "git") == 1);
     check("translate_git_commit perm", load64(gc_t + 24) == PermissionLevel.USER_WRITE);
     # translate_git_commit — -a flag set
     var gc_a = Intent_new(IntentTag.GIT_COMMIT);
-    store64(gc_a + 8, "fix bug");
+    store64(gc_a + 8, str_from("fix bug"));
     store64(gc_a + 40, 1);
     var gc_at = translate_git_commit(gc_a);
     check("translate_git_commit -a adds flag",
@@ -453,7 +463,7 @@ fn main() {
     # Locks `is_safe_commit_message`'s reject-leading-dash rule that closed
     # the v1.0 security audit H7 finding (argument injection).
     var gc_bad = Intent_new(IntentTag.GIT_COMMIT);
-    store64(gc_bad + 8, "-rf evil");
+    store64(gc_bad + 8, str_from("-rf evil"));
     var gc_bt = translate_git_commit(gc_bad);
     check("translate_git_commit leading-dash → unknown",
       streq(load64(gc_bt), "echo") == 1);
@@ -472,13 +482,13 @@ fn main() {
 
     # translate_git_branch
     var gb_intent = Intent_new(IntentTag.GIT_BRANCH);
-    store64(gb_intent + 8, "feature-x");
+    store64(gb_intent + 8, str_from("feature-x"));
     var gb_t = translate_git_branch(gb_intent);
     check("translate_git_branch cmd", streq(load64(gb_t), "git") == 1);
     check("translate_git_branch perm", load64(gb_t + 24) == PermissionLevel.USER_WRITE);
     # -d delete flag
     var gb_del = Intent_new(IntentTag.GIT_BRANCH);
-    store64(gb_del + 8, "stale");
+    store64(gb_del + 8, str_from("stale"));
     store64(gb_del + 40, 1);
     var gb_dt = translate_git_branch(gb_del);
     check("translate_git_branch -d adds flag",
@@ -508,21 +518,21 @@ fn main() {
 
     # translate_git_checkout
     var gco_intent = Intent_new(IntentTag.GIT_CHECKOUT);
-    store64(gco_intent + 8, "main");
+    store64(gco_intent + 8, str_from("main"));
     var gco_t = translate_git_checkout(gco_intent);
     check("translate_git_checkout cmd", streq(load64(gco_t), "git") == 1);
     check("translate_git_checkout perm", load64(gco_t + 24) == PermissionLevel.USER_WRITE);
 
     # translate_git_merge
     var gm_intent = Intent_new(IntentTag.GIT_MERGE);
-    store64(gm_intent + 8, "feature-x");
+    store64(gm_intent + 8, str_from("feature-x"));
     var gm_t = translate_git_merge(gm_intent);
     check("translate_git_merge cmd", streq(load64(gm_t), "git") == 1);
     check("translate_git_merge perm", load64(gm_t + 24) == PermissionLevel.USER_WRITE);
 
     # translate_git_stash
     var gst_intent = Intent_new(IntentTag.GIT_STASH);
-    store64(gst_intent + 8, "pop");
+    store64(gst_intent + 8, str_from("pop"));
     var gst_t = translate_git_stash(gst_intent);
     check("translate_git_stash cmd", streq(load64(gst_t), "git") == 1);
     check("translate_git_stash perm", load64(gst_t + 24) == PermissionLevel.USER_WRITE);
@@ -535,28 +545,28 @@ fn main() {
 
     # translate_user_add
     var ua_intent = Intent_new(IntentTag.USER_ADD);
-    store64(ua_intent + 8, "alice");
+    store64(ua_intent + 8, str_from("alice"));
     var ua_t = translate_user_add(ua_intent);
     check("translate_user_add cmd", streq(load64(ua_t), "useradd") == 1);
     check("translate_user_add perm ADMIN", load64(ua_t + 24) == PermissionLevel.ADMIN);
 
     # translate_user_delete
     var ud_intent = Intent_new(IntentTag.USER_DELETE);
-    store64(ud_intent + 8, "alice");
+    store64(ud_intent + 8, str_from("alice"));
     var ud_t = translate_user_delete(ud_intent);
     check("translate_user_delete cmd", streq(load64(ud_t), "userdel") == 1);
     check("translate_user_delete perm ADMIN", load64(ud_t + 24) == PermissionLevel.ADMIN);
 
     # translate_passwd
     var pw_intent = Intent_new(IntentTag.PASSWD);
-    store64(pw_intent + 8, "alice");
+    store64(pw_intent + 8, str_from("alice"));
     var pw_t = translate_passwd(pw_intent);
     check("translate_passwd cmd", streq(load64(pw_t), "passwd") == 1);
     check("translate_passwd perm ADMIN", load64(pw_t + 24) == PermissionLevel.ADMIN);
 
     # translate_group_add
     var ga_intent = Intent_new(IntentTag.GROUP_ADD);
-    store64(ga_intent + 8, "devs");
+    store64(ga_intent + 8, str_from("devs"));
     var ga_t = translate_group_add(ga_intent);
     check("translate_group_add cmd", streq(load64(ga_t), "groupadd") == 1);
     check("translate_group_add perm ADMIN", load64(ga_t + 24) == PermissionLevel.ADMIN);
@@ -568,14 +578,14 @@ fn main() {
 
     # translate_firewall_allow — mutating, ADMIN
     var fa_intent = Intent_new(IntentTag.FIREWALL_ALLOW);
-    store64(fa_intent + 8, "8080");
+    store64(fa_intent + 8, str_from("8080"));
     var fa_t = translate_firewall_allow(fa_intent);
     check("translate_firewall_allow cmd", streq(load64(fa_t), "ufw") == 1);
     check("translate_firewall_allow perm ADMIN", load64(fa_t + 24) == PermissionLevel.ADMIN);
 
     # translate_firewall_deny
     var fd_intent = Intent_new(IntentTag.FIREWALL_DENY);
-    store64(fd_intent + 8, "23");
+    store64(fd_intent + 8, str_from("23"));
     var fd_t = translate_firewall_deny(fd_intent);
     check("translate_firewall_deny cmd", streq(load64(fd_t), "ufw") == 1);
     check("translate_firewall_deny perm ADMIN", load64(fd_t + 24) == PermissionLevel.ADMIN);
@@ -600,7 +610,7 @@ fn main() {
 
     # translate_firewall_delete
     var fde_intent = Intent_new(IntentTag.FIREWALL_DELETE);
-    store64(fde_intent + 8, "8080");
+    store64(fde_intent + 8, str_from("8080"));
     var fde_t = translate_firewall_delete(fde_intent);
     check("translate_firewall_delete cmd", streq(load64(fde_t), "ufw") == 1);
     check("translate_firewall_delete perm ADMIN", load64(fde_t + 24) == PermissionLevel.ADMIN);
@@ -609,7 +619,7 @@ fn main() {
     # (Bare imperative parse paths cover this end-to-end in the parse-side
     # tests above; here we lock the translator's own contract.)
     var sctl_intent = Intent_new(IntentTag.SERVICE_CONTROL);
-    store64(sctl_intent + 8, "start");
+    store64(sctl_intent + 8, str_from("start"));
     store64(sctl_intent + 16, "nginx");
     var sctl_t = translate_service_control(sctl_intent);
     check("translate_service_control cmd", streq(load64(sctl_t), "systemctl") == 1);
@@ -954,6 +964,189 @@ fn main() {
     store8(&rbuf + rn, 0);
     check("audit log has two lines",
       rn > 0);
+
+    # ── SHELL_COMMAND risk classification, END-TO-END through the real parser ──
+    #
+    # These MUST go through Interpreter_parse -> Interpreter_translate. Every
+    # pre-1.9.1 test of this surface hand-stuffed a cstring literal into
+    # `intent + 8` (`store64(sh_intent + 8, "ls")`) — which is the type
+    # analyze_command_permission WANTS — while split_command_line actually
+    # handed it a Str. So the unit tests passed against a classifier that was
+    # 100% dead in production: `dd if=/dev/zero of=/dev/sda`, `mkfs`, `su` and
+    # `shred /etc/shadow` all graded USER_WRITE/[MED] with `"approved":1`, and
+    # the BLOCKED / "Approval required" branches were unreachable. The suite
+    # was green through all of it. Drive the parser, never the fixture.
+    var e2e = Interpreter_new();
+
+    var e2e_dd = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("dd if=/dev/zero of=/dev/sda")));
+    check("e2e dd -> BLOCKED", load64(e2e_dd + 24) == PermissionLevel.BLOCKED);
+
+    var e2e_mkfs = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("mkfs /dev/sda1")));
+    check("e2e mkfs -> BLOCKED", load64(e2e_mkfs + 24) == PermissionLevel.BLOCKED);
+
+    var e2e_shred = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("shred /etc/shadow")));
+    check("e2e shred -> BLOCKED", load64(e2e_shred + 24) == PermissionLevel.BLOCKED);
+
+    var e2e_su = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("su")));
+    check("e2e su -> ADMIN", load64(e2e_su + 24) == PermissionLevel.ADMIN);
+
+    # SYSTEM_WRITE had NO producer in any test before 1.9.1 — it is reachable
+    # only through has_system_path_arg, which walks the args vec and was dead
+    # for the same reason. This is its first assertion.
+    var e2e_cp = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("cp /tmp/x /etc/passwd")));
+    check("e2e cp to /etc -> SYSTEM_WRITE",
+      load64(e2e_cp + 24) == PermissionLevel.SYSTEM_WRITE);
+
+    # NOTE: `rm ...` never reaches SHELL_COMMAND — the NL parser claims it as
+    # IntentTag.REMOVE (8) first, so analyze_command_permission's `rm` branch
+    # and rm_has_dangerous_flags are unreachable FROM THE PARSER and are only
+    # exercised by the direct-call tests above. This anchor therefore locks the
+    # REMOVE path's own BLOCKED verdict, not the shell path. (Args-vec walking
+    # on the shell path is covered by the cp -> SYSTEM_WRITE case above, which
+    # goes through has_system_path_arg.)
+    var e2e_rmr = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("rm -r somedir")));
+    check("e2e rm -r -> BLOCKED (via REMOVE, not SHELL_COMMAND)",
+      load64(e2e_rmr + 24) == PermissionLevel.BLOCKED);
+    check("rm parses as REMOVE, never SHELL_COMMAND",
+      load64(Interpreter_parse(e2e, str_from("rm -rf /var/tmp/x"))) == IntentTag.REMOVE);
+
+    # Negative side: safe/read-only commands must NOT be over-classified.
+    var e2e_ls = Interpreter_translate(e2e,
+      Interpreter_parse(e2e, str_from("ls -la /tmp")));
+    check("e2e ls -> READ_ONLY", load64(e2e_ls + 24) == PermissionLevel.READ_ONLY);
+
+    # The command word reaching Translation.command must be a real cstring —
+    # a blank `action` in the audit record was the visible symptom of the Str
+    # leak (`"action":""` for every SHELL_COMMAND line).
+    check("e2e command word is a usable cstring",
+      streq(load64(e2e_dd), "dd") == 1);
+    check("e2e args are usable cstrings",
+      streq(vec_get(load64(e2e_cp + 8), 1), "/etc/passwd") == 1);
+
+    # ---- 1.9.1 P(-1) hardening anchors ----
+
+    # History cap. add() now trims LAZILY (amortized O(1) instead of an
+    # O(n) whole-vec rebuild per add — 17.5us -> 298ns at cap=1000), so
+    # `count` may exceed max_size by a bounded slack. What must hold is that
+    # it stays BOUNDED; unbounded growth was never the old behaviour and must
+    # not become the new one.
+    var hcap = CommandHistory_new("/nonexistent/agnsh-test-history", 32);
+    for (var hh = 0; hh < 500; hh = hh + 1) {
+        if (hh % 2 == 0) { CommandHistory_add(hcap, "alpha cmd"); }
+        else { CommandHistory_add(hcap, "beta cmd"); }
+    }
+    check("history stays bounded under churn", CommandHistory_len(hcap) <= 48);
+    check("history retains at least the cap", CommandHistory_len(hcap) >= 32);
+    # Consecutive-duplicate dedup must still hold after the trim rewrite.
+    var hdup = CommandHistory_new("/nonexistent/agnsh-test-history2", 100);
+    CommandHistory_add(hdup, "same");
+    CommandHistory_add(hdup, "same");
+    check("history dedups consecutive duplicates", CommandHistory_len(hdup) == 1);
+
+    # is_shell_metachar — 2 of 10 entries were asserted before 1.9.1, yet every
+    # path/arg guard in the binary rests on this table.
+    check("metachar ;", is_shell_metachar(59) == 1);
+    check("metachar |", is_shell_metachar(124) == 1);
+    check("metachar &", is_shell_metachar(38) == 1);
+    check("metachar $", is_shell_metachar(36) == 1);
+    check("metachar (", is_shell_metachar(40) == 1);
+    check("metachar )", is_shell_metachar(41) == 1);
+    check("metachar <", is_shell_metachar(60) == 1);
+    check("metachar >", is_shell_metachar(62) == 1);
+    check("metachar backtick", is_shell_metachar(96) == 1);
+    check("metachar newline", is_shell_metachar(10) == 1);
+    check("non-metachar letter", is_shell_metachar(97) == 0);
+    check("non-metachar slash", is_shell_metachar(47) == 0);
+
+    # mode_needs_confirm — the HUMAN/STRICT gate in front of every program
+    # launch. Had zero assertions.
+    check("confirm HUMAN", mode_needs_confirm(Mode.HUMAN) == 1);
+    check("confirm STRICT", mode_needs_confirm(Mode.STRICT) == 1);
+    check("no confirm AUTO", mode_needs_confirm(Mode.AI_AUTONOMOUS) == 0);
+    check("no confirm ASSIST", mode_needs_confirm(Mode.AI_ASSISTED) == 0);
+
+    # Str-side safety predicates — these are the ones the live translators
+    # actually call, and they had no direct assertions.
+    check("safe_path_in_str rejects traversal",
+      safe_path_in_str(str_from("../../etc/shadow")) == 0);
+    check("safe_path_in_str rejects metachar",
+      safe_path_in_str(str_from("/tmp/x; rm -rf /")) == 0);
+    check("safe_path_in_str accepts plain", safe_path_in_str(str_from("/tmp/ok.txt")) == 1);
+    check("safe_path_in_str rejects null", safe_path_in_str(0) == 0);
+    check("safe_arg_in_str rejects metachar",
+      safe_arg_in_str(str_from("foo`whoami`")) == 0);
+    check("safe_arg_in_str rejects empty", safe_arg_in_str(str_from("")) == 0);
+    check("safe_arg_in_str accepts plain", safe_arg_in_str(str_from("plainarg")) == 1);
+    # H7 leading-dash argument injection. The cstring is_safe_commit_message was
+    # handed a Str by translate_git_commit, so the guard never fired; the _in_str
+    # twin is the one the live path now calls. Drive the real parser.
+    check("commit msg guard rejects leading dash",
+      safe_commit_message_in_str(str_from("-oh-no-a-flag")) == 0);
+    check("commit msg guard accepts normal", safe_commit_message_in_str(str_from("fix bug")) == 1);
+    check("commit msg guard rejects empty", safe_commit_message_in_str(str_from("")) == 0);
+    var e2e_gc = Interpreter_new();
+    var gc_e2e = Interpreter_translate(e2e_gc,
+      Interpreter_parse(e2e_gc, str_from("git commit -m -oh-no-a-flag")));
+    check("e2e dashed commit msg is refused (falls to unknown)",
+      streq(load64(gc_e2e), "git") == 0);
+
+    # Translator arg validation. Before 1.9.1 the coverage was INVERTED: the
+    # low-risk file translators validated their input while every ADMIN-level
+    # one (useradd / userdel / passwd / groupadd / firewall) and every git
+    # translator emitted parser-supplied arguments verbatim. 16 translators
+    # gained a guard; these anchor the ADMIN ones and the git ones, driven
+    # through the real parser.
+    var e2e_v = Interpreter_new();
+    check("useradd refuses metachar arg",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("add user alice;evil")))), "useradd") == 0);
+    check("groupadd refuses metachar arg",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("add group dev;evil")))), "groupadd") == 0);
+    check("passwd refuses metachar arg",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("change password for alice|evil")))), "passwd") == 0);
+    check("git checkout refuses metachar arg",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("git checkout main;evil")))), "git") == 0);
+    # ...and must NOT over-reject legitimate input.
+    check("useradd accepts a plain username",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("add user alice")))), "useradd") == 1);
+    check("groupadd accepts a plain group",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("add group devs")))), "groupadd") == 1);
+    check("git checkout accepts a plain branch",
+      streq(load64(Interpreter_translate(e2e_v,
+            Interpreter_parse(e2e_v, str_from("git checkout main")))), "git") == 1);
+
+    # strip_control_chars — the only prior assertion fed an input with NO
+    # control characters, so it would have passed against an empty function.
+    var sc = strip_control_chars(str_from("a\x01b\x02c"));
+    check("strip_control_chars drops C0", str_len(sc) == 3);
+
+    # json_escape — the audit record is the security-relevant output.
+    check("json_escape null is empty Str, not a cstring",
+      str_len(json_escape(0)) == 0);
+    check("json_escape escapes a quote",
+      str_len(json_escape(str_from("a\"b"))) == 4);
+    # Well-formed UTF-8 must pass through byte-exact, NOT be mangled into
+    # per-byte \u00XX escapes (that would turn "é" into "Ã©").
+    check("json_escape preserves valid UTF-8",
+      str_len(json_escape(str_from("caf\xc3\xa9"))) == 5);
+    # An invalid byte becomes U+FFFD (6 chars: \ u f f f d) so the audit line
+    # stays parseable JSON instead of taking the whole log down.
+    var jbad = str_builder_new();
+    str_builder_add_byte(jbad, 97);
+    str_builder_add_byte(jbad, 0xFF);
+    check("json_escape replaces invalid byte",
+      str_len(json_escape(str_builder_build(jbad))) == 7);
 
     return report();
 }

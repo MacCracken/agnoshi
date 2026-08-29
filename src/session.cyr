@@ -1,3 +1,24 @@
+# getcwd with the return value ACTUALLY CHECKED (v1.3.1 MEDIUM x3, closed in
+# 1.9.1). All three call sites used to discard the result, so on failure
+# (deleted cwd, permission loss, ENAMETOOLONG) `cwd_buf` held stale or zero
+# bytes and `str_clone(str_from(&cwd_buf))` wrapped that garbage as a "cwd"
+# Str which then went into the long-lived PromptContext and got rendered in
+# the prompt. Policy: return "?" and warn once on stderr — same posture as the
+# v1.3.1 chmod-failure warning, which prefers a visibly-wrong-but-honest value
+# over silently-plausible garbage. Deferred originally because "the fallback
+# needs a policy decision"; the decision is made here.
+fn session_cwd_or_unknown() {
+    var cwd_buf[4096];
+    var rc = syscall(SYS_GETCWD, &cwd_buf, 4095);
+    if (rc < 0) {
+        var gwarn = "agnsh: warning: getcwd failed; prompt cwd shown as '?'\n";
+        sys_write(2, gwarn, strlen(gwarn));
+        return str_clone(str_from("?"));
+    }
+    # str_clone: cwd_buf is a module-scope buffer, so a borrowed Str would be
+    # clobbered by the next caller (ADR-006 static-buf escape rule).
+    return str_clone(str_from(&cwd_buf));
+}
 struct Session {
     mode_mgr;
     interpreter;
@@ -17,12 +38,7 @@ fn Session_new(config, security, initial_mode) {
     var interpreter = Interpreter_new();
     var approval = ApprovalManager_new();
     ApprovalManager_set_auto_approve(approval, load64(config + 24));
-    var cwd_buf[4096];
-    syscall(SYS_GETCWD, &cwd_buf, 4095);
-    # cwd gets stored long-term in PromptContext (offset 0) and
-    # gets re-set later from other cwd_buf-using sites — str_clone
-    # so each stored cwd is independent of any local buffer.
-    var cwd = str_clone(str_from(&cwd_buf));
+    var cwd = session_cwd_or_unknown();
     var username = SecurityContext_username(security);
     var prompt_ctx = PromptContext_new(cwd, username, initial_mode);
     var history_path = str_from("/tmp/.agnsh_history");
@@ -155,11 +171,11 @@ fn Session_execute_shell(self, input) {
                     dir = str_cat(home, str_substr(dir, 1, str_len(dir)));
                 }
             }
-            var result = syscall(SYS_CHDIR, str_data(dir));
+            # str_cstr, not str_data — str_cat output is not NUL-terminated and
+            # the kernel would read past it. (v1.3.1 MEDIUM, closed in 1.9.1.)
+            var result = syscall(SYS_CHDIR, str_cstr(dir));
             if (result == 0) {
-                var cwd_buf[4096];
-                syscall(SYS_GETCWD, &cwd_buf, 4095);
-                store64(self + 72, str_clone(str_from(&cwd_buf)));
+                store64(self + 72, session_cwd_or_unknown());
                 store64(load64(self + 48), load64(self + 72));
                 store64(load64(self + 48) + 40, 0);
             } else {
@@ -249,11 +265,11 @@ fn Session_execute_translation(self, translation) {
     if (streq(load64(translation), "cd") == 1) {
         if (vec_len(load64(translation + 8)) > 0) {
             var dir = vec_get(load64(translation + 8), 0);
-            var result = syscall(SYS_CHDIR, str_data(dir));
+            # str_cstr, not str_data — str_cat output is not NUL-terminated and
+            # the kernel would read past it. (v1.3.1 MEDIUM, closed in 1.9.1.)
+            var result = syscall(SYS_CHDIR, str_cstr(dir));
             if (result == 0) {
-                var cwd_buf[4096];
-                syscall(SYS_GETCWD, &cwd_buf, 4095);
-                store64(self + 72, str_clone(str_from(&cwd_buf)));
+                store64(self + 72, session_cwd_or_unknown());
                 store64(load64(self + 48), load64(self + 72));
                 store64(load64(self + 48) + 40, 0);
             } else {

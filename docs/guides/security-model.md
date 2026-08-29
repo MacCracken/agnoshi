@@ -139,15 +139,25 @@ The `SecurityContext`:
 
 **Known LOW-severity hardening deferred to v1.4.0** (per `docs/audit/2026-05-11-pminus1.md`):
 
-- **Symlink races on state-file open**. `~/.agnsh_audit.log` and
-  `~/.agnsh_history` are opened without `O_NOFOLLOW`. An attacker who
-  can place a symlink at one of those paths *before* agnsh runs can
-  redirect the write. Requires pre-existing attacker write access to
-  `$HOME` — unusual on single-user systems; possible on shared-NFS or
-  container setup phases. Mitigation: add `O_NOFOLLOW` to the open
-  flags (value differs per arch — `0o400000` on x86_64,
-  `0o100000` on aarch64-generic — needs a per-arch constant +
-  `lib/io.cyr` API extension).
+- **Symlink races on state-file open** — ✅ **CLOSED in 1.9.1.**
+  `~/.agnsh_audit.log` and `~/.agnsh_history` are now opened with
+  `O_NOFOLLOW`, and the history file is created 0600 **at open** rather
+  than being chmod'd afterwards (the old create-then-chmod sequence was
+  itself a race). Exploit before the fix was worse than originally
+  described: `sys_chmod` followed the symlink too, so a pre-placed link
+  meant a *write plus re-permission* of an arbitrary user-owned file.
+  ⚠ **Correction to the value published here before 1.9.1.** This guide
+  said `O_NOFOLLOW` "differs per arch — `0o400000` on x86_64,
+  `0o100000` on aarch64-generic". That is wrong. `asm-generic/fcntl.h`
+  defines `O_NOFOLLOW` as `(1 << 17)` = **131072**, and neither x86_64
+  nor aarch64 overrides it (32-bit **arm** does — the likely source of
+  the confusion). `0o100000` = 32768 is **`O_LARGEFILE`**: an
+  implementer following the old text would have opened the audit log
+  with `O_LARGEFILE` on the aarch64 release artifact and left the race
+  fully intact there. There is **no per-arch split**; do not reintroduce
+  one. On agnos the bit is dropped rather than miscompiled (`file_open`
+  masks only the `AO_*` bits it knows), so the agnos side still needs a
+  kernel `AO_NOFOLLOW` — tracked in the roadmap.
 - **chmod-failure logging**. v1.3.1 added a stderr warning when
   `sys_chmod` returns non-zero on the history / checkpoint paths. If
   chmod silently fails the file stays at the umask default (typically

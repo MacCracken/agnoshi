@@ -4,6 +4,186 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.1] - 2026-08-29 — P(-1) sweep: the risk classifier was dead on every direct command
+
+Full P(-1) audit/refactor/hardening/optimization/security cycle. Eight review dimensions, each
+followed by an adversarial verifier; 93 findings survived. Every finding acted on below was
+reproduced by hand against the built binary before the fix and re-verified after. Full report:
+[`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md).
+
+### Security — the SHELL_COMMAND risk classifier never ran
+
+⛔ **`analyze_command_permission` was 100% dead for every direct command line, and the test suite
+was green through all of it.** `split_command_line` (`src/commands.cyr:43`) emitted the command
+word and every argument as a **Str** fat pointer, while the entire permissions table behind
+`analyze_command_permission` is cstring-only (`strlen` + `load8`). It walked the 16-byte Str
+*header* instead of the command text, every `streq` missed, and it fell through to its
+`USER_WRITE` default. Measured on the 1.9.0 binary:
+
+| input | was | now |
+|---|---|---|
+| `dd if=/dev/zero of=/dev/sda` | `[MED]` · `"approved":1,"result":"proposed"` | **BLOCKED** |
+| `mkfs /dev/sda1` | `[MED]` · `"approved":1` | **BLOCKED** |
+| `shred /etc/shadow` | `[MED]` · `"approved":1` | **BLOCKED** |
+| `su` | `[MED]` · `"approved":1` | **ADMIN** |
+| `cp /tmp/x /etc/passwd` | `[MED]` | **SYSTEM_WRITE** |
+
+⇒ The `WARNING: BLOCKED` and `Approval required` branches were **unreachable** for this whole
+input class, the audit trail asserted that destructive commands were auto-runnable, and
+`PermissionLevel.SYSTEM_WRITE` had no producer at all. Not an exec bypass *today* — nothing
+executes on this path yet — but it was total failure of the only risk classifier that path has,
+and it would have become an approval bypass on exec wire-up.
+
+**Fixed** by converting at the boundary, once: `split_command_line` now emits NUL-terminated
+cstrings via `str_cstr()`, matching what every other translator already produces. The same change
+fixed the blank `"action":""` in every SHELL_COMMAND audit record and the raw pointer bytes the
+terminal printed as the command.
+
+⚠ **Why 301 tests missed it.** Every test hand-stuffed a *cstring literal* into `intent + 8`
+(`store64(sh_intent + 8, "ls")`) — the type the function wants — while the parser supplied a Str.
+The units validated the function against an integration that was broken. 17 further fixtures had
+the same inversion and were corrected. New end-to-end anchors drive
+`Interpreter_parse` → `Interpreter_translate`, and were confirmed to **fail 8/9 against the
+pre-fix code** before being accepted.
+
+### Security — audit integrity
+
+⛔ **Audit logging was silently dead on agnos.** `audit.cyr:54` called raw
+`sys_open(path, 1089, 384)` — the Linux shape. On agnos the signature is
+`sys_open(name, namelen, flags)`, so `1089` landed in `namelen` and `384` in `flags`: a malformed
+open on the primary target, the one platform where agnsh actually executes programs. Now routed
+through `file_open`, the length-carrying ABI bridge that exists for exactly this split.
+
+⛔ **One byte of input could make the audit log unparseable.** `json_escape` copied bytes ≥ 0x80
+through unvalidated, so a single high byte made the record invalid UTF-8 and therefore invalid
+JSON — and on a whole-file parse one poisoned line takes the entire log down. An actor whose own
+entry would read `rejected_safety` could trigger it deliberately. UTF-8 is now **validated**
+rather than blanket-escaped: well-formed sequences pass byte-exact (so `café` stays `café`
+instead of becoming `Ã©`), invalid bytes become U+FFFD, and overlongs/surrogates are rejected.
+
+⚠ **`json_escape` returned a cstring on its null path** (`return "\"\""`) where every other
+return is a Str, and carried two quote characters the caller also emits. `str_builder_add(sb, s:
+Str)` reads `load64(s+8)` as a length, so that was a `memcpy` of a garbage length; reachable
+because `str_from` returns 0 on allocation failure. Returns `str_from("")` now, and annotating
+`fn json_escape(s): Str` **cleared the two long-standing `assigning non-pointer to typed pointer`
+warnings — the build is now warning-free.**
+
+⚠ Audit write returns were discarded: a short write on a full disk produced a corrupt half-written
+audit line reported as success. Both writes are checked.
+
+### Security — filesystem
+
+⛔ **Symlink hijack of both state files, worse than previously documented.** With a symlink
+pre-placed at `$HOME/.agnsh_audit.log` or `$HOME/.agnsh_history`, the open followed it — and
+`sys_chmod` followed it too, making this a *write plus re-permission* of an arbitrary user-owned
+file rather than just a redirected write. Reproduced, fixed with `O_NOFOLLOW`, confirmed closed.
+
+⚠ **History was created world-readable.** `file_write_all` opened at a 0644-ish umask default and
+the chmod only tightened it afterwards — a create-then-chmod race exposing every command the user
+has typed, permanently if the process died in the window. Now `file_open` with mode 0600 **at
+create**.
+
+⛔ **The published `O_NOFOLLOW` constant was wrong, and that was the more dangerous half of the
+deferral.** `docs/guides/security-model.md` and the v1.3.1 audit both said the value "differs per
+arch — `0o400000` on x86_64, `0o100000` on aarch64-generic". `asm-generic/fcntl.h` defines it as
+`(1 << 17)` = 131072 and **neither** x86_64 nor aarch64 overrides it (32-bit **arm** does — the
+likely source of the confusion). `0o100000` = 32768 is **`O_LARGEFILE`**. ⇒ An implementer
+following the guidance would have shipped an aarch64 artifact opening the audit log with
+`O_LARGEFILE`, leaving the race fully intact on half the release binaries while the CHANGELOG
+claimed it closed. Corrected in the guide and recorded beside the constant.
+
+### Security — input validation
+
+⛔ **Translator validation was exactly inverted.** 17 of 24 translators emitted parser-supplied
+arguments with no validation — and the unguarded set was every ADMIN-level one (`useradd`,
+`userdel`, `passwd`, `groupadd`, `firewall_*`) plus every git translator, while the *low-risk*
+file operations were the ones that validated. 16 translators guarded: `safe_path_in_str` for the
+path-taking ones, `safe_arg_in_str` for the rest, falling to `translate_unknown`.
+
+⚠ **The H7 argument-injection guard was inert.** `is_safe_commit_message` is cstring-typed but
+`translate_git_commit` hands it a Str (`extract_after` → `str_trim(str_substr(...))`), so
+`strlen` walked the header and `load8` read the low byte of a pointer. `git commit -m
+-oh-no-a-flag` was accepted and emitted verbatim, where git reads the value as a flag. Fixed with
+the ADR-006 `_in_str` twin `safe_commit_message_in_str`.
+
+### Fixed — correctness
+
+- ⛔ **`--mode <typo>` failed OPEN.** `mode_from_name(argv(2), Mode.AI_AUTONOMOUS)` meant a
+  misspelled safety flag silently selected the *most* permissive mode — the one that skips the
+  launch confirmation — while the user believed they had asked for `strict`. Now a hard error,
+  exit 1. (The interactive `mode <name>` builtin already rejected unknown names; the CLI flag has
+  caught up.)
+- Host build advertised agnos-only capabilities: the banner, `help` and `print_usage` told host
+  users to type `ls -la`, which then did nothing but print an intent. `#ifdef`-split; the host
+  build now says so.
+- `help` omitted `reboot`/`poweroff`/`halt`, which the banner advertised and the loop implements.
+- Builtin table drifted three ways — claimed `cd` and `undo` (neither implemented in the shipped
+  binary), omitted `version` and `run` (both real arms). It is compiled in but called from
+  nowhere, so nothing enforced it. Table now matches the live loop, with a test asserting `cd`
+  and `undo` are **not** advertised until their modules are wired.
+- Three hand-counted literal lengths over-read `.rodata` and emitted the excess to stderr
+  (`history.cyr` 52 vs 50, `checkpoint.cyr` 53 vs 52, `ui.cyr` 10 vs 7). All now `strlen()`, so
+  they cannot drift again.
+
+### Fixed — every previously-deferred MEDIUM, closed in place
+
+All five MEDIUMs the v1.3.1 P(-1) report deferred "to the v1.4.0 wire-up" — a wire-up that never
+happened across fifteen releases — are closed **independent of any wire-up**:
+
+- `session.cyr:158,252` — `SYS_CHDIR(str_data(dir))` ×2 → `str_cstr(dir)`
+- `checkpoint.cyr:32` — `sys_chmod(str_data(dir), 448)` → `str_cstr(dir)`
+- `session.cyr:21,161,255` — `SYS_GETCWD` return discarded ×3 → one checked
+  `session_cwd_or_unknown()` returning `"?"` with a stderr warning
+
+What made this cheap was `str_cstr()` shipping in the 6.5.36 stdlib — the deferral's real
+blocker, though it had been recorded as a wire-up dependency.
+
+**Lint Category G** (deferred in v1.3.1 on false-positive grounds) is now anchorable and shipped.
+It names the path-taking calls explicitly rather than matching `syscall(` broadly, so the
+legitimate `sys_write(fd, str_data(s), len)` ptr+len shape is not matched. Caught exactly the 3
+known true positives, 0 false positives, and now guards the class. ⚠ Worth noting the shield
+reported **clean** while the HIGH classifier bug was live — categories A/B match only a *literal*
+`"` argument, so a variable-carried cstring is invisible to it. A clean lint run is not proof.
+
+### Performance
+
+`history/add_at_cap` benchmark added — there was none for this path — then fixed:
+
+| benchmark | before | after | delta |
+|---|---|---|---|
+| `history/add_at_cap` | 17.506us | **298ns** | **−98.3% (58.7×)** |
+
+`CommandHistory_add` rebuilt the *entire* entries vec — a fresh `vec_new` plus an n-element copy —
+on every add once at capacity, which is the steady state for any real session (default cap
+10000), and the discarded vec is never reclaimed. Now trims lazily against a slack margin: O(1)
+amortized. `CommandHistory_save` clamps to `max_size` so the on-disk cap still holds.
+
+⚠ **One honest regression: `translate/cd` 112ns → 203ns (+81%).** That is the cost of
+`translate_change_dir` actually validating its path — it previously did none. Correctness bought
+at 91ns; recorded rather than hidden. All other benchmarks unchanged within jitter.
+
+### Tests
+
+301 → **356** unit (26 security and 59 smoke unchanged). New anchors cover the end-to-end
+permission path, the metachar table (2 of 10 entries were asserted), `mode_needs_confirm` (zero
+assertions — it gates every program launch), the Str-side safety predicates the live translators
+actually call (zero direct assertions), `json_escape` UTF-8 handling, the history cap invariant,
+and translator argument validation. `strip_control_chars`' only prior assertion fed an input with
+no control characters, so it would have passed against an empty function.
+
+### Notes
+
+- Binary 311,352 → 315,408 B (+4,056 / +1.3%) — the added validation and UTF-8 path.
+- **Zero compiler warnings** (was 2). All gates green: check, capacity, vet, `fmt --check`, lint,
+  `lint-cstr-str` (now with Category G), coverage.
+- **Not fixed, bubbled to the v1.9.x arc** in `docs/development/roadmap.md` — most importantly:
+  **every path that actually executes a program writes zero audit records.** `agnsh -c 'run
+  /bin/echo'` runs the program and creates no audit file at all, so the only actions the log
+  records are the ones that never happened. Deferred because it spans five launch sites almost
+  entirely inside `#ifdef CYRIUS_TARGET_AGNOS`, unexercisable on this host; landing it half-wired
+  would be worse than landing it deliberately. It is the arc's first slice.
+
+
 ## [1.9.0] - 2026-08-29 — cyrius 6.5.36: two silent gates found by upgrading into them
 
 Toolchain pin `6.3.34` → **`6.5.36`** and a full `./lib/` re-sync to the 6.5.36 stdlib snapshot.
@@ -87,6 +267,60 @@ Adding the measured floor back to make the two methodologies commensurable:
 run-to-run jitter (the 1.8.9 run's `parse/cd` max was 477us against a 3.676us average).
 **No performance improvement is claimed for 1.9.0.** The one durable gain is precision: rows are
 recorded at nanosecond resolution instead of being rounded to the microsecond (`1000`, `6000`).
+
+### Documentation — the roadmap is forward-facing only
+
+The roadmap had accumulated a `Shipped` history list frozen at v1.3.4 while fifteen releases went
+past it, and its forward buckets had never been re-read against what those fifteen actually
+delivered. Both halves are now fixed, in opposite directions.
+
+⛔ **The `Shipped` list and the closed v1.3.x bucket are deleted, not back-filled.** `CHANGELOG.md`
+is the single record of shipped work; a second, permanently-behind copy of that record was the whole
+defect. Items now leave the roadmap when they ship rather than being marked done and kept. This
+retires the v1.3.4→v1.9.0 hole outright instead of papering over it with a gap marker.
+
+⚠ **All 29 forward items were re-verified against `CHANGELOG.md` and `src/` before any deletion —
+and NONE had fully shipped, so none was dropped.** The audit was built to be asymmetric: a wrong
+"shipped" verdict silently destroys planned work, so every delete-causing verdict faced an
+adversarial refutation pass and uncertainty resolved toward keeping the item. Zero items cleared
+that bar.
+
+⇒ **The real finding was staleness of a different kind: nine items described work that no longer
+matches reality.** Left verbatim, each would have sent the next agent down a dead path:
+
+- **`ui.cyr` wire-up → two-stub cleanup.** The banner/help/mode/history/clear goal shipped natively
+  inside `agnsh.cyr`; `ui.cyr`'s v1.0-era text is now strictly *behind* it (its `ui_show_help` still
+  advertises an `undo` builtin that does not exist). Wiring it in would double-print. All that
+  remains is deleting two silent no-op stubs at `agnsh.cyr:31-32`.
+- **Exec wire-up → NL path only.** Program execution shipped across 1.4.3–1.8.6 via
+  `src/run_agnos.cyr`, *not* via the `security.cyr::execute_command` this slice proposed (that module
+  is still outside the include graph). The natural-language path — agnoshi's actual premise — still
+  only proposes: `agnsh -c "show files"` does not run `ls`.
+- **`>` redirection.** The truncate MVP shipped in 1.8.3; `>>`, `<`, `2>`, combined redirects, the
+  Linux-host port (the whole path is `#ifdef CYRIUS_TARGET_AGNOS`) and three tracked hardening items
+  remain.
+- **`.agnshrc` blocker resolved.** Its "agnos exec sets up no envp, so `getenv(HOME)` returns 0"
+  gate is factually dead as of agnos 1.43.2 — agnsh has consumed staged envp in production since
+  1.7.0. Unblocked, still unbuilt; the blocker paragraph is gone.
+- **Stiva "already partially shipped (12 intents in v0.90)" was false.** Those intents were Rust,
+  did not survive the v1.0.0 IntentTag 211→44 prune, and their source was deleted with `rust-old/`
+  in v1.3.2. `grep -i stiva src/` returns nothing — it is a full re-implementation.
+- **`O_NOFOLLOW` scope grew** from two write paths to three (the 1.8.3 `>` target open), and on agnos
+  needs a kernel `AO_NOFOLLOW` bit rather than a per-arch constant.
+- **Raw-mode tab completion is upstream-blocked on agnos**, not merely unstarted — 1.4.1 moved
+  *toward* kernel-owned canonical-lite input; raw keystrokes return only with the agnos
+  multithreading arc. The claim that it "lands in v1.4.0" was wrong.
+- **`completion.cyr`'s two pre-flight gates return a false green** — `cyrius check` prints `ok` while
+  emitting 8 `undefined function` warnings, and the cstring/Str lint shield only matches *literal*
+  arguments, so the module's real `str_starts_with`/`streq` type contradiction is invisible to both.
+- **The v2.0.0 re-evaluation trigger was a dead pointer** ("when the v1.2.x bucket is fully shipped"
+  — that bucket shipped in May 2026 and its roadmap section no longer exists). Repointed; the
+  re-evaluation itself is still owed.
+
+⚠ Version labels dropped from bucket headers: the active bucket was labelled `v1.4.0` while fifteen
+releases shipped past it, so the label described nothing real. Buckets are named by content and get
+a version at cut time. Also corrected in passing: `commands.cyr` (which IS in the binary) reports
+`undo` as a builtin while nothing implements it — the binary advertises a builtin it does not have.
 
 ### Notes
 

@@ -24,6 +24,7 @@ include "src/intent.cyr"
 include "src/commands.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
+include "src/history.cyr"
 
 var _interp = 0;
 var _s_list = 0;
@@ -34,7 +35,24 @@ var _s_shell = 0;
 var _s_home = 0;
 var _s_safepath = 0;
 var _s_badpath = 0;
+# history/add_at_cap — CommandHistory_add once the ring is AT max_size, which
+# is the steady state for any real session (default cap 10000). The two
+# alternating commands defeat the consecutive-duplicate dedup so every call
+# takes the trim path; a 1000-entry cap keeps the benchmark quick while still
+# showing the per-add cost of that path.
+var _hist = 0;
+var _hist_flip = 0;
 
+fn work_history_add() {
+    if (_hist_flip == 0) {
+        CommandHistory_add(_hist, "git status --short");
+        _hist_flip = 1;
+    } else {
+        CommandHistory_add(_hist, "ls -la /tmp");
+        _hist_flip = 0;
+    }
+    return 0;
+}
 fn work_parse_list() { Interpreter_parse(_interp, _s_list); return 0; }
 fn work_parse_cd() { Interpreter_parse(_interp, _s_cd); return 0; }
 fn work_parse_find() { Interpreter_parse(_interp, _s_find); return 0; }
@@ -91,6 +109,13 @@ fn main() {
     _s_home = str_from("/home");
     _s_safepath = str_from("/home/user/file.txt");
     _s_badpath = str_from("../../../etc/shadow");
+    # Non-existent path => CommandHistory_new skips the file-load branch.
+    # Pre-fill to the cap so every benchmarked add exercises the trim path.
+    _hist = CommandHistory_new("/nonexistent/agnsh-bench-history", 1000);
+    for (var hi = 0; hi < 1000; hi = hi + 1) {
+        if (hi % 2 == 0) { CommandHistory_add(_hist, "seed command alpha"); }
+        else { CommandHistory_add(_hist, "seed command beta"); }
+    }
 
     var all = vec_new();
 
@@ -133,6 +158,10 @@ fn main() {
     var b10 = bench_new("sanitize/safe_path");
     bench_run(b10, &work_safe_path, N);
     vec_push(all, b10);
+
+    var b11 = bench_new("history/add_at_cap");
+    bench_run(b11, &work_history_add, N);
+    vec_push(all, b11);
 
     bench_report_all(all);
     return 0;

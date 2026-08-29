@@ -1,26 +1,36 @@
+# ⚠ THIS TABLE MUST MATCH THE INTERACTIVE LOOP IN agnsh.cyr, and until 1.9.1 it
+# did not — it is compiled into the binary but called from nowhere in the
+# include graph, so nothing enforced it and it drifted three ways at once:
+#   - claimed `cd`   — the loop has no cd arm; `cd /tmp` falls through to the NL
+#                      path, prints an intent, and leaves the cwd unchanged.
+#   - claimed `undo` — implemented only in src/session.cyr, which is not compiled.
+#   - omitted `version` and `run` — both real arms in the loop.
+# The next consumer (completion, a dispatch fast path, an approval bypass) would
+# have inherited all three. `cd` and `undo` come back here when session.cyr and
+# checkpoint.cyr are wired in — not before.
 fn is_builtin(cmd) {
-    if (streq(cmd, "cd") == 1) { return 1; }
     if (streq(cmd, "exit") == 1) { return 1; }
     if (streq(cmd, "quit") == 1) { return 1; }
     if (streq(cmd, "help") == 1) { return 1; }
+    if (streq(cmd, "version") == 1) { return 1; }
     if (streq(cmd, "clear") == 1) { return 1; }
     if (streq(cmd, "mode") == 1) { return 1; }
     if (streq(cmd, "history") == 1) { return 1; }
-    if (streq(cmd, "undo") == 1) { return 1; }
+    if (streq(cmd, "run") == 1) { return 1; }
     if (streq(cmd, "reboot") == 1) { return 1; }
     if (streq(cmd, "poweroff") == 1) { return 1; }
     if (streq(cmd, "halt") == 1) { return 1; }
     return 0;
 }
 fn builtin_description(cmd) {
-    if (streq(cmd, "cd") == 1) { return "Change directory"; }
     if (streq(cmd, "exit") == 1) { return "Exit the shell"; }
     if (streq(cmd, "quit") == 1) { return "Exit the shell"; }
     if (streq(cmd, "help") == 1) { return "Show help information"; }
+    if (streq(cmd, "version") == 1) { return "Show version"; }
     if (streq(cmd, "clear") == 1) { return "Clear the screen"; }
     if (streq(cmd, "mode") == 1) { return "Show or change operating mode"; }
     if (streq(cmd, "history") == 1) { return "Show command history"; }
-    if (streq(cmd, "undo") == 1) { return "Undo last destructive operation"; }
+    if (streq(cmd, "run") == 1) { return "Run a program from an absolute path"; }
     if (streq(cmd, "reboot") == 1) { return "Restart the machine"; }
     if (streq(cmd, "poweroff") == 1) { return "Shut the machine down"; }
     if (streq(cmd, "halt") == 1) { return "Stop the machine without powering off"; }
@@ -40,7 +50,22 @@ fn split_command_line(input, first_word_out, args_out) {
         if (ch == 32 || ch == 9) { break; }
         pos = pos + 1;
     }
-    var cmd = str_substr(input, wstart, pos);
+    # CONTRACT: the command word and every arg leave here as NUL-terminated
+    # CSTRINGS, not Str. Everything downstream is cstring-typed —
+    # permissions.cyr's whole table walks bytes with strlen/streq
+    # (`get_command_basename`, `is_blocked_command`, `has_system_path_arg`,
+    # `rm_has_dangerous_flags`), every other translator pushes cstring
+    # literals into `args`, and `Translation.command` is a cstring for all
+    # 40+ non-shell translators. Emitting Str here made this function the
+    # single odd one out and silently killed the ENTIRE risk classifier for
+    # the SHELL_COMMAND path: `get_command_basename` walked the 16-byte Str
+    # header instead of the text, every streq missed, and
+    # `analyze_command_permission` fell through to USER_WRITE for every
+    # direct command — `dd if=/dev/zero of=/dev/sda`, `mkfs`, `su` and
+    # `shred /etc/shadow` all graded [MED] with `"approved":1` in the audit
+    # log, and the BLOCKED / "Approval required" branches were unreachable.
+    # ADR-006: convert AT the boundary, once, not at each consumer.
+    var cmd = str_cstr(str_substr(input, wstart, pos));
     store64(first_word_out, cmd);
     var argc = 0;
     while (pos < len) {
@@ -72,7 +97,7 @@ fn split_command_line(input, first_word_out, args_out) {
                 str_builder_add_byte(qbuilder, qch);
                 pos = pos + 1;
             }
-            var arg = str_builder_build(qbuilder);
+            var arg = str_cstr(str_builder_build(qbuilder));
             if (pos < len) { pos = pos + 1; }
             vec_push(args_out, arg);
             argc = argc + 1;
@@ -83,7 +108,7 @@ fn split_command_line(input, first_word_out, args_out) {
                 if (ch2 == 32 || ch2 == 9) { break; }
                 pos = pos + 1;
             }
-            var arg = str_substr(input, astart, pos);
+            var arg = str_cstr(str_substr(input, astart, pos));
             vec_push(args_out, arg);
             argc = argc + 1;
         }

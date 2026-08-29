@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.9.0";
+var VERSION_STR = "agnoshi 1.9.1";
 
 fn print_version() {
     println(VERSION_STR);
@@ -59,7 +59,9 @@ fn print_usage() {
     println("");
     println("Interactive mode (no args): type natural language or shell commands.");
     println("  help                -- builtin, file, and run commands");
+    #ifdef CYRIUS_TARGET_AGNOS
     println("  cp mv rm ls ...     -- file tools via /bin (kriya); owl reads files");
+    #endif
     println("  run PATH            -- run a program from disk");
     println("  exit                -- leave shell");
 }
@@ -484,7 +486,12 @@ fn interactive_loop() {
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
     println("Built-ins: help, version, mode, history, clear, exit, reboot, poweroff, halt");
+    #ifdef CYRIUS_TARGET_AGNOS
     println("Files: cp mv rm ls mkdir rmdir touch echo wc find grep (kriya) - owl FILE (cat)   Run: run");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    println("Run: run /abs/path   (bareword / pipeline / redirect launching is AGNOS-only)");
+    #endif
     println("");
 
     var buf[4096];
@@ -560,12 +567,27 @@ fn interactive_loop() {
             println("  history                              show last 20 commands");
             println("  clear                                clear screen");
             println("  exit, quit                           leave shell (saves history)");
+            println("  reboot, poweroff, halt               platform power control");
+            # The kriya/owl bareword launchers live in run_agnos.cyr, which is
+            # entirely #ifdef CYRIUS_TARGET_AGNOS. Advertising them on the host
+            # build told the user to type `ls -la` and then silently did nothing
+            # but print an intent — `run /abs/path` is the ONLY host exec path.
+            #ifdef CYRIUS_TARGET_AGNOS
             println("Files (external /bin tools — type the name to run):");
             println("  cp mv rm ls mkdir rmdir touch echo wc find grep   kriya (/bin/<verb>)");
             println("  owl FILE                             print a file (AGNOS's cat; -p = plain)");
             println("Run:");
             println("  run /abs/path                        run a program from disk");
             println("  <name> [args]                        run /bin/<name> directly");
+            println("  cmd1 | cmd2                          two-stage pipeline");
+            println("  cmd > file                           redirect stdout to a file");
+            println("  prog &                               run in the background");
+            #endif
+            #ifndef CYRIUS_TARGET_AGNOS
+            println("Run:");
+            println("  run /abs/path                        run a program from disk");
+            println("  (bareword / pipeline / redirect launching is AGNOS-only)");
+            #endif
             println("Or type a natural-language command.");
             continue;
         }
@@ -706,7 +728,20 @@ fn main() {
             println("Error: --mode requires a name (auto|assist|human|strict)");
             return 1;
         }
-        c_mode = mode_from_name(argv(2), Mode.AI_AUTONOMOUS);
+        # ⛔ FAIL CLOSED. This used to pass Mode.AI_AUTONOMOUS as the fallback,
+        # so `--mode assit` (or any typo) silently selected the MOST permissive
+        # mode — the one that skips the launch confirmation — while the user
+        # believed they had asked for `strict`. A misspelled safety flag must
+        # be an error, never a downgrade. The interactive `mode <name>` builtin
+        # already rejects unknown names via try_mode_switch; this is the CLI
+        # path catching up. Mode values are 0..3, so -1 is a safe sentinel.
+        c_mode = mode_from_name(argv(2), 0 - 1);
+        if (c_mode == 0 - 1) {
+            str_print(str_from("Error: unknown mode '"));
+            str_print(str_from(argv(2)));
+            println("' (expected auto|assist|human|strict)");
+            return 1;
+        }
         c_idx = 3;
         arg1 = argv(3);
     }
