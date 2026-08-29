@@ -9,16 +9,69 @@ struct CommandHistory {
 # expect a cstring path. Entries are normalized to Str throughout so
 # CommandHistory_add can use str_eq for dedup; the load-from-file path
 # already yields Str via str_split.
+# Read the LAST `maxlen` bytes of a file into `buf`. Returns the byte count, or
+# a negative value on open failure. `trunc_out` (a 1-slot cell) is set to 1 when
+# the file was larger than the buffer and the head was skipped.
+#
+# ⛔ WHY THE TAIL. CommandHistory_new used to call
+# `file_read_all(path, buf, 65535)`, which fills from the START. A history file
+# past 64 KB therefore loaded its OLDEST 65535 bytes, silently — and because
+# CommandHistory_save rewrites the whole file from what was loaded, the next
+# save WROTE THAT BACK, permanently destroying every recent entry. A long-lived
+# history quietly ate itself from the newest end, with no message at any point.
+# History is a recency structure; when it does not all fit, the tail is the half
+# worth keeping.
+#
+# Two passes because lib/io.cyr exposes no seek: size the file, then re-open and
+# discard (size - maxlen) before filling. Only pays the second pass when the
+# file is actually oversized, which is the rare case.
+fn _hist_read_tail(path, buf, maxlen, trunc_out): i64 {
+    store64(trunc_out, 0);
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var total = 0;
+    var scratch = alloc(4096);
+    if (scratch == 0) { file_close(fd); return 0 - 1; }
+    var r = file_read(fd, scratch, 4096);
+    while (r > 0) {
+        total = total + r;
+        r = file_read(fd, scratch, 4096);
+    }
+    file_close(fd);
+    if (total <= maxlen) {
+        var n1 = file_read_all(path, buf, maxlen);
+        if (n1 < 0) { return 0 - 1; }
+        return n1;
+    }
+    store64(trunc_out, 1);
+    var skip = total - maxlen;
+    var fd2 = file_open(path, 0, 0);
+    if (fd2 < 0) { return 0 - 1; }
+    while (skip > 0) {
+        var want = 4096;
+        if (skip < want) { want = skip; }
+        var d = file_read(fd2, scratch, want);
+        if (d <= 0) { file_close(fd2); return 0 - 1; }
+        skip = skip - d;
+    }
+    var got = 0;
+    var r2 = file_read(fd2, buf + got, maxlen - got);
+    while (r2 > 0) {
+        got = got + r2;
+        if (got >= maxlen) { break; }
+        r2 = file_read(fd2, buf + got, maxlen - got);
+    }
+    file_close(fd2);
+    return got;
+}
 fn CommandHistory_new(file_path, max_size) {
     var entries = vec_new();
     if (file_exists(file_path) == 1) {
-        # Cyrius 5.10.x file_read_all is buffer-based — preallocate a
-        # generous 64 KB scratch buffer (history files are line-oriented
-        # and conventionally small; even 1000 long commands fit easily).
         var bufsize = 65536;
         var buf = alloc(bufsize);
         if (buf != 0) {
-            var n = file_read_all(file_path, buf, bufsize - 1);
+            var tcell[1];
+            var n = _hist_read_tail(file_path, buf, bufsize - 1, &tcell);
             if (n > 0) {
                 store8(buf + n, 0);
                 var content = str_new(buf, n);
@@ -27,7 +80,23 @@ fn CommandHistory_new(file_path, max_size) {
                 # buffer as a single Str on a first probe.
                 var lines = str_split(content, 10);
                 var nlines = vec_len(lines);
-                for (var i = 0; i < nlines; i = i + 1) {
+                var first = 0;
+                if (load64(&tcell) == 1) {
+                    # The head was skipped mid-line, so line 0 is a fragment of a
+                    # command rather than a command. Drop it instead of storing a
+                    # truncated command that could be recalled and run.
+                    first = 1;
+                    var twarn = "agnsh: history file exceeded 64 KB; loaded the most recent entries only\n";
+                    sys_write(2, twarn, strlen(twarn));
+                }
+                # ⛔ APPLY THE CAP ON LOAD. max_size was ignored here, so a large
+                # file was loaded whole and the cap only took effect after the
+                # next add — meaning startup memory was bounded by the FILE, not
+                # by the configured limit.
+                var keep_from = first;
+                var usable = nlines - first;
+                if (max_size > 0 && usable > max_size) { keep_from = nlines - max_size; }
+                for (var i = keep_from; i < nlines; i = i + 1) {
                     var line = vec_get(lines, i);
                     if (str_len(line) > 0) {
                         vec_push(entries, line);
@@ -136,7 +205,8 @@ fn CommandHistory_save(self) {
     # between the two calls (and permanently, if the process dies in it).
     # O_NOFOLLOW additionally refuses a pre-placed symlink at the path.
     # 1|64|512 = O_WRONLY|O_CREAT|O_TRUNC; 384 = 0600.
-    var hfd = file_open(load64(self + 24), 1 | 64 | 512 | O_NOFOLLOW_LINUX, 384);
+    var hfd = file_open(load64(self + 24),
+      OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC | OPEN_NOFOLLOW, STATE_FILE_MODE);
     if (hfd < 0) {
         var hopen = "agnsh: warning: could not open history file for writing\n";
         sys_write(2, hopen, strlen(hopen));

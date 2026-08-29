@@ -99,8 +99,27 @@ fn AuditLogger_log(self, entry) {
     # masks only bits 3|64|512|1024, so the extra bit is dropped there rather
     # than corrupting the flags — graceful degrade until agnos gains AO_NOFOLLOW.
     var line = AuditEntry_to_json(entry);
-    var fd = file_open(load64(self), 1089 | O_NOFOLLOW_LINUX, 384);
+    var fd = file_open(load64(self),
+      OPEN_WRONLY | OPEN_CREAT | OPEN_APPEND | OPEN_NOFOLLOW, STATE_FILE_MODE);
     if (fd < 0) { return 0 - 1; }
+    # ⛔ REPAIR THE MODE, DO NOT ASSUME IT. The 0600 above applies only when THIS
+    # open creates the file. An audit log that already exists — created by an
+    # earlier agnsh under a different umask, restored from a backup, or copied
+    # into place — keeps whatever mode it had, so the trail of every command the
+    # user has run could sit world-readable indefinitely and nothing would ever
+    # notice. Re-assert it on every open; it is one syscall on a path that is
+    # already doing I/O.
+    # Return checked, per lint Category E: a failing chmod here means the audit
+    # log is sitting at whatever mode it had — potentially world-readable, or
+    # owned by another user (the /tmp pre-creation case). That is exactly the
+    # state an operator needs told about, and it is rare enough that a warning
+    # per write is not noise: if it fires every invocation, something really is
+    # wrong with the log's ownership.
+    var arc = sys_chmod(load64(self), STATE_FILE_MODE);
+    if (arc != 0) {
+        var awarn = "agnsh: warning: could not enforce 0600 on the audit log\n";
+        sys_write(2, awarn, strlen(awarn));
+    }
     var len = str_len(line);
     # Short writes are real on a full disk or a quota'd home, and a partial
     # audit line is a CORRUPT audit line. Report failure instead of returning 0

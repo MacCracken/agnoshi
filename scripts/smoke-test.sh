@@ -313,6 +313,72 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 rm -rf "$EXEC_HOME"
 
+# ---- 1.9.4: state-file and error-output hygiene ----
+HYG_HOME=$(mktemp -d)
+
+# (a) Diagnostics belong on stderr. Before 1.9.4 all 40 of them went to stdout,
+# which corrupts a pipe — and now that agnsh executes programs (1.9.2), it also
+# mixes the shell's complaints into the child's output stream.
+out_o=$(HOME="$HYG_HOME" "$BIN" -c "run /definitely/not/here" 2>/dev/null || true)
+out_e=$(HOME="$HYG_HOME" "$BIN" -c "run /definitely/not/here" 2>&1 >/dev/null || true)
+if [ -z "$out_o" ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: launch diagnostic leaked to stdout: $out_o"; fi
+check "diagnostic goes to stderr" "run:" "$out_e"
+# ...and normal output still goes to stdout.
+out_n=$(HOME="$HYG_HOME" "$BIN" -c "show files" 2>/dev/null || true)
+check "normal output stays on stdout" "Intent:" "$out_n"
+
+# (b) The audit log's 0600 is re-asserted on an existing file, not only at
+# creation — a log restored from a backup or made under a loose umask used to
+# stay world-readable forever.
+rm -f "$HYG_HOME/.agnsh_audit.log"
+touch "$HYG_HOME/.agnsh_audit.log"
+chmod 644 "$HYG_HOME/.agnsh_audit.log"
+HOME="$HYG_HOME" "$BIN" -c "show files" >/dev/null 2>&1
+mode=$(stat -c '%a' "$HYG_HOME/.agnsh_audit.log" 2>/dev/null || echo "?")
+check "audit log mode repaired to 0600" "600" "$mode"
+
+# (c) The log APPENDS. On a Darwin host the hardcoded 1089 decoded to
+# O_WRONLY|O_ASYNC|O_TRUNC — no O_CREAT, and truncating every open.
+before=$(wc -l < "$HYG_HOME/.agnsh_audit.log" 2>/dev/null || echo 0)
+HOME="$HYG_HOME" "$BIN" -c "list files" >/dev/null 2>&1
+after=$(wc -l < "$HYG_HOME/.agnsh_audit.log" 2>/dev/null || echo 0)
+if [ "$after" -gt "$before" ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: audit log did not append ($before -> $after)"; fi
+
+# (d) An oversized history keeps the NEWEST entries. It used to load the oldest
+# 64 KB and then write that back, permanently eating the recent half.
+rm -f "$HYG_HOME/.agnsh_history"
+i=0
+while [ $i -lt 3000 ]; do echo "histline $i padding-padding-padding-padding"; i=$((i + 1)); done \
+    > "$HYG_HOME/.agnsh_history"
+warn=$(printf 'exit\n' | HOME="$HYG_HOME" "$BIN" 2>&1 >/dev/null || true)
+check "oversized history warns" "exceeded 64 KB" "$warn"
+newest=$(tail -1 "$HYG_HOME/.agnsh_history" 2>/dev/null || echo "")
+check "oversized history keeps the NEWEST entries" "histline 2999" "$newest"
+oldest=$(head -1 "$HYG_HOME/.agnsh_history" 2>/dev/null || echo "")
+if echo "$oldest" | grep -q "histline 0 "; then
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: history kept the OLDEST entries (the pre-1.9.4 bug)"
+else PASS=$((PASS + 1)); fi
+
+# (e) HOME unset falls back to a UID-QUALIFIED /tmp path, not a fixed name every
+# user on the box would share.
+rm -f "/tmp/agnsh_audit.log" "/tmp/agnsh_audit.log.$(id -u)"
+(unset HOME; "$BIN" -c "show files" >/dev/null 2>&1) || true
+if [ -f "/tmp/agnsh_audit.log.$(id -u)" ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: HOME-unset fallback did not use the uid-qualified path"; fi
+if [ -f "/tmp/agnsh_audit.log" ]; then
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: HOME-unset fallback still wrote the shared /tmp/agnsh_audit.log"
+else PASS=$((PASS + 1)); fi
+rm -f "/tmp/agnsh_audit.log.$(id -u)" "/tmp/agnsh_history.$(id -u)"
+
+rm -rf "$HYG_HOME"
+
 echo ""
 echo "Passed: $PASS"
 echo "Failed: $FAIL"

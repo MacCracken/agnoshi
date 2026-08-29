@@ -151,7 +151,7 @@ fn job_full(): i64 {
 
 # Record a freshly-spawned bg child + announce it as "[n] <pid>".
 fn job_add(pid, cmd): i64 {
-    if (job_count >= 8) { println("run: too many background jobs (max 8)"); return 0 - 1; }
+    if (job_count >= 8) { eprintln_cstr("run: too many background jobs (max 8)"); return 0 - 1; }
     var n = job_next_num;
     job_next_num = job_next_num + 1;
     store64(&job_pid + job_count * 8, pid);
@@ -216,7 +216,7 @@ fn sh_run_program_bg(cmd, mode): i64 {
     var len = 0;
     while (load8(cmd + len) != 0) { len = len + 1; }
     if (len > 127) {
-        println("run: command too long for a background job (max 127)");
+        eprintln_cstr("run: command too long for a background job (max 127)");
         audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -227,7 +227,7 @@ fn sh_run_program_bg(cmd, mode): i64 {
     # because nothing knows it exists. Refusing before the spawn means the
     # failure costs nothing.
     if (job_full() == 1) {
-        println("run: too many background jobs (max 8)");
+        eprintln_cstr("run: too many background jobs (max 8)");
         audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -241,7 +241,7 @@ fn sh_run_program_bg(cmd, mode): i64 {
     if (blen > 0) { pid = syscall(43, cmd, len, &sh_env_blob, blen); }
     else { pid = syscall(43, cmd, len, 0, 0); }
     if (pid < 0) {
-        println("run: failed to launch background job");
+        eprintln_cstr("run: failed to launch background job");
         audit_exec_ctx(cmd, "error", pid);
         return 1;
     }
@@ -391,7 +391,7 @@ fn sh_try_bareword_launch(line, mode): i64 {
     var cmd = alloc(5 + ll + 1);
     # ⛔ alloc can fail. Unchecked, the store8s below wrote through a null base and
     # faulted at a line with no obvious relationship to the exhaustion.
-    if (cmd == 0) { println("run: out of memory"); return 1; }
+    if (cmd == 0) { eprintln_cstr("run: out of memory"); return 1; }
     store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);
     store8(cmd + 3, 110); store8(cmd + 4, 47);
     var j = 0;
@@ -404,14 +404,14 @@ fn sh_try_bareword_launch(line, mode): i64 {
     # afterwards on a path that had already been opened — check-after-use. The
     # open is a real effect on agnos, so the ordering is the fix.
     if (is_safe_path(cmd) == 0) {
-        println("run: unsafe path (traversal or shell metacharacter)");
+        eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
         return 1;
     }
 
     # probe = "/bin/" + token (existence check for the binary). ASCII: '/'=47 'b'=98
     # 'i'=105 'n'=110 '/'=47.
     var probe = alloc(5 + tl + 1);
-    if (probe == 0) { println("run: out of memory"); return 1; }
+    if (probe == 0) { eprintln_cstr("run: out of memory"); return 1; }
     store8(probe + 0, 47); store8(probe + 1, 98); store8(probe + 2, 105);
     store8(probe + 3, 110); store8(probe + 4, 47);
     var i = 0;
@@ -482,23 +482,23 @@ fn sh_run_pipeline(line, mode): i64 {
     var cmd1 = _sh_bin_segment(line, 0, pi);          # [0, pi)   — _sh_bin_segment rtrims any gap before '|'
     var cmd2 = _sh_bin_segment(line, pi + 1, llen);   # (pi, end) — _sh_bin_segment ltrims any gap after '|'
     if (cmd1 == 0) {
-        println("run: empty pipeline stage before '|'");
+        eprintln_cstr("run: empty pipeline stage before '|'");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     if (cmd2 == 0) {
-        println("run: empty pipeline stage after '|'");
+        eprintln_cstr("run: empty pipeline stage after '|'");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     # Validate EACH stage individually — the '|' is split out, so no stage holds it.
     if (is_safe_path(cmd1) == 0) {
-        println("run: unsafe path in pipeline stage 1");
+        eprintln_cstr("run: unsafe path in pipeline stage 1");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     if (is_safe_path(cmd2) == 0) {
-        println("run: unsafe path in pipeline stage 2");
+        eprintln_cstr("run: unsafe path in pipeline stage 2");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -506,12 +506,12 @@ fn sh_run_pipeline(line, mode): i64 {
     # cmd1/cmd2 fails its #37 with the fd-swap armed, dangling onto the NEXT command (same
     # one-shot-redirect hazard the `>` path guards against).
     if (_sh_bin_probe(cmd1) == 0) {
-        println("run: no such command in pipeline stage 1");
+        eprintln_cstr("run: no such command in pipeline stage 1");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return 1;
     }
     if (_sh_bin_probe(cmd2) == 0) {
-        println("run: no such command in pipeline stage 2");
+        eprintln_cstr("run: no such command in pipeline stage 2");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return 1;
     }
@@ -529,7 +529,7 @@ fn sh_run_pipeline(line, mode): i64 {
     # Wire the pipe. var X[N] is N BYTES at function scope, so [16] = two u64 slots.
     var fds[16];
     if (sh_pipe(&fds) != 0) {
-        println("run: pipe() failed");
+        eprintln_cstr("run: pipe() failed");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return 1;
     }
@@ -562,7 +562,7 @@ fn sh_run_pipeline(line, mode): i64 {
     # feed stage 2 nothing" — output in the wrong place and a plausible-looking
     # exit code. Fail closed instead.
     if (sh_exec_redirect(1, wfd) < 0) {
-        println("run: failed to arm pipeline stage 1 redirect");
+        eprintln_cstr("run: failed to arm pipeline stage 1 redirect");
         sys_close(wfd);
         sys_close(rfd);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
@@ -570,7 +570,7 @@ fn sh_run_pipeline(line, mode): i64 {
     }
     var pid1 = _sh_pipe_spawn(cmd1);
     if (pid1 < 0) {
-        println("run: failed to launch pipeline stage 1");
+        eprintln_cstr("run: failed to launch pipeline stage 1");
         sys_close(wfd);
         sys_close(rfd);
         audit_exec_ctx(line, "error", pid1);
@@ -584,7 +584,7 @@ fn sh_run_pipeline(line, mode): i64 {
     # Stage 2: stdin -> the read end, ALSO spawned, so producer and consumer are alive together. It
     # drains while stage 1 writes and sees a genuine EOF once stage 1's write end is gone.
     if (sh_exec_redirect(0, rfd) < 0) {
-        println("run: failed to arm pipeline stage 2 redirect");
+        eprintln_cstr("run: failed to arm pipeline stage 2 redirect");
         _sh_pipe_reap(pid1);
         sys_close(rfd);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
@@ -592,7 +592,7 @@ fn sh_run_pipeline(line, mode): i64 {
     }
     var pid2 = _sh_pipe_spawn(cmd2);
     if (pid2 < 0) {
-        println("run: failed to launch pipeline stage 2");
+        eprintln_cstr("run: failed to launch pipeline stage 2");
         _sh_pipe_reap(pid1);
         sys_close(rfd);
         audit_exec_ctx(line, "error", pid2);
@@ -666,24 +666,24 @@ fn sh_run_redirect(line, mode): i64 {
     var cmd = _sh_bin_segment(line, 0, ri);          # "/bin/<cmd [args]>"
     var file = _sh_path_segment(line, ri + 1, llen); # the target file path
     if (cmd == 0) {
-        println("run: empty command before '>'");
+        eprintln_cstr("run: empty command before '>'");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     if (file == 0) {
-        println("run: no file after '>'");
+        eprintln_cstr("run: no file after '>'");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     # Validate EACH side individually — the '>' is split out, so neither holds it. This is
     # the injection guard (audit C2): a metachar in cmd or file is rejected right here.
     if (is_safe_path(cmd) == 0) {
-        println("run: unsafe path in command");
+        eprintln_cstr("run: unsafe path in command");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     if (is_safe_path(file) == 0) {
-        println("run: unsafe redirect target");
+        eprintln_cstr("run: unsafe redirect target");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -703,12 +703,12 @@ fn sh_run_redirect(line, mode): i64 {
     # does guarantee is that the *accidental* case is refused and, either way,
     # the attempt is now recorded.
     if (streq(file, audit_log_path()) == 1) {
-        println("run: refusing to redirect over the shell's audit log");
+        eprintln_cstr("run: refusing to redirect over the shell's audit log");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     if (streq(file, history_path()) == 1) {
-        println("run: refusing to redirect over the shell's history file");
+        eprintln_cstr("run: refusing to redirect over the shell's history file");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -718,7 +718,7 @@ fn sh_run_redirect(line, mode): i64 {
     # swallow the NEXT command's stdout. Probing first = no dangling arm, and no empty
     # target file created for a typo.
     if (_sh_bin_probe(cmd) == 0) {
-        println("run: no such command");
+        eprintln_cstr("run: no such command");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return 1;
     }
@@ -735,7 +735,7 @@ fn sh_run_redirect(line, mode): i64 {
     # Open FILE for write, truncating. agnos AO_WRONLY|AO_CREAT|AO_TRUNC = 0x1|0x100|0x200.
     var fd = sys_open(file, strlen(file), 0x301);
     if (fd < 0) {
-        println("run: cannot open redirect target");
+        eprintln_cstr("run: cannot open redirect target");
         audit_exec_ctx(line, "error", fd);
         return 1;
     }
@@ -744,7 +744,7 @@ fn sh_run_redirect(line, mode): i64 {
     # on the terminal while the (already-created, already-truncated) target stayed
     # empty — the user's file silently emptied and the output somewhere else.
     if (sh_exec_redirect(1, fd) < 0) {
-        println("run: failed to arm redirect");
+        eprintln_cstr("run: failed to arm redirect");
         sys_close(fd);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return 1;

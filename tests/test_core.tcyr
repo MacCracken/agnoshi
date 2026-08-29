@@ -1204,6 +1204,27 @@ fn main() {
     check("str_cat3_cstr handles empty parts",
       streq(str_cat3_cstr("", "x", ""), "x") == 1);
 
+    # ---- 1.9.4 portable open flags ----
+    # Pinned because a WRONG constant here fails SILENTLY and dangerously: 1.9.1
+    # found the published aarch64 O_NOFOLLOW value was actually O_LARGEFILE,
+    # which would have left the symlink race open on half the release binaries
+    # while the CHANGELOG said it was closed. These are the Linux/agnos values
+    # (the Darwin branch is compiled out here).
+    check("OPEN_WRONLY", OPEN_WRONLY == 1);
+    check("OPEN_CREAT", OPEN_CREAT == 64);
+    check("OPEN_APPEND", OPEN_APPEND == 1024);
+    check("OPEN_TRUNC", OPEN_TRUNC == 512);
+    check("OPEN_NOFOLLOW is 1<<17, not O_LARGEFILE", OPEN_NOFOLLOW == 131072);
+    check("OPEN_NOFOLLOW is not O_LARGEFILE", OPEN_NOFOLLOW != 32768);
+    check("STATE_FILE_MODE is 0600", STATE_FILE_MODE == 384);
+    # The audit log opens append+create, NEVER truncate — the Darwin decoding of
+    # the old hardcoded 1089 included O_TRUNC, which would have emptied the log
+    # on every open.
+    check("audit flags exclude TRUNC",
+      ((OPEN_WRONLY | OPEN_CREAT | OPEN_APPEND | OPEN_NOFOLLOW) & OPEN_TRUNC) == 0);
+    check("history flags include TRUNC",
+      ((OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC | OPEN_NOFOLLOW) & OPEN_TRUNC) != 0);
+
     check("6-arg AuditEntry_new still valid",
       str_contains(AuditEntry_to_json(ax_none), str_from("\"result\":\"denied\"")) == 1);
 

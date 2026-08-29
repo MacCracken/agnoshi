@@ -4,6 +4,113 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.4] - 2026-08-29 — state-file and error-output hygiene
+
+Third slice of the v1.9.x hardening arc
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)). Unlike 1.9.3, **every
+fix here is on a host-reachable path and every one is verified by execution**, not review.
+
+### Fixed — a long-lived history file quietly ate itself from the newest end
+
+⛔ `CommandHistory_new` called `file_read_all(path, buf, 65535)`, which fills from the **start**. A
+history past 64 KB therefore loaded its **oldest** 65535 bytes — and because `CommandHistory_save`
+rewrites the whole file from what was loaded, **the next save wrote that back**, permanently
+destroying every recent entry. No message at any point.
+
+⇒ History is a recency structure; when it does not all fit, the tail is the half worth keeping.
+Loading now reads the **tail** (`_hist_read_tail`, two passes since `lib/io.cyr` exposes no seek —
+size the file, then re-open and discard the head), drops the partial first line rather than storing
+a truncated command that could be recalled and run, and **says so on stderr**.
+
+Measured on a 180 KB / 4000-line history: before, the file would have been rewritten holding
+`histline 0…`; after, it self-heals to 45 KB holding `…histline 3999` — the newest.
+
+⛔ **`max_size` was also ignored on load**, so startup memory was bounded by the *file* rather than
+the configured cap, and the limit only took effect after the next `add`. Applied at load now.
+
+### Fixed — the audit log was truncated on every open on macOS, and never created
+
+⛔ The open flags were the hardcoded literal `1089`. On Linux that is
+`O_WRONLY|O_CREAT|O_APPEND`; on Darwin the same bits decode as
+**`O_WRONLY|O_ASYNC|O_TRUNC`** — no `O_CREAT`, and `O_TRUNC`. On a macOS host the audit log would
+have been emptied on every single open and never created in the first place: the shell's entire
+trail replaced by its most recent line, or nothing at all.
+
+Replaced with named per-target constants (`OPEN_WRONLY` / `OPEN_CREAT` / `OPEN_APPEND` /
+`OPEN_TRUNC` / `OPEN_NOFOLLOW`, plus `STATE_FILE_MODE`). ⚠ Note the values stay **Linux-shaped on
+agnos too, deliberately**: `file_open` takes Linux flags and maps them into the `AO_*` namespace
+itself, so agnos-native bits would double-translate.
+
+⚠ The Darwin branch is written from the documented `<sys/fcntl.h>` values and is **not
+compile-verified** — this toolchain exposes no macOS target, so nothing in CI can reach it. The
+constants are now pinned by unit tests (including an explicit `OPEN_NOFOLLOW != 32768` assertion,
+because 1.9.1 found the previously-published aarch64 value was actually `O_LARGEFILE`).
+
+### Fixed — the audit log's 0600 was never re-asserted
+
+⛔ The mode applied only when *that* open created the file. A log that already existed — made under
+a looser umask by an earlier agnsh, restored from a backup, or copied into place — kept whatever
+mode it had, so the record of every command a user has run could sit world-readable indefinitely
+and nothing would ever notice. Re-asserted on every open, with the return checked (a persistent
+failure means the log is owned by someone else, which is precisely what an operator needs told).
+
+Verified: a pre-created `0644` audit log is `0600` after one invocation.
+
+### Fixed — the HOME-unset fallback wrote to a shared, predictable /tmp path
+
+⛔ The fallbacks were the fixed names `/tmp/agnsh_history` and `/tmp/agnsh_audit.log`. `/tmp` is
+world-writable and shared, so on a multi-user host those are a collision between every user running
+agnsh — and, being predictable, they let **another user create the file first and then own the
+shell's audit trail**: the open succeeds, agnsh appends its record of every command to a file it
+does not own, and the `0600` it sets afterwards does not undo the ownership.
+
+Now uid-qualified (`/tmp/agnsh_audit.log.<uid>`). ⚠ Stated rather than papered over: a **same-uid**
+attacker is unaffected, and `/tmp` remains the wrong place for an audit log — this is the fallback
+for a broken environment, not a supported configuration. `O_NOFOLLOW` (1.9.1) already blocks the
+symlink variant.
+
+### Fixed — all 40 diagnostics went to stdout
+
+⛔ Every `run:` / `Error:` / `usage:` message, plus `run: exit N`, was printed to **stdout**. That
+corrupts a pipe (`agnsh -c … | jq` receives `run: no such command` as if it were data) — and since
+1.9.2 the shell actually executes programs, so **the child's output and the shell's complaints
+about it shared one stream**, leaving a caller unable to tell them apart. All 40 moved to stderr
+via a new `eprintln_cstr`; the two Str-side stderr helpers that already existed had zero call sites.
+
+Verified: `agnsh -c 'run /nope' 2>/dev/null` now prints **nothing** on stdout, while normal output
+(`Intent: …`) still goes to stdout.
+
+### Fixed — any read error exited the shell silently, with status 0
+
+⛔ The host `read_line` fell straight into its `rl_len <= 0` EOF check, so **every negative `read()`
+was treated as end-of-input** and the shell exited as though the user had typed Ctrl-D. The common
+case is `-EINTR`: a signal delivered while blocked in `read` — a window resize under a terminal
+that does not restart syscalls is enough — and an interactive shell must not die because the window
+was resized. `-EINTR` now retries (keeping any partial line); anything else reports on stderr and
+exits **non-zero**, so a caller can tell "the user finished" from "stdin broke". History is still
+saved either way. (The agnos branch already distinguished its own `-2`/`-3` codes; only the host
+path conflated them.)
+
+### Tests
+
+393 unit (was 384) + 26 security + **78 smoke (was 68)**. The smoke additions carry the weight
+here: stdout is asserted **empty** on a launch error, an oversized history is asserted to keep
+`histline 2999` and explicitly asserted **not** to keep `histline 0` (the pre-1.9.4 behaviour), a
+pre-created `0644` audit log is asserted repaired, the log is asserted to grow rather than truncate,
+and the HOME-unset run is asserted to use the uid-qualified path **and not** the shared one.
+
+### Notes
+
+- Binary 319,656 → 319,784 B (+128). Benchmarks unchanged within jitter.
+- All three targets warning-free; all gates green. `lint-cstr-str` caught the new `sys_chmod` with
+  an unchecked return while this slice was being written — Category E doing its job on the same
+  release that added the call.
+- ⚠ Noted, not fixed (outside this slice): the interactive loop hardcodes a history cap of **1000**
+  while `ShellConfig_default` declares **10000**. `config.cyr` is not in the binary's include graph,
+  so the 10000 is dead and 1000 is the real limit — but the two disagree, and the live one is not
+  the configurable one.
+
+
 ## [1.9.3] - 2026-08-29 — exec-path error handling, and the untrusted-input parsers become testable
 
 Second slice of the v1.9.x hardening arc

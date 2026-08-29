@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.9.3";
+var VERSION_STR = "agnoshi 1.9.4";
 
 fn print_version() {
     println(VERSION_STR);
@@ -64,6 +64,54 @@ fn print_usage() {
     #endif
     println("  run PATH            -- run a program from disk");
     println("  exit                -- leave shell");
+}
+
+# Build "/tmp/<stem>.<uid>" as a NUL-terminated cstring.
+#
+# ⛔ The HOME-unset fallbacks used to be the FIXED paths "/tmp/agnsh_history"
+# and "/tmp/agnsh_audit.log". /tmp is world-writable and shared, so on any
+# multi-user host those names are a collision between every user running agnsh
+# — and worse, they are predictable, so another user can create the file FIRST
+# and then own the shell's audit trail: the open succeeds (the file exists and
+# is writable), agnsh appends its record of every command to a file it does not
+# own, and the 0600 it sets afterwards does not undo the ownership.
+#
+# Qualifying by uid removes the collision and the pre-creation race between
+# DIFFERENT users. Residual, stated rather than papered over: a same-uid
+# attacker is unaffected, and /tmp is still the wrong place for an audit log —
+# this is the fallback for a broken environment, not a supported configuration.
+# O_NOFOLLOW (1.9.1) already blocks the symlink variant.
+fn tmp_state_path(stem) {
+    var uid = sys_getuid();
+    if (uid < 0) { uid = 0; }
+    # decimal uid, at most 20 digits
+    var ubuf[3];
+    var ulen = 0;
+    if (uid == 0) { store8(&ubuf, 48); ulen = 1; }
+    else {
+        var tmp = uid;
+        var digits = 0;
+        while (tmp > 0) { digits = digits + 1; tmp = tmp / 10; }
+        ulen = digits;
+        tmp = uid;
+        var k = digits;
+        while (k > 0) {
+            k = k - 1;
+            store8(&ubuf + k, 48 + (tmp % 10));
+            tmp = tmp / 10;
+        }
+    }
+    var prefix = "/tmp/";
+    var plen = strlen(prefix);
+    var slen = strlen(stem);
+    var buf = alloc(plen + slen + 1 + ulen + 1);
+    if (buf == 0) { return stem; }
+    memcpy(buf, prefix, plen);
+    memcpy(buf + plen, stem, slen);
+    store8(buf + plen + slen, 46);                 # '.'
+    memcpy(buf + plen + slen + 1, &ubuf, ulen);
+    store8(buf + plen + slen + 1 + ulen, 0);
+    return buf;
 }
 
 fn history_path() {
@@ -87,7 +135,7 @@ fn history_path() {
     #endif
     # host: full $HOME resolution; falls back to /tmp when HOME is unset.
     var home = getenv("HOME");
-    if (home == 0) { return "/tmp/agnsh_history"; }
+    if (home == 0) { return tmp_state_path("agnsh_history"); }
     var hlen = strlen(home);
     # Drop one trailing '/' so HOME=/ → /.agnsh_history (not //.agnsh_history);
     # HOME=/root stays /root/.agnsh_history. The suffix carries the separator.
@@ -116,7 +164,7 @@ fn audit_log_path() {
     #endif
     # host: full $HOME resolution; falls back to /tmp when HOME is unset.
     var home = getenv("HOME");
-    if (home == 0) { return "/tmp/agnsh_audit.log"; }
+    if (home == 0) { return tmp_state_path("agnsh_audit.log"); }
     var hlen = strlen(home);
     # Drop one trailing '/' (HOME=/ → /.agnsh_audit.log); the suffix has the sep.
     if (hlen > 0) { if (load8(home + hlen - 1) == 47) { hlen = hlen - 1; } }
@@ -467,6 +515,26 @@ fn read_line(buf, maxlen) {
             #endif
             #ifndef CYRIUS_TARGET_AGNOS
             rl_len = syscall(SYS_READ, 0, &rl_buf, 4095);
+            # ⛔ A NEGATIVE read() IS AN ERRNO, NOT END-OF-INPUT. This fell
+            # straight into the `rl_len <= 0` check below, so EVERY error was
+            # read as EOF and the shell exited silently, with status 0, as though
+            # the user had typed Ctrl-D. The common case is -EINTR (-4): a signal
+            # delivered while blocked in read — a window resize (SIGWINCH) under a
+            # terminal that does not restart syscalls is enough — and an
+            # interactive shell must not die because the window was resized.
+            # (The agnos branch above already distinguished its own -2/-3
+            # "not yet" codes; only the host path conflated them.)
+            if (rl_len < 0) {
+                if (rl_len == 0 - 4) {          # -EINTR: retry, keeping any partial line
+                    rl_len = 0;
+                    rl_pos = 0;
+                    continue;
+                }
+                # Anything else is a genuine failure. Say so on stderr and exit
+                # non-zero rather than pretending the input simply ended.
+                eprintln_cstr("agnsh: read error on stdin");
+                return 0 - 2;
+            }
             #endif
             if (rl_len <= 0) {
                 if (i == 0) { return 0 - 1; }   # EOF, nothing accumulated
@@ -532,7 +600,7 @@ var RUN_EXECWAIT_READY = 1;
 # code, or 1 on refusal/abort/launch-failure.
 fn sh_run_program(path, mode) {
     if (RUN_EXECWAIT_READY == 0) {
-        println("run: external programs not yet available (pending agnos 1.43.x execwait)");
+        eprintln_cstr("run: external programs not yet available (pending agnos 1.43.x execwait)");
         audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -575,14 +643,15 @@ fn sh_run_program(path, mode) {
     # table, which is only sound under run-to-completion.
     var ecode = sh_exec_line_sched(path);
     if (ecode < 0) {
-        println("run: failed to launch program");
+        eprintln_cstr("run: failed to launch program");
         audit_exec_ctx(path, "error", ecode);
         return 1;
     }
     if (ecode != 0) {
-        str_print(str_from("run: exit "));
-        str_print(str_from_int(ecode));
-        println("");
+        # Shell metadata about the child, not the child's own output — stderr,
+        # so a caller piping the program's stdout gets only the program's stdout.
+        eprint_str(str_from("run: exit "));
+        eprint_line(str_from_int(ecode));
     }
     audit_exec_ctx(path, audit_exec_outcome(ecode), ecode);
     return ecode;
@@ -593,20 +662,20 @@ fn sh_run_program(path, mode) {
     if (is_ok(r) == 1) {
         var code = result_unwrap(r);
         if (code != 0) {
-            str_print(str_from("run: exit "));
-            str_print(str_from_int(code));
-            println("");
+            eprint_str(str_from("run: exit "));
+            eprint_line(str_from_int(code));
         }
         audit_exec_ctx(path, audit_exec_outcome(code), code);
         return code;
     }
-    println("run: failed to launch program");
+    eprintln_cstr("run: failed to launch program");
     audit_exec_ctx(path, "error", 0 - 1);
     return 1;
     #endif
 }
 
 fn interactive_loop() {
+    var rl_failed = 0;
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
     println("Built-ins: help, version, mode, history, clear, exit, reboot, poweroff, halt");
@@ -638,6 +707,10 @@ fn interactive_loop() {
         str_print(str_from(mode_prompt_prefix(cur_mode)));
         str_print(str_from(" > "));
         var n = read_line(&buf, 4096);
+        # -1 = clean EOF (Ctrl-D / end of a pipe). -2 = a real read error, which
+        # read_line has already reported on stderr; propagate it as a non-zero
+        # exit so a caller can tell "the user finished" from "stdin broke".
+        if (n == 0 - 2) { rl_failed = 1; break; }
         if (n < 0) { break; }
         if (n == 0) { continue; }
         # One context per input line, read by every launcher below. See
@@ -754,7 +827,7 @@ fn interactive_loop() {
         # a /bin program of the same name. Validates the path here; sh_run_program
         # owns the mode gate + the kernel-gated exec (see RUN_EXECWAIT_READY).
         if (streq(&buf, "run") == 1) {
-            println("usage: run /abs/path/to/program");
+            eprintln_cstr("usage: run /abs/path/to/program");
             audit_exec_ctx("", "denied", AUDIT_NO_EXIT);
             continue;
         }
@@ -762,12 +835,12 @@ fn interactive_loop() {
             var rpath = &buf + 4;
             while (load8(rpath) == 32) { rpath = rpath + 1; }
             if (load8(rpath) == 0) {
-                println("usage: run /abs/path/to/program");
+                eprintln_cstr("usage: run /abs/path/to/program");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 continue;
             }
             if (load8(rpath) != 47) {
-                println("run: path must be absolute (start with /)");
+                eprintln_cstr("run: path must be absolute (start with /)");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 continue;
             }
@@ -775,7 +848,7 @@ fn interactive_loop() {
             # most wants in the trail — it is an attempted traversal or a shell
             # metacharacter in a launch path, and before 1.9.2 it left no record.
             if (is_safe_path(rpath) == 0) {
-                println("run: unsafe path (traversal or shell metacharacter)");
+                eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 continue;
             }
@@ -829,6 +902,9 @@ fn interactive_loop() {
         print_intent_result(&buf, mode_display(cur_mode));
     }
     CommandHistory_save(history);
+    # History is saved either way — a broken stdin must not also cost the user
+    # their history — but the exit status tells the difference.
+    if (rl_failed == 1) { return 1; }
     println("bye");
     return 0;
 }
@@ -860,7 +936,7 @@ fn main() {
     var c_idx = 1;     # index of the -c flag
     if (streq(arg1, "--mode") == 1) {
         if (n_args < 3) {
-            println("Error: --mode requires a name (auto|assist|human|strict)");
+            eprintln_cstr("Error: --mode requires a name (auto|assist|human|strict)");
             return 1;
         }
         # ⛔ FAIL CLOSED. This used to pass Mode.AI_AUTONOMOUS as the fallback,
@@ -882,7 +958,7 @@ fn main() {
     }
     if (streq(arg1, "-c") == 1 || streq(arg1, "--command") == 1) {
         if (n_args < c_idx + 2) {
-            println("Error: -c requires a command argument");
+            eprintln_cstr("Error: -c requires a command argument");
             return 1;
         }
         var c_cmd = argv(c_idx + 1);
@@ -893,7 +969,7 @@ fn main() {
         # `run PATH` in one-shot mode (`agnsh -c "run /bin/klug"`). Same
         # validation + kernel gate as the interactive path.
         if (streq(c_cmd, "run") == 1) {
-            println("usage: run /abs/path/to/program");
+            eprintln_cstr("usage: run /abs/path/to/program");
             audit_exec_ctx("", "denied", AUDIT_NO_EXIT);
             return 1;
         }
@@ -901,17 +977,17 @@ fn main() {
             var rpath = c_cmd + 4;
             while (load8(rpath) == 32) { rpath = rpath + 1; }
             if (load8(rpath) == 0) {
-                println("usage: run /abs/path/to/program");
+                eprintln_cstr("usage: run /abs/path/to/program");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 return 1;
             }
             if (load8(rpath) != 47) {
-                println("run: path must be absolute (start with /)");
+                eprintln_cstr("run: path must be absolute (start with /)");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 return 1;
             }
             if (is_safe_path(rpath) == 0) {
-                println("run: unsafe path (traversal or shell metacharacter)");
+                eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 return 1;
             }

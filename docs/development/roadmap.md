@@ -14,8 +14,9 @@ Items leave this file when they ship; they are not marked done and kept.
 **This is the immediate next work.** The 1.9.1 sweep fixed 35 finding-clusters and left these
 deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
-severity, not by convenience. (1.9.2 exec-audit and 1.9.3 exec-path error handling have
-shipped — see the CHANGELOG. Their untested agnos half is recorded below as verification debt.)
+severity, not by convenience. (1.9.2 exec-audit, 1.9.3 exec-path error handling and
+1.9.4 state-file/error-output hygiene have shipped — see the CHANGELOG. The untested agnos half of
+1.9.2/1.9.3 is recorded below as verification debt.)
 
 ### Verification debt — the agnos exec surface has never been executed
 
@@ -43,20 +44,14 @@ missing binary in a pipeline stage reported once rather than silently retried do
 The host smoke suite (`scripts/smoke-test.sh`) already has the shape to copy — it exercises the
 binary and parses the resulting audit log. What is missing is a target to run it on.
 
-### 1.9.4 — State-file and error-output hygiene
+### Carried from 1.9.4 — the history cap is hardcoded and disagrees with the config
 
-- **History load truncates at 64 KB, silently, keeping the OLDEST entries** and then writing the
-  corrupted set back — a long-lived history is destroyed with no signal.
-- **History load ignores `max_size`** — a large file is loaded whole regardless of the cap.
-- **`/tmp` fallback when `HOME` is unset** puts the audit log and history at fixed,
-  non-UID-qualified paths in a world-writable directory.
-- **Audit log mode never repaired** — 0600 is applied at creation and never verified on an
-  existing file.
-- **macOS open flags** — the hardcoded `1089` decodes to `O_WRONLY|O_ASYNC|O_TRUNC` on a Darwin
-  host, so the audit log would be *truncated* per open rather than appended.
-- **Every diagnostic goes to stdout**, including errors; the two stderr helpers that exist have
-  zero call sites. This corrupts piped output and matters more once exec lands (1.9.2).
-- **Host `read_line` conflates errno with EOF** — every negative `read()` silently exits the shell.
+The interactive loop constructs its history with a hardcoded cap of **1000**, while
+`ShellConfig_default` declares **10000**. `config.cyr` is not in the binary's include graph, so the
+10000 is dead code and 1000 is the real limit — but the two disagree, and the live one is not the
+configurable one. Decide which is right, make it the single source, and wire the config value in
+(or delete the dead field). Small; it was noticed while fixing the load path, not fixed there,
+because "make the config real" is a different change from "stop eating the history file".
 
 ### 1.9.5 — Parser shadowing bugs
 

@@ -121,6 +121,21 @@ The `SecurityContext`:
 |------|------|-----|
 | `~/.agnsh_history` | 0600 | Contains command history — may reveal secrets |
 | `~/.agnsh_audit.log` | 0600 | Forensic record — tampering breaks investigations |
+
+As of 1.9.4 both are created **0600 at open** (not chmod'd afterwards — that
+sequence was itself a race), opened `O_NOFOLLOW`, and the audit log's mode is
+**re-asserted on every open** rather than only at creation: a log made under a
+looser umask, restored from a backup, or copied into place used to keep whatever
+mode it had, indefinitely.
+
+⚠ **When `$HOME` is unset** these fall back to `/tmp/agnsh_history.<uid>` and
+`/tmp/agnsh_audit.log.<uid>`. The uid qualifier (1.9.4 — they were previously
+fixed, shared names) removes the collision between users on a multi-user host and
+the pre-creation race in which another user creates the file first and thereby
+owns your audit trail. **It does not make `/tmp` a safe home for an audit log**:
+a same-uid process is unaffected, and the directory is still world-writable. Treat
+the fallback as degraded operation for a broken environment, not a supported
+configuration.
 | `~/.agnoshi/checkpoints/` | 0700 | Contains backed-up file contents from `rm` |
 | `/usr/local/bin/agnsh` | 0755 | Binary — exec, not writable by users |
 

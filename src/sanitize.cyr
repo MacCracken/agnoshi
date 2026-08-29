@@ -18,7 +18,40 @@ var _sanitize_loaded = 1;
 # On agnos the bit is dropped, not miscompiled: file_open (lib/io.cyr:75) masks
 # only 3|64|512|1024 into the AO_* namespace, so this degrades gracefully until
 # agnos gains an AO_NOFOLLOW bit (tracked in the roadmap).
-var O_NOFOLLOW_LINUX = 131072;
+# ⛔ THE NUMERIC OPEN FLAGS ARE NOT PORTABLE, AND agnsh HARDCODED THE LINUX ONES.
+# `1089` (O_WRONLY|O_CREAT|O_APPEND on Linux) decodes on Darwin as
+# O_WRONLY|O_ASYNC|O_TRUNC — no O_CREAT and, fatally, O_TRUNC. On a macOS host
+# the audit log would have been TRUNCATED on every single open and never created
+# in the first place: the shell's whole trail replaced by its most recent line,
+# or nothing at all. Named constants, split by target.
+#
+# NB the values below are LINUX values on agnos too, and deliberately so:
+# lib/io.cyr's file_open takes Linux-shaped flags and maps them into the AO_*
+# namespace itself (`flags & 64` -> AO_CREAT, `& 512` -> AO_TRUNC,
+# `& 1024` -> AO_APPEND). Handing it agnos-native bits would double-translate.
+#
+# ⚠ The Darwin branch is written from the documented <sys/fcntl.h> values and is
+# NOT compile-verified here: this toolchain exposes no macOS target
+# (`cyrius build` offers --aarch64/--win/--agnos), so nothing in CI can reach it.
+#ifdef CYRIUS_TARGET_MACOS
+var OPEN_WRONLY = 1;
+var OPEN_CREAT = 512;      # 0x0200
+var OPEN_APPEND = 8;       # 0x0008
+var OPEN_TRUNC = 1024;     # 0x0400
+var OPEN_NOFOLLOW = 256;   # 0x0100
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+var OPEN_WRONLY = 1;
+var OPEN_CREAT = 64;       # 0o100
+var OPEN_APPEND = 1024;    # 0o2000
+var OPEN_TRUNC = 512;      # 0o1000
+# O_NOFOLLOW is (1 << 17) on BOTH x86_64 and aarch64 Linux — there is no
+# per-arch split; see the 1.9.1 note. On agnos file_open drops the bit.
+var OPEN_NOFOLLOW = 131072;
+#endif
+
+# 0600 — owner read/write only. The mode every shell state file is created with.
+var STATE_FILE_MODE = 384;
 
 fn str_byte_at(s, i) {
     return load8(str_data(s) + i);
@@ -29,6 +62,20 @@ fn eprint_str(s) {
 fn eprint_line(s) {
     eprint_str(s);
     syscall(SYS_WRITE, 2, "\n", 1);
+}
+# Write a NUL-terminated cstring + newline to STDERR.
+#
+# ⛔ Every diagnostic in the shell used to go to STDOUT via println(). Two
+# problems, and the second got worse in 1.9.2. (1) It corrupts piped output:
+# `agnsh -c "..." | jq` receives `run: no such command` as if it were data.
+# (2) Now that agnsh actually executes programs, the child's stdout and the
+# shell's own error text share a stream, so a caller cannot tell the program's
+# output from the shell's complaint about it. Diagnostics belong on fd 2; the
+# Str-side helpers above already existed and had zero call sites.
+fn eprintln_cstr(cstr): i64 {
+    syscall(SYS_WRITE, 2, cstr, strlen(cstr));
+    syscall(SYS_WRITE, 2, "\n", 1);
+    return 0;
 }
 # Case-insensitive contains/find/split helpers. Haystack is a Str
 # (the parser entry trims input to Str at the top of Interpreter_parse);
