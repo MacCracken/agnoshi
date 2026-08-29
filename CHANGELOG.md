@@ -4,6 +4,112 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.0] - 2026-08-29 — cyrius 6.5.36: two silent gates found by upgrading into them
+
+Toolchain pin `6.3.34` → **`6.5.36`** and a full `./lib/` re-sync to the 6.5.36 stdlib snapshot.
+The pin had drifted three minor lines behind an already-6.5.36 wrapper, so the tree was in fact
+*building* on 6.5.36 while the manifest claimed 6.3.34 — CI installs from the manifest, so CI was
+the only place still on 6.3.34. Aligning the pin surfaced two tooling regressions that had been
+sitting under green-looking gates.
+
+### Fixed — the CI format gate had been failing-open-then-closed since `cyrius fmt` went in-place
+
+⛔ **`cyrius fmt <file>` REWRITES IN PLACE as of 6.5.x and prints nothing to stdout.** The gate
+compared the committed file against `cyrius fmt`'s *stdout*:
+
+```sh
+diff -q <(cyrius fmt "$f" 2>/dev/null) "$f"
+```
+
+Under 6.5.x that stdout is empty, so **every file compares as drifted** and the gate fails
+unconditionally — while the same command silently reformats the CI checkout as a side effect.
+A gate that cannot pass is not a gate; a gate that mutates the tree it is auditing is worse.
+
+⚠ `--check` is a **real, non-mutating check** in 6.5.x — it exits 1 and names the first differing
+line ("canonical continuation indent is 2 spaces per open paren"). The comment in CI asserted it
+"was a no-op in cyrius 5.9.x", which is why the stdout-diff form existed; that note is now stale
+and the gate uses `cyrius fmt --check "$f"` directly. Verified in both directions: fails on a
+seeded misformat, passes on the synced tree, and leaves the probe file byte-identical.
+
+### Fixed — `bench-history.sh` silently recorded 4 of 10 benchmarks
+
+⛔ **The CSV parser matched integer averages only.** 6.5.x's bench harness prints decimals
+(`2.429us`); the pattern was `([0-9]+)([a-z]+)`, so every microsecond row failed to match, fell
+through `case "$UNIT"` to `*) continue`, and was **dropped without a word**. A run recorded the
+four nanosecond-scale benchmarks, skipped the six microsecond ones, and still exited 0.
+
+⇒ **The history this project treats as its proof would have quietly hollowed out** — "never skip
+benchmarks, the CSV history is the proof" fails silently if the recorder drops rows. Values are
+now parsed as floats and scaled to integer nanoseconds, and **any `avg` line that does not parse
+fails the run** rather than being skipped. Unit scaling verified for `ns`/`us`/`ms`/`s`; both
+guards (unparseable line, zero lines parsed) verified to exit non-zero.
+
+### Changed
+
+- **`cyrius.cyml`**: pin `6.3.34` → `6.5.36`. `VERSION` → `1.9.0` in lockstep via
+  `scripts/version-bump.sh` (which also syncs the `VERSION_STR` banner literal — the 1.8.9 gate).
+- **`./lib/` re-synced to the 6.5.36 snapshot** (`cyrius lib sync --full`, 108 files). Bundled
+  libs: `mabda` 3.0.1 → **4.1.0**, `vani` 0.9.3 → **1.2.2**, `sigil` 3.7.7 → **3.12.14**,
+  `sandhi` 1.4.4 → **1.9.14**, `patra` 1.10.3 → **1.13.10**, `sankoch` 2.2.5 → **2.7.10**,
+  `yukti` 2.2.3 → **2.3.8**, `niyama` 1.0.2 → **1.0.7**; new in the snapshot: `bayan` 1.5.2,
+  `ganita` 1.1.4, `yantra` 1.0.3. The two major bumps (`mabda` 3→4, `vani` 0→1) are **outside
+  agnoshi's include graph** — the entry pulls core stdlib only (`vet`: 24 deps, 0 untrusted,
+  0 missing), so neither reaches codegen.
+- **Whole-tree reformat under 6.5's continuation-indent rule** (22 src + 4 test files). 6.5
+  indents wrapped argument lists 2 spaces past the opening line where 6.3 left them at the parent
+  indent. **Provably formatting-only**: `git diff -w --ignore-blank-lines` is empty for all five
+  files with content changes, and the diff is exactly balanced at 430 insertions / 430 deletions.
+
+### Performance
+
+⚠ **The 1.9.0 benchmark numbers are NOT comparable to earlier rows in `bench-history.csv`, and
+none of this release's apparent gains are real.** 6.5.x's harness measures the clock-read floor
+and **subtracts it from every sample** (`[timer floor 1.328us per clock read, measured]`). Earlier
+rows include that overhead. Taken at face value the table shows `sanitize/basename` going
+1.458us → 78ns; that is a **measurement change, not a code change**.
+
+Adding the measured floor back to make the two methodologies commensurable:
+
+| benchmark | 1.8.9 (incl. floor) | 1.9.0 (+floor) | delta |
+|---|---|---|---|
+| parse/list_files | 3.830us | 3.757us | −1.9% |
+| parse/cd | 3.676us | 3.417us | −7.0% |
+| parse/find_files | 4.980us | 4.797us | −3.7% |
+| parse/git_status | 5.855us | 5.662us | −3.3% |
+| parse/shell_cmd | 11.900us | 11.711us | −1.6% |
+| translate/list_files | 1.483us | 1.450us | −2.2% |
+| translate/cd | 1.485us | 1.438us | −3.2% |
+| perm/classify_5 | 6.421us | 6.243us | −2.8% |
+| sanitize/basename | 1.458us | 1.406us | −3.6% |
+| sanitize/safe_path | 1.457us | 1.432us | −1.7% |
+
+⇒ **No regression, and no claimed win.** These −2%/−7% deltas are single-run and sit inside
+run-to-run jitter (the 1.8.9 run's `parse/cd` max was 477us against a 3.676us average).
+**No performance improvement is claimed for 1.9.0.** The one durable gain is precision: rows are
+recorded at nanosecond resolution instead of being rounded to the microsecond (`1000`, `6000`).
+
+### Notes
+
+- **Binary grows on both arches** — toolchain-side, from the richer 6.5.36 stdlib, not agnoshi
+  code (no source change beyond formatting and the version literal):
+
+  | arch | 1.8.9 (6.3.34 libs) | 1.9.0 (6.5.36 libs) | delta |
+  |---|---|---|---|
+  | x86_64 (DCE) | 282,016 B | **311,352 B** | +29,336 (+10.4%) |
+  | aarch64 (DCE) | 478,464 B | **544,688 B** | +66,224 (+13.8%) |
+
+  Both baselines were re-measured in-session against a temporarily reverted 6.3.34 snapshot
+  rather than quoted from the (stale) README stat-line.
+- **Gates green on 6.5.36**: `check` ok · `capacity` all caps under 85% (fn_table 797/32768,
+  code_size 221,600/67,108,864) · `vet` 24 deps / 0 untrusted / 0 missing · `fmt --check` clean ·
+  `lint` 0 warnings. Tests unchanged at **301 unit + 26 security + 59 smoke**, all passing.
+- **Pre-existing, unchanged**: two `assigning non-pointer to typed pointer` warnings at
+  `src/translate.cyr:494` and `:508` (`json_escape(load64(intent + 8))`). Present identically on
+  6.3.34 — not introduced here, and not addressed here.
+- `lib/agnosys.cyr` (1.2.6, dated 2026-06-03) is a leftover in the gitignored `./lib/`: it is not
+  part of the 6.5.36 stdlib snapshot, so `lib sync` neither updates nor removes it, and it is not
+  in the include graph. Harmless, but it will persist until `./lib/` is cleared.
+
 ## [1.8.9] - 2026-08-07 — the binary stops lying about its own version
 
 ### Fixed — `agnsh --version` and the boot banner reported **1.8.6** from a 1.8.8 build

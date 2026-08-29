@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Agnoshi.
 
 1. Fork the repository
 2. Create a feature branch
-3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "6.0.14"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
+3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "6.5.36"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
 4. `cyrius deps` — resolves the version-pinned stdlib snapshot into `./lib/` (gitignored)
 5. Make your changes
 6. Run the cleanliness gates + `sh tests/test.sh` to verify
@@ -39,7 +39,7 @@ These match the CI gate set. Run them before pushing — any drift fails the bui
 cyrius check src/agnsh.cyr             # syntax (entry-walk; modules are stitched through agnsh.cyr)
 cyrius capacity --check src/agnsh.cyr  # fn-table / code-size headroom (must be <85%)
 cyrius vet src/agnsh.cyr               # include-graph audit
-cyrius fmt <file>                      # emits formatted source; diff vs tree must be empty
+cyrius fmt --check <file>              # fmt-drift gate (non-mutating; bare `cyrius fmt <file>` REWRITES IN PLACE)
 cyrius lint <file>                     # warn-as-error
 ```
 

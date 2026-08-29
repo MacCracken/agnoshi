@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.8.9";
+var VERSION_STR = "agnoshi 1.9.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -174,13 +174,13 @@ fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr, tag, desc_cstr) {
     elif (perm == PermissionLevel.USER_WRITE) { approved = 1; }
     var result_label = classify_audit_result(tag, perm, desc_cstr);
     var entry = AuditEntry_new(
-    str_from("user"),
-    str_from(mode_label_cstr),
-    str_from(input_cstr),
-    str_from(cmd_cstr),
-    approved,
-    str_from(result_label)
-    );
+      str_from("user"),
+      str_from(mode_label_cstr),
+      str_from(input_cstr),
+      str_from(cmd_cstr),
+      approved,
+      str_from(result_label)
+      );
     var logger = AuditLogger_new(audit_log_path());
     AuditLogger_log(logger, entry);
 }

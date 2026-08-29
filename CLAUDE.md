@@ -36,7 +36,7 @@ agnoshi (AI natural language shell, Cyrius)
 2. Test + benchmark sweep of existing code
 3. Cleanliness gates (match CI):
    - `cyrius check src/*.cyr` (syntax)
-   - `cyrius fmt <file>` diff against tree (fmt-drift gate)
+   - `cyrius fmt --check <file>` (fmt-drift gate — non-mutating; bare `cyrius fmt <file>` rewrites in place)
    - `cyrius lint <file>` — warn-as-error
    - `cyrius vet src/agnsh.cyr` (include-graph audit)
    - `cyrius capacity --check src/agnsh.cyr` (fn-table / code-size headroom)

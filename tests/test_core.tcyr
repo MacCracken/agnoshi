@@ -147,130 +147,130 @@ fn main() {
     var p_list = Interpreter_parse(interp, str_from("list the directory"));
     check("parse list directory", load64(p_list) == IntentTag.LIST_FILES);
     check("parse cd",
-    load64(Interpreter_parse(interp, str_from("cd /tmp"))) == IntentTag.CHANGE_DIR);
+      load64(Interpreter_parse(interp, str_from("cd /tmp"))) == IntentTag.CHANGE_DIR);
     check("parse go to",
-    load64(Interpreter_parse(interp, str_from("go to /home"))) == IntentTag.CHANGE_DIR);
+      load64(Interpreter_parse(interp, str_from("go to /home"))) == IntentTag.CHANGE_DIR);
     check("parse find named",
-    load64(Interpreter_parse(interp, str_from("find files named foo in /tmp"))) == IntentTag.FIND_FILES);
+      load64(Interpreter_parse(interp, str_from("find files named foo in /tmp"))) == IntentTag.FIND_FILES);
     check("parse search content",
-    load64(Interpreter_parse(interp, str_from("search for hello in /tmp"))) == IntentTag.SEARCH_CONTENT);
+      load64(Interpreter_parse(interp, str_from("search for hello in /tmp"))) == IntentTag.SEARCH_CONTENT);
     check("parse create dir",
-    load64(Interpreter_parse(interp, str_from("create a directory named foo"))) == IntentTag.CREATE_DIR);
+      load64(Interpreter_parse(interp, str_from("create a directory named foo"))) == IntentTag.CREATE_DIR);
     check("parse remove",
-    load64(Interpreter_parse(interp, str_from("remove the file foo.txt"))) == IntentTag.REMOVE);
+      load64(Interpreter_parse(interp, str_from("remove the file foo.txt"))) == IntentTag.REMOVE);
     check("parse install",
-    load64(Interpreter_parse(interp, str_from("install vim"))) == IntentTag.INSTALL_PACKAGE);
+      load64(Interpreter_parse(interp, str_from("install vim"))) == IntentTag.INSTALL_PACKAGE);
     check("parse git status",
-    load64(Interpreter_parse(interp, str_from("git status"))) == IntentTag.GIT_STATUS);
+      load64(Interpreter_parse(interp, str_from("git status"))) == IntentTag.GIT_STATUS);
     check("parse git commit",
-    load64(Interpreter_parse(interp, str_from("git commit -m hello"))) == IntentTag.GIT_COMMIT);
+      load64(Interpreter_parse(interp, str_from("git commit -m hello"))) == IntentTag.GIT_COMMIT);
     check("parse firewall list",
-    load64(Interpreter_parse(interp, str_from("firewall list rules"))) == IntentTag.FIREWALL_LIST);
+      load64(Interpreter_parse(interp, str_from("firewall list rules"))) == IntentTag.FIREWALL_LIST);
     check("parse pipeline",
-    load64(Interpreter_parse(interp, str_from("ls | grep foo"))) == IntentTag.PIPELINE);
+      load64(Interpreter_parse(interp, str_from("ls | grep foo"))) == IntentTag.PIPELINE);
 
     check("query ip address NETWORK",
-    load64(Interpreter_parse(interp, str_from("what is my ip address"))) == IntentTag.NETWORK_INFO);
+      load64(Interpreter_parse(interp, str_from("what is my ip address"))) == IntentTag.NETWORK_INFO);
     check("query my ip NETWORK",
-    load64(Interpreter_parse(interp, str_from("my ip"))) == IntentTag.NETWORK_INFO);
+      load64(Interpreter_parse(interp, str_from("my ip"))) == IntentTag.NETWORK_INFO);
     check("query ip route NETWORK",
-    load64(Interpreter_parse(interp, str_from("ip route table"))) == IntentTag.NETWORK_INFO);
+      load64(Interpreter_parse(interp, str_from("ip route table"))) == IntentTag.NETWORK_INFO);
     check("query uptime SYSTEM",
-    load64(Interpreter_parse(interp, str_from("uptime"))) == IntentTag.SYSTEM_INFO);
+      load64(Interpreter_parse(interp, str_from("uptime"))) == IntentTag.SYSTEM_INFO);
     check("query load avg SYSTEM",
-    load64(Interpreter_parse(interp, str_from("load average"))) == IntentTag.SYSTEM_INFO);
+      load64(Interpreter_parse(interp, str_from("load average"))) == IntentTag.SYSTEM_INFO);
     check("query kernel version SYSTEM",
-    load64(Interpreter_parse(interp, str_from("kernel version"))) == IntentTag.SYSTEM_INFO);
+      load64(Interpreter_parse(interp, str_from("kernel version"))) == IntentTag.SYSTEM_INFO);
     check("query memory usage SYSTEM",
-    load64(Interpreter_parse(interp, str_from("memory usage"))) == IntentTag.SYSTEM_INFO);
+      load64(Interpreter_parse(interp, str_from("memory usage"))) == IntentTag.SYSTEM_INFO);
     check("query disk space DISK",
-    load64(Interpreter_parse(interp, str_from("disk space"))) == IntentTag.DISK_USAGE);
+      load64(Interpreter_parse(interp, str_from("disk space"))) == IntentTag.DISK_USAGE);
     check("query free space DISK",
-    load64(Interpreter_parse(interp, str_from("free space"))) == IntentTag.DISK_USAGE);
+      load64(Interpreter_parse(interp, str_from("free space"))) == IntentTag.DISK_USAGE);
     check("query how full DISK",
-    load64(Interpreter_parse(interp, str_from("how full is the disk"))) == IntentTag.DISK_USAGE);
+      load64(Interpreter_parse(interp, str_from("how full is the disk"))) == IntentTag.DISK_USAGE);
     check("query running process PROC",
-    load64(Interpreter_parse(interp, str_from("running processes"))) == IntentTag.SHOW_PROCESSES);
+      load64(Interpreter_parse(interp, str_from("running processes"))) == IntentTag.SHOW_PROCESSES);
     check("query whats running PROC",
-    load64(Interpreter_parse(interp, str_from("what is running"))) == IntentTag.SHOW_PROCESSES);
+      load64(Interpreter_parse(interp, str_from("what is running"))) == IntentTag.SHOW_PROCESSES);
     check("query active process PROC",
-    load64(Interpreter_parse(interp, str_from("active processes"))) == IntentTag.SHOW_PROCESSES);
+      load64(Interpreter_parse(interp, str_from("active processes"))) == IntentTag.SHOW_PROCESSES);
 
     check("question what generic falls QUESTION",
-    load64(Interpreter_parse(interp, str_from("what year is it"))) == IntentTag.QUESTION);
+      load64(Interpreter_parse(interp, str_from("what year is it"))) == IntentTag.QUESTION);
     check("question how generic falls QUESTION",
-    load64(Interpreter_parse(interp, str_from("how does dns work"))) == IntentTag.QUESTION);
+      load64(Interpreter_parse(interp, str_from("how does dns work"))) == IntentTag.QUESTION);
     check("question explain generic falls QUESTION",
-    load64(Interpreter_parse(interp, str_from("explain unix sockets"))) == IntentTag.QUESTION);
+      load64(Interpreter_parse(interp, str_from("explain unix sockets"))) == IntentTag.QUESTION);
 
     check("shell fallback raw",
-    load64(Interpreter_parse(interp, str_from("foo bar baz"))) == IntentTag.SHELL_COMMAND);
+      load64(Interpreter_parse(interp, str_from("foo bar baz"))) == IntentTag.SHELL_COMMAND);
 
     # Substring-trap immunity: "remove" must NOT route to MOVE (today's
     # input_has_word is word-prefix, not substring containment, so the
     # embedded "move" inside "remove" is invisible to the MOVE check).
     check("remove file routes to REMOVE",
-    load64(Interpreter_parse(interp, str_from("remove the file foo.txt"))) == IntentTag.REMOVE);
+      load64(Interpreter_parse(interp, str_from("remove the file foo.txt"))) == IntentTag.REMOVE);
     check("rm at token start routes to REMOVE",
-    load64(Interpreter_parse(interp, str_from("rm foo.txt"))) == IntentTag.REMOVE);
+      load64(Interpreter_parse(interp, str_from("rm foo.txt"))) == IntentTag.REMOVE);
     check("delete routes to REMOVE",
-    load64(Interpreter_parse(interp, str_from("delete the temp dir"))) == IntentTag.REMOVE);
+      load64(Interpreter_parse(interp, str_from("delete the temp dir"))) == IntentTag.REMOVE);
     check("move actual routes to MOVE",
-    load64(Interpreter_parse(interp, str_from("move foo to bar"))) == IntentTag.MOVE);
+      load64(Interpreter_parse(interp, str_from("move foo to bar"))) == IntentTag.MOVE);
     check("rename routes to MOVE",
-    load64(Interpreter_parse(interp, str_from("rename foo to bar"))) == IntentTag.MOVE);
+      load64(Interpreter_parse(interp, str_from("rename foo to bar"))) == IntentTag.MOVE);
     # Plural-tolerance: "file" needle must still match "files", "process"
     # must match "processes". Word-prefix matching gives us this for free.
     check("plural files via show",
-    load64(Interpreter_parse(interp, str_from("show me the files"))) == IntentTag.LIST_FILES);
+      load64(Interpreter_parse(interp, str_from("show me the files"))) == IntentTag.LIST_FILES);
     check("plural processes via state-query",
-    load64(Interpreter_parse(interp, str_from("running processes"))) == IntentTag.SHOW_PROCESSES);
+      load64(Interpreter_parse(interp, str_from("running processes"))) == IntentTag.SHOW_PROCESSES);
     check("plural directories via show",
-    load64(Interpreter_parse(interp, str_from("show me the directories"))) == IntentTag.LIST_FILES);
+      load64(Interpreter_parse(interp, str_from("show me the directories"))) == IntentTag.LIST_FILES);
 
     # Service-status NL — "is X running"/"active"/"enabled" + "status of X"
     # all map to SERVICE_CONTROL with action="status" and target=X.
     check("is X running routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("is nginx running"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("is nginx running"))) == IntentTag.SERVICE_CONTROL);
     check("is X active routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("is sshd active"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("is sshd active"))) == IntentTag.SERVICE_CONTROL);
     check("is X enabled routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("is cronie enabled"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("is cronie enabled"))) == IntentTag.SERVICE_CONTROL);
     check("status of X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("status of nginx"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("status of nginx"))) == IntentTag.SERVICE_CONTROL);
     # Verify target extraction populates field2 (intent + 16).
     var svc_intent = Interpreter_parse(interp, str_from("is nginx running"));
     check("is X running extracts target",
-    load64(svc_intent + 16) != 0);
+      load64(svc_intent + 16) != 0);
     # Negative: a statement like "the application is running" must NOT
     # route to SERVICE_CONTROL (no "is " prefix).
     check("statement falls through service-query gate",
-    load64(Interpreter_parse(interp, str_from("the application is running"))) != IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("the application is running"))) != IntentTag.SERVICE_CONTROL);
 
     # Imperative service actions — "start nginx" / "stop sshd" / etc. all
     # map to SERVICE_CONTROL. Gated on exactly two tokens.
     check("start X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("start nginx"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("start nginx"))) == IntentTag.SERVICE_CONTROL);
     check("stop X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("stop sshd"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("stop sshd"))) == IntentTag.SERVICE_CONTROL);
     check("restart X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("restart cron"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("restart cron"))) == IntentTag.SERVICE_CONTROL);
     check("reload X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("reload nginx"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("reload nginx"))) == IntentTag.SERVICE_CONTROL);
     check("enable X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("enable cron"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("enable cron"))) == IntentTag.SERVICE_CONTROL);
     check("disable X routes to SERVICE_CONTROL",
-    load64(Interpreter_parse(interp, str_from("disable apache"))) == IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("disable apache"))) == IntentTag.SERVICE_CONTROL);
     # Negative: multi-token NL ("start a new project") falls through —
     # the 2-token gate keeps statements from getting hijacked.
     check("start multi-word falls through",
-    load64(Interpreter_parse(interp, str_from("start a new project"))) != IntentTag.SERVICE_CONTROL);
+      load64(Interpreter_parse(interp, str_from("start a new project"))) != IntentTag.SERVICE_CONTROL);
     # Negative: "enable firewall" must keep routing to FIREWALL_ENABLE via
     # parse_admin_ops (which runs before parse_service_action).
     check("enable firewall stays FIREWALL_ENABLE",
-    load64(Interpreter_parse(interp, str_from("enable firewall"))) == IntentTag.FIREWALL_ENABLE);
+      load64(Interpreter_parse(interp, str_from("enable firewall"))) == IntentTag.FIREWALL_ENABLE);
     check("disable ufw stays FIREWALL_DISABLE",
-    load64(Interpreter_parse(interp, str_from("disable ufw"))) == IntentTag.FIREWALL_DISABLE);
+      load64(Interpreter_parse(interp, str_from("disable ufw"))) == IntentTag.FIREWALL_DISABLE);
 
     # Translator coverage — slice 5: core filesystem + process + system.
     # Verifies each translate_X populates the right command name, the
@@ -297,12 +297,12 @@ fn main() {
     store64(sf_bad + 8, str_from("../etc/passwd"));
     var sf_bt = translate_show_file(sf_bad);
     check("translate_show_file unsafe → unknown",
-    streq(load64(sf_bt), "echo") == 1);
+      streq(load64(sf_bt), "echo") == 1);
     # translate_show_file — null path also falls
     var sf_null = Intent_new(IntentTag.SHOW_FILE);
     var sf_nt = translate_show_file(sf_null);
     check("translate_show_file null → unknown",
-    streq(load64(sf_nt), "echo") == 1);
+      streq(load64(sf_nt), "echo") == 1);
 
     # translate_find_files
     var ff_intent = Intent_new(IntentTag.FIND_FILES);
@@ -329,7 +329,7 @@ fn main() {
     var cd_null = Intent_new(IntentTag.CHANGE_DIR);
     var cd_nt = translate_change_dir(cd_null);
     check("translate_change_dir null → unknown",
-    streq(load64(cd_nt), "echo") == 1);
+      streq(load64(cd_nt), "echo") == 1);
 
     # translate_create_dir
     var mkd_intent = Intent_new(IntentTag.CREATE_DIR);
@@ -350,7 +350,7 @@ fn main() {
     store64(cp_miss + 8, str_from("/tmp/src"));
     var cp_mt = translate_copy(cp_miss);
     check("translate_copy missing dst → unknown",
-    streq(load64(cp_mt), "echo") == 1);
+      streq(load64(cp_mt), "echo") == 1);
 
     # translate_move
     var mv_intent = Intent_new(IntentTag.MOVE);
@@ -372,7 +372,7 @@ fn main() {
     store64(rm_r + 40, 1);
     var rm_rt = translate_remove(rm_r);
     check("translate_remove recursive args has -r and path",
-    vec_len(load64(rm_rt + 8)) == 2);
+      vec_len(load64(rm_rt + 8)) == 2);
 
     # translate_show_processes — no fields needed
     var ps_t = translate_show_processes(Intent_new(IntentTag.SHOW_PROCESSES));
@@ -389,7 +389,7 @@ fn main() {
     var kp_bad = Intent_new(IntentTag.KILL_PROCESS);
     var kp_bt = translate_kill_process(kp_bad);
     check("translate_kill_process pid=0 → unknown",
-    streq(load64(kp_bt), "echo") == 1);
+      streq(load64(kp_bt), "echo") == 1);
 
     # translate_system_info
     var si_t = translate_system_info(Intent_new(IntentTag.SYSTEM_INFO));
@@ -429,7 +429,7 @@ fn main() {
     store64(sh_admin + 56, vec_new());
     var sh_at = translate_shell_command(sh_admin);
     check("translate_shell_command apt → ADMIN",
-    load64(sh_at + 24) == PermissionLevel.ADMIN);
+      load64(sh_at + 24) == PermissionLevel.ADMIN);
 
     # Translator coverage — slice 6: git (10 translators). All emit
     # command="git" with the operation name as the first arg. Permission
@@ -448,7 +448,7 @@ fn main() {
     store64(gc_a + 40, 1);
     var gc_at = translate_git_commit(gc_a);
     check("translate_git_commit -a adds flag",
-    vec_len(load64(gc_at + 8)) == 4);
+      vec_len(load64(gc_at + 8)) == 4);
     # translate_git_commit — unsafe message (leading dash) falls to unknown.
     # Locks `is_safe_commit_message`'s reject-leading-dash rule that closed
     # the v1.0 security audit H7 finding (argument injection).
@@ -456,7 +456,7 @@ fn main() {
     store64(gc_bad + 8, "-rf evil");
     var gc_bt = translate_git_commit(gc_bad);
     check("translate_git_commit leading-dash → unknown",
-    streq(load64(gc_bt), "echo") == 1);
+      streq(load64(gc_bt), "echo") == 1);
 
     # translate_git_diff
     var gd_intent = Intent_new(IntentTag.GIT_DIFF);
@@ -468,7 +468,7 @@ fn main() {
     store64(gd_st + 40, 1);
     var gd_stt = translate_git_diff(gd_st);
     check("translate_git_diff --staged adds flag",
-    vec_len(load64(gd_stt + 8)) == 2);
+      vec_len(load64(gd_stt + 8)) == 2);
 
     # translate_git_branch
     var gb_intent = Intent_new(IntentTag.GIT_BRANCH);
@@ -482,7 +482,7 @@ fn main() {
     store64(gb_del + 40, 1);
     var gb_dt = translate_git_branch(gb_del);
     check("translate_git_branch -d adds flag",
-    vec_len(load64(gb_dt + 8)) == 3);
+      vec_len(load64(gb_dt + 8)) == 3);
 
     # translate_git_status
     var gs_t = translate_git_status(Intent_new(IntentTag.GIT_STATUS));
@@ -617,7 +617,7 @@ fn main() {
     var sctl_null = Intent_new(IntentTag.SERVICE_CONTROL);
     var sctl_nt = translate_service_control(sctl_null);
     check("translate_service_control null action → unknown",
-    streq(load64(sctl_nt), "echo") == 1);
+      streq(load64(sctl_nt), "echo") == 1);
 
     # translate_audit_view + translate_agent_info — both route through
     # MCP (Translation_with_mcp). field+8 must be a Str (json_escape
@@ -664,7 +664,7 @@ fn main() {
     check("str_find_ci_from", str_find_ci_from(str_from("aaa bbb aaa"), "aaa", 1) == 8);
     check("str_split_ci basic", vec_len(str_split_ci(str_from("a then b"), " then ")) == 2);
     check("strip_control_chars drops",
-    str_len(strip_control_chars(str_from("hi"))) == 2);
+      str_len(strip_control_chars(str_from("hi"))) == 2);
     # print_str_safe is io-side; just anchor the name via a direct call.
     print_str_safe(str_from(""));
 
@@ -700,20 +700,20 @@ fn main() {
     # translate_core / translate_extended dispatch — both return 0 for
     # an out-of-range tag.
     check("translate_core out-of-range",
-    translate_core(99, Intent_new(IntentTag.UNKNOWN)) == 0);
+      translate_core(99, Intent_new(IntentTag.UNKNOWN)) == 0);
     check("translate_extended out-of-range",
-    translate_extended(99, Intent_new(IntentTag.UNKNOWN)) == 0);
+      translate_extended(99, Intent_new(IntentTag.UNKNOWN)) == 0);
 
     # mode helpers
     check("mode_prompt_prefix HUMAN",
-    streq(mode_prompt_prefix(Mode.HUMAN), "[HUMAN]") == 1);
+      streq(mode_prompt_prefix(Mode.HUMAN), "[HUMAN]") == 1);
     check("mode_prompt_prefix STRICT",
-    streq(mode_prompt_prefix(Mode.STRICT), "[STRICT]") == 1);
+      streq(mode_prompt_prefix(Mode.STRICT), "[STRICT]") == 1);
     var tg_mgr = ModeManager_new(Mode.HUMAN, 1);
     var tg_r = ModeManager_toggle(tg_mgr);
     check("ModeManager_toggle ok", tg_r == 0);
     check("ModeManager_toggle changes mode",
-    ModeManager_current(tg_mgr) == Mode.AI_ASSISTED);
+      ModeManager_current(tg_mgr) == Mode.AI_ASSISTED);
 
     # Permission-classifier predicates (permissions.cyr)
     check("is_blocked_command dd", is_blocked_command("dd") == 1);
@@ -732,11 +732,11 @@ fn main() {
     check("is_word_prefix hit", is_word_prefix(str_from("show me files"), "file") == 1);
     check("is_word_prefix no-match", is_word_prefix(str_from("show me files"), "wibble") == 0);
     check("is_word_prefix substring trap immune",
-    is_word_prefix(str_from("remove the file"), "move") == 0);
+      is_word_prefix(str_from("remove the file"), "move") == 0);
 
     # mode_description (mode.cyr) — paired with mode_display already tested.
     check("mode_description HUMAN non-empty",
-    strlen(mode_description(Mode.HUMAN)) > 0);
+      strlen(mode_description(Mode.HUMAN)) > 0);
 
     # list_options_time bit (intent.cyr) — the only bit-accessor not
     # exercised by the opts-pack test above.
@@ -750,7 +750,7 @@ fn main() {
     var se_env = build_safe_env();
     check("build_safe_env non-empty", vec_len(se_env) >= 1);
     check("build_safe_env PATH first",
-    streq(vec_get(se_env, 0), "PATH=/usr/bin:/bin:/usr/sbin:/sbin") == 1);
+      streq(vec_get(se_env, 0), "PATH=/usr/bin:/bin:/usr/sbin:/sbin") == 1);
 
     # === Approval workflow (src/approval.cyr) ===
     # v1.2.1 lead-item coverage: decision matrix is the gate between
@@ -760,24 +760,24 @@ fn main() {
 
     # risk_from_permission — the spine of the approval decision.
     check("risk SAFE = LOW",
-    risk_from_permission(PermissionLevel.SAFE) == RiskLevel.LOW);
+      risk_from_permission(PermissionLevel.SAFE) == RiskLevel.LOW);
     check("risk READ_ONLY = LOW",
-    risk_from_permission(PermissionLevel.READ_ONLY) == RiskLevel.LOW);
+      risk_from_permission(PermissionLevel.READ_ONLY) == RiskLevel.LOW);
     check("risk USER_WRITE = MEDIUM",
-    risk_from_permission(PermissionLevel.USER_WRITE) == RiskLevel.MEDIUM);
+      risk_from_permission(PermissionLevel.USER_WRITE) == RiskLevel.MEDIUM);
     check("risk SYSTEM_WRITE = HIGH",
-    risk_from_permission(PermissionLevel.SYSTEM_WRITE) == RiskLevel.HIGH);
+      risk_from_permission(PermissionLevel.SYSTEM_WRITE) == RiskLevel.HIGH);
     check("risk ADMIN = HIGH",
-    risk_from_permission(PermissionLevel.ADMIN) == RiskLevel.HIGH);
+      risk_from_permission(PermissionLevel.ADMIN) == RiskLevel.HIGH);
     check("risk BLOCKED = CRITICAL",
-    risk_from_permission(PermissionLevel.BLOCKED) == RiskLevel.CRITICAL);
+      risk_from_permission(PermissionLevel.BLOCKED) == RiskLevel.CRITICAL);
 
     # risk_icon — the labels the approval UI prints.
     check("risk_icon LOW", streq(risk_icon(RiskLevel.LOW), "[LOW]") == 1);
     check("risk_icon MED", streq(risk_icon(RiskLevel.MEDIUM), "[MED]") == 1);
     check("risk_icon HIGH", streq(risk_icon(RiskLevel.HIGH), "[HIGH]") == 1);
     check("risk_icon CRIT",
-    streq(risk_icon(RiskLevel.CRITICAL), "[CRIT]") == 1);
+      streq(risk_icon(RiskLevel.CRITICAL), "[CRIT]") == 1);
 
     # ApprovalManager_assess_risk — composes analyze_command_permission +
     # risk_from_permission. Verify the end-to-end mapping for each
@@ -785,23 +785,23 @@ fn main() {
     var am = ApprovalManager_new();
     var empty_args = vec_new();
     check("assess_risk ls = LOW",
-    ApprovalManager_assess_risk(am, "ls", empty_args, 0) == RiskLevel.LOW);
+      ApprovalManager_assess_risk(am, "ls", empty_args, 0) == RiskLevel.LOW);
     check("assess_risk cp = MEDIUM",
-    ApprovalManager_assess_risk(am, "cp", empty_args, 0) == RiskLevel.MEDIUM);
+      ApprovalManager_assess_risk(am, "cp", empty_args, 0) == RiskLevel.MEDIUM);
     check("assess_risk apt = HIGH",
-    ApprovalManager_assess_risk(am, "apt", empty_args, 0) == RiskLevel.HIGH);
+      ApprovalManager_assess_risk(am, "apt", empty_args, 0) == RiskLevel.HIGH);
     check("assess_risk dd = CRITICAL",
-    ApprovalManager_assess_risk(am, "dd", empty_args, 0) == RiskLevel.CRITICAL);
+      ApprovalManager_assess_risk(am, "dd", empty_args, 0) == RiskLevel.CRITICAL);
 
     # ApprovalManager_is_blocked — pattern-based blocklist (substring
     # match). Default state is empty.
     check("is_blocked default empty",
-    ApprovalManager_is_blocked(am, str_from("ls")) == 0);
+      ApprovalManager_is_blocked(am, str_from("ls")) == 0);
     ApprovalManager_block_pattern(am, str_from("rm -rf /"));
     check("is_blocked after pattern add",
-    ApprovalManager_is_blocked(am, str_from("rm -rf /home")) == 1);
+      ApprovalManager_is_blocked(am, str_from("rm -rf /home")) == 1);
     check("is_blocked unrelated cmd",
-    ApprovalManager_is_blocked(am, str_from("ls -la")) == 0);
+      ApprovalManager_is_blocked(am, str_from("ls -la")) == 0);
 
     # set_auto_approve — flips the auto-approve-low-risk bit at offset 8.
     var am2 = ApprovalManager_new();
@@ -819,20 +819,20 @@ fn main() {
     # `approved` flag. The test_core stub for chrono_now_rfc3339 (line
     # 17) returns a deterministic timestamp so the assertion is stable.
     var ae = AuditEntry_new(
-    str_from("alice"),
-    str_from("auto"),
-    str_from("ls -la"),
-    str_from("ls"),
-    1,
-    str_from("executed")
-    );
+      str_from("alice"),
+      str_from("auto"),
+      str_from("ls -la"),
+      str_from("ls"),
+      1,
+      str_from("executed")
+      );
     var ae_json = AuditEntry_to_json(ae);
     # Field-by-field substring check rather than full-string equality
     # so we stay under the 120-char lint cap. Each assertion locks one
     # contract: the field is present, the field is quoted as JSON, the
     # value lands intact, and `approved` is an integer (not a string).
     check("audit json has timestamp",
-    str_contains_ci(ae_json, "\"timestamp\":\"2026-01-01T00:00:00Z\"") == 1);
+      str_contains_ci(ae_json, "\"timestamp\":\"2026-01-01T00:00:00Z\"") == 1);
     check("audit json has user", str_contains_ci(ae_json, "\"user\":\"alice\"") == 1);
     check("audit json has mode", str_contains_ci(ae_json, "\"mode\":\"auto\"") == 1);
     check("audit json has input", str_contains_ci(ae_json, "\"input\":\"ls -la\"") == 1);
@@ -841,40 +841,40 @@ fn main() {
     # `approved` must be a raw integer, not a quoted string. Filtering
     # tools and downstream parsers depend on this typing.
     check("audit json approved=1 raw int",
-    str_contains_ci(ae_json, "\"approved\":1") == 1);
+      str_contains_ci(ae_json, "\"approved\":1") == 1);
     check("audit json approved not quoted",
-    str_contains_ci(ae_json, "\"approved\":\"1\"") == 0);
+      str_contains_ci(ae_json, "\"approved\":\"1\"") == 0);
 
     # `approved=0` path — deny / blocked entries record the integer 0.
     var ae_deny = AuditEntry_new(
-    str_from("alice"),
-    str_from("strict"),
-    str_from("rm -rf /"),
-    str_from("rm"),
-    0,
-    str_from("blocked")
-    );
+      str_from("alice"),
+      str_from("strict"),
+      str_from("rm -rf /"),
+      str_from("rm"),
+      0,
+      str_from("blocked")
+      );
     var ae_dj = AuditEntry_to_json(ae_deny);
     check("audit json approved=0 raw int",
-    str_contains_ci(ae_dj, "\"approved\":0") == 1);
+      str_contains_ci(ae_dj, "\"approved\":0") == 1);
     check("audit json blocked result",
-    str_contains_ci(ae_dj, "\"result\":\"blocked\"") == 1);
+      str_contains_ci(ae_dj, "\"result\":\"blocked\"") == 1);
 
     # JSON-string escaping — embedded `"` in the input field exercises
     # json_escape (sanitize.cyr) on the audit path. Pre-v1.0 audit C4
     # fix was the injection vector; the assertion locks the fix in
     # place from the audit side too.
     var ae_esc = AuditEntry_new(
-    str_from("alice"),
-    str_from("auto"),
-    str_from("echo \"hi\""),
-    str_from("echo"),
-    1,
-    str_from("executed")
-    );
+      str_from("alice"),
+      str_from("auto"),
+      str_from("echo \"hi\""),
+      str_from("echo"),
+      1,
+      str_from("executed")
+      );
     var ae_ej = AuditEntry_to_json(ae_esc);
     check("audit json escapes inner quotes",
-    str_contains_ci(ae_ej, "\"input\":\"echo \\\"hi\\\"\"") == 1);
+      str_contains_ci(ae_ej, "\"input\":\"echo \\\"hi\\\"\"") == 1);
 
     # === SecurityContext + sudo re-verification (src/security.cyr) ===
     # v1.2.1 lead-item sub-bullet "sudo re-verification timing":
@@ -895,20 +895,20 @@ fn main() {
     check("SecurityContext_is_root no", SecurityContext_is_root(sec_nr) == 0);
     var sec_rstr = _mock_sec(0, 1, 1);
     check("SecurityContext_is_restricted yes",
-    SecurityContext_is_restricted(sec_rstr) == 1);
+      SecurityContext_is_restricted(sec_rstr) == 1);
     check("SecurityContext_is_restricted no",
-    SecurityContext_is_restricted(sec_nr) == 0);
+      SecurityContext_is_restricted(sec_nr) == 0);
 
     # can_escalate gate — the v1.2.1 contract: deny if restricted=1,
     # OR sudo unavailable, OR running as root.
     check("can_escalate normal user OK",
-    SecurityContext_can_escalate(_mock_sec(0, 0, 1)) == 1);
+      SecurityContext_can_escalate(_mock_sec(0, 0, 1)) == 1);
     check("can_escalate restricted blocked",
-    SecurityContext_can_escalate(_mock_sec(0, 1, 1)) == 0);
+      SecurityContext_can_escalate(_mock_sec(0, 1, 1)) == 0);
     check("can_escalate sudo missing blocked",
-    SecurityContext_can_escalate(_mock_sec(0, 0, 0)) == 0);
+      SecurityContext_can_escalate(_mock_sec(0, 0, 0)) == 0);
     check("can_escalate root blocked",
-    SecurityContext_can_escalate(_mock_sec(1, 0, 1)) == 0);
+      SecurityContext_can_escalate(_mock_sec(1, 0, 1)) == 0);
 
     # verify_sudo_path — re-verification helper. Pin against
     # /usr/bin/sudo if it's actually installed root-owned on this
@@ -917,10 +917,10 @@ fn main() {
     # "missing path" negative case stays deterministic.
     if (file_exists("/usr/bin/sudo") == 1) {
         check("verify_sudo_path /usr/bin/sudo verifies",
-        verify_sudo_path("/usr/bin/sudo") == 1);
+          verify_sudo_path("/usr/bin/sudo") == 1);
     }
     check("verify_sudo_path nonexistent rejected",
-    verify_sudo_path("/nonexistent/sudo/path") == 0);
+      verify_sudo_path("/nonexistent/sudo/path") == 0);
 
     # security_check_sudo — at-init coarse availability check. The
     # cached form `SecurityContext.sudo_available` is set from this
@@ -953,7 +953,7 @@ fn main() {
     sys_close(rfd);
     store8(&rbuf + rn, 0);
     check("audit log has two lines",
-    rn > 0);
+      rn > 0);
 
     return report();
 }

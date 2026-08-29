@@ -80,14 +80,19 @@ jobs:
         run: cyrius capacity --check src/agnsh.cyr
 
       - name: Format check
-        # cyrius fmt <file> emits the formatted source to stdout; diff
-        # against the committed file to enforce no drift. (--check was
-        # a no-op in cyrius 5.9.x so we rely on diff for the gate.)
+        # `cyrius fmt <file>` REWRITES IN PLACE as of cyrius 6.5.x and prints
+        # nothing to stdout. The old gate diffed the committed file against
+        # `cyrius fmt`'s stdout — under 6.5.x that stdout is empty, so every
+        # file compared as drifted and the gate failed unconditionally (while
+        # also silently reformatting the checkout). `--check` is a real
+        # non-mutating check in 6.5.x (it was a no-op back in 5.9.x, which is
+        # why the diff form existed): it exits 1 and names the first differing
+        # line. Use it directly. `--dry` reports without touching the file too.
         run: |
           fail=0
           for f in src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr; do
             [ -f "$f" ] || continue
-            if ! diff -q <(cyrius fmt "$f" 2>/dev/null) "$f" > /dev/null; then
+            if ! cyrius fmt --check "$f"; then
               echo "needs fmt: $f"
               fail=1
             fi

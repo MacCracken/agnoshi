@@ -6,7 +6,9 @@ type: state
 
 # Documentation Health — agnoshi
 
-> **Last refresh**: 2026-05-28 (v1.3.4 — Cyrius pin 6.0.1 → 6.0.14 within-6.0.x patch bump, zero codegen drift; root-level pin refs + architecture overview rebumped) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-08-29 (v1.9.0 — Cyrius pin 6.3.34 → 6.5.36 + full lib re-sync; root-level pin/size refs, architecture overview, man page, roadmap and CI fmt-gate rebumped) | **Refresh cadence**: when docs are touched, update the affected row.
+>
+> ⚠ **Known ledger gap**: rows below were last swept at v1.3.4. Releases **v1.4.0 – v1.8.9** (fifteen of them) shipped without a ledger sweep, so any row still stamped `2026-05-28` reflects the v1.3.4 tree, not the current one. v1.9.0 refreshed only the rows it actually touched. `CHANGELOG.md` remains the source of truth for shipped work. **A full re-read sweep is its own slice.**
 > **Scope**: This repo only (`agnoshi`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md)) — same buckets, agnoshi-shaped tiers.
@@ -42,13 +44,13 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-05-28 | ✅ Fresh | v1.3.4: stat-line bumped (`1.3.4 · Cyrius 6.0.14 · 295 KB / 340 KB · 301+26+59 tests`), install/pin refs + binary-size line bumped 6.0.1 → 6.0.14 (sizes unchanged). |
-| `CHANGELOG.md` | 2026-05-28 | ✅ Fresh | v1.3.4 entry cut — Cyrius pin 6.0.1 → 6.0.14 within-6.0.x patch bump, zero codegen drift (both binary sizes byte-identical to v1.3.3). Source of truth for shipped work. |
-| `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Rust→Cyrius gate commands swapped; stale Known Issues purged; version-discipline note added (VERSION is single SoT). |
-| `CONTRIBUTING.md` | 2026-05-28 | ✅ Fresh | v1.3.4: pin ref bumped 6.0.1 → 6.0.14. |
+| `README.md` | 2026-08-29 | ✅ Fresh | v1.9.0: stat-line bumped (`1.9.0 · Cyrius 6.5.36 · 22 modules · 304 KB / 532 KB · 301+26+59 tests`) and binary-size prose rebumped 6.0.56 → 6.5.36 (304 KB x86_64 / 532 KB aarch64, both re-measured in-session). Module count corrected 21 → **22** — it had been stale since a 22nd module landed in `src/`. Note the stat-line had read `1.4.5` while `VERSION` was `1.8.9`. |
+| `CHANGELOG.md` | 2026-08-29 | ✅ Fresh | v1.9.0 entry cut — pin 6.3.34 → 6.5.36 + lib re-sync; the two silent-gate fixes (CI fmt gate, bench-history parser); explicit **benchmark-methodology break** notice (6.5.x subtracts a measured clock-read floor, so 1.9.0 rows are not comparable to earlier ones and no perf win is claimed). Source of truth for shipped work — and currently the ONLY current record for v1.4.0–v1.8.9. |
+| `CLAUDE.md` | 2026-08-29 | ✅ Fresh | v1.9.0: fmt-drift gate corrected to `cyrius fmt --check <file>` — the bare form **rewrites in place** as of 6.5.x, so the documented "diff against tree" step silently reformatted the tree it was meant to audit. Earlier: Rust→Cyrius gate commands swapped; stale Known Issues purged; version-discipline note added (VERSION is single SoT). |
+| `CONTRIBUTING.md` | 2026-08-29 | ✅ Fresh | v1.9.0: pin ref bumped 6.0.14 → 6.5.36; cleanliness-gate block corrected to `cyrius fmt --check <file>` (the bare form rewrites in place on 6.5.x — the old line told contributors to diff its now-empty stdout). |
 | `SECURITY.md` | 2026-04-30 | 🔵 Evergreen | Reporting policy. No version-tied claims; re-read annually. |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. |
-| `VERSION` | 2026-05-28 | ✅ Fresh | `1.3.4` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-08-29 | ✅ Fresh | `1.9.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. Bumped via `scripts/version-bump.sh`, which also syncs the `VERSION_STR` banner literal in `src/agnsh.cyr` (the 1.8.9 desync gate). |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -57,7 +59,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-05-28 | ✅ Fresh | v1.3.4 added to Shipped (2026-05-28) — Cyrius pin 6.0.1 → 6.0.14 within-6.0.x patch bump, zero codegen drift. v1.3.x polish bucket still closed; v1.4.0 holds the deferred exec wire-up + hoosh modernization + LLM streaming + tab completion bucket; v1.5.x+ holds demand-gated systems/UX/consumer-app translators. |
+| `roadmap.md` | 2026-08-29 | 🟠 Partially fresh | v1.9.0 added to Shipped (pin 6.3.34 → 6.5.36, two silent-gate fixes, binary/benchmark deltas). ⚠ **Shipped list jumps v1.3.4 → v1.9.0**: an explicit gap marker now stands in for the fifteen un-rowed releases (v1.4.0–v1.8.9 — agnos exec/spawn arc, 6.1.x/6.2.x/6.3.x bumps, the 1.8.9 version-literal gate) rather than letting the list imply one step. **Back-filling those rows is its own slice.** Forward buckets (v1.4.0 exec wire-up, v1.5.x+ demand-gated) are themselves stale against work that has since shipped and need a re-read. |
 
 ---
 
@@ -65,7 +67,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Pat
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `overview.md` | 2026-05-28 | ✅ Fresh | v1.3.4: build-time req pin bumped 6.0.1 → 6.0.14; runtime binary-size line unchanged (295 KB x86_64 / 340 KB aarch64). Module map verified against `src/` (21 files). |
+| `overview.md` | 2026-08-29 | 🟠 Partially fresh | v1.9.0: build-time req pin bumped 6.0.14 → 6.5.36; runtime binary-size line rebumped to 304 KB x86_64 / 532 KB aarch64. Also corrected a **factual error**: the `[deps] stdlib` list still named `json`, which v1.7.1 removed from the manifest (6.2.25 folded `json.cyr` into `bayan`; agnoshi never consumed it). ⚠ Module map NOT re-verified — `src/` now holds 22 files vs the 21 last checked, and the data-flow/module sections have not been read against v1.4.0–v1.8.9 exec/PTY/job-control work. |
 
 ---
 
@@ -125,7 +127,7 @@ Next audit slot: 2.0.0 cut OR sooner if a new CVE pattern surfaces in agnoshi's 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `benchmarks-rust-v-cyrius.md` (repo root) | 2026-05-10 | ✅ Fresh (frozen by design) | Rust → Cyrius port-arc comparison, point-in-time at 1.0.0 / Cyrius 4.5.0. The cc3-limit framing was re-anchored as historical in 1.1.0 closeout (header callout + in-tree refresh command for current-toolchain numbers); substance left frozen. Home decision (root vs `docs/`) still open — see Open Question. |
-| `docs/agnsh.1` | 2026-05-20 | ✅ Fresh | v1.3.3: `.TH` header bumped to `agnoshi 1.3.3`. Command surface unchanged in 1.3.3 (toolchain bump + safety-predicate fix, no user-visible options/builtins delta) so the body needed no edits. |
+| `docs/agnsh.1` | 2026-08-29 | 🟠 Partially fresh | v1.9.0: `.TH` header bumped `May 2026 / agnoshi 1.3.3` → `August 2026 / agnoshi 1.9.0` (it had sat at 1.3.3 across fifteen releases). v1.9.0 itself is a toolchain bump with no user-visible options/builtins delta, so its own change needed no body edits. ⚠ **Body NOT re-read against v1.4.0–v1.8.9**, which added job control, PTY and pipe behaviour — the documented command surface may be missing builtins. |
 
 ---
 
@@ -174,4 +176,4 @@ When the bucket counts at the top drift by more than ~3 in any cell, refresh the
 
 ---
 
-*Last refresh: 2026-05-10 (1.1.0 closeout pass — README, CONTRIBUTING, architecture/overview, agnsh.1, benchmarks-rust-v-cyrius all moved Stale → Fresh). Refresh in place when docs are touched.*
+*Last refresh: 2026-08-29 (v1.9.0 — Cyrius 6.5.36 pin + lib re-sync; touched rows only: README, CHANGELOG, CONTRIBUTING, VERSION, roadmap, architecture/overview, agnsh.1. Rows still stamped 2026-05-28 or earlier reflect the v1.3.4 tree — see the known-ledger-gap note at the top.) Refresh in place when docs are touched.*
