@@ -16,7 +16,8 @@ deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
 severity, not by convenience. (1.9.2 exec-audit, 1.9.3 exec-path error handling,
 1.9.4 state-file/error-output hygiene, 1.9.5 parser shadowing and
-1.9.6 measured optimization and 1.9.7 test reachability have shipped — see the CHANGELOG. The untested agnos half of
+1.9.6 measured optimization, 1.9.7 test reachability and
+1.9.8 latent-defect cleanup have shipped — the arc's NUMBERED SLICES ARE COMPLETE — see the CHANGELOG. The untested agnos half of
 1.9.2/1.9.3 is recorded below as verification debt.)
 
 ### Verification debt — the agnos exec surface has never been executed
@@ -110,32 +111,32 @@ gap stays visible. They are the ones that are genuinely awkward, not merely skip
 Also open: `_cmd_eq` and `_hist_read_tail` are exercised indirectly (by the permission tables and
 the oversized-history smoke case) but have no direct assertion.
 
-### 1.9.8 — Latent defects in the non-compiled modules
+### Carried from 1.9.8 — two wire-up prerequisites
 
-Not reachable today; each detonates on wire-up. Fix with the corresponding wire-up slice, or
-sooner if cheap.
+**`checkpoint.cyr` needs 7 stdlib symbols that no longer exist.** Verified absent from the whole
+6.5.36 snapshot: `fs_basename`, `fs_copy`, `fs_exists`, `fs_is_dir`, `fs_mkdir_p`, `fs_remove`,
+`fs_rename`. This is a re-implementation against the current stdlib (`file_exists`, `xunlink`,
+`path_dirname`, …), not a defect fix, and it is the real blocker on the checkpoint/`undo` wire-up —
+not the "1 deferred MEDIUM" the roadmap claimed before 1.9.1 closed that.
 
-- **`prompt.cyr:16` — `PromptContext_new` hands a 256-byte buffer to `uname(2)`, which writes
-  390.** 134-byte overflow; the sharpest of these.
-- `session.cyr:31` / `checkpoint.cyr` — `str_cat(getenv-cstring, Str)`: a wild-pointer `memcpy`,
-  a hard SIGSEGV the lint shield cannot see (it matches only literal arguments).
-- `session.cyr` — `Session_handle_builtin` compares Str with cstring `streq`, so no builtin ever
-  matches. *(The 1.9.1 boundary fix makes `cmd` a real cstring, so this is now half-closed; the
-  args side still expects Str.)*
-- `session.cyr:33` — hands `CommandHistory_new` a Str where every consumer expects a cstring.
-- `checkpoint.cyr` wire-up is blocked by **7 removed stdlib symbols**, not the "1 deferred
-  MEDIUM" the roadmap claimed.
-- `session.cyr`'s raw `SYS_CHDIR` / `SYS_GETCWD` are **compile errors on agnos**, not the runtime
-  `-38` stub previously assumed.
-- `prompt.cyr:111` — passes a Str to the cstring-typed `is_safe_branch_name`, so the git-branch
-  escape-injection guard is skipped.
-- `audit.cyr:121` — `audit_format_table` passes a variable-held cstring to Str-typed
-  `str_builder_add`.
-- `aliases.cyr:23` — calls `map_del`; the 6.5.36 stdlib renamed it `map_delete`.
-- `interpreter.cyr:489` — `str_split(Str, " | ")` reads 8 bytes past the 4-byte separator literal
-  as a length.
-- **`prompt.cyr`'s git parent-walk deferral is unblocked** — `path_dirname(Str)` exists in the
-  6.5.36 stdlib.
+**`prompt.cyr`'s git parent-walk is unblocked but unimplemented.** `path_dirname(path: Str)` ships
+in `lib/fs.cyr:57` and does exactly what the module's TODO asked for, so a repo *subdirectory* could
+show its branch. Not written in 1.9.8 because prompt.cyr is outside the include graph — new logic
+added there cannot be executed or tested. Do it with the wire-up.
+
+### A rule worth not relearning — buffer sizing differs by scope
+
+Verified by direct probe during 1.9.8, after two comments in `run_agnos.cyr` appeared to contradict
+each other:
+
+- **Module-scope `var X[N]` allocates 8N bytes** (N u64 slots).
+- **Function-scope `var X[N]` allocates N bytes.**
+
+Both spellings are load-bearing in this tree, and the difference has now produced real bugs in both
+directions: it hid a 134-byte `uname` overflow in `prompt.cyr` and a 7-byte uid overflow in
+`statepaths.cyr` (introduced by 1.9.4 and found by sweeping the class, not by reading an audit
+list) — while also making `sh_env_blob[128]`, `rl_buf[512]`, `job_pid[8]` and `job_cmd[128]` look
+like overflows when all four are correct. **Sweep the class, do not trust the comment.**
 
 ### Not scheduled — needs a decision, not a slice
 

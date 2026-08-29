@@ -444,6 +444,24 @@ fn safe_arg_in_str(s) {
 # therefore inert on the only path that calls it:
 # `git commit -m -oh-no-a-flag` was accepted and emitted verbatim, where git
 # reads the value as a flag rather than a message.
+# Str-side twin of is_safe_branch_name (ADR-006). prompt_detect_git_branch
+# builds its result with str_new/str_substr, so it returns a Str — and the
+# cstring original walked the 16-byte Str header instead of the branch text,
+# meaning the ANSI-escape guard on a value read out of .git/HEAD never fired.
+# A crafted ref name could therefore put escape sequences straight into the
+# rendered prompt.
+fn safe_branch_name_in_str(s) {
+    if (s == 0) { return 0; }
+    var len = str_len(s);
+    if (len == 0) { return 0; }
+    if (len > 256) { return 0; }
+    for (var i = 0; i < len; i = i + 1) {
+        var ch = str_byte_at(s, i);
+        if (ch < 32) { return 0; }
+        if (ch == 127) { return 0; }
+    }
+    return 1;
+}
 fn safe_commit_message_in_str(s) {
     if (s == 0) { return 0; }
     var len = str_len(s);

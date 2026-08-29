@@ -1458,6 +1458,54 @@ fn main() {
     check("history path ends with the conventional name",
       _t_ends_with(history_path(), ".agnsh_history") == 1);
 
+    # ---- 1.9.8: live defects found among the "latent" ones ----
+    # ⛔ str_split's `sep` parameter is UNANNOTATED, so a bare literal is NOT
+    # promoted to Str the way it is for `needle: Str` on str_contains. The raw
+    # literal address is > 256, so str_split takes its Str path and reads the
+    # literal's own bytes as a data pointer and a length. Result: a pipeline was
+    # DETECTED and then never SPLIT.
+    var pl = Interpreter_new();
+    var pli = Interpreter_parse(pl, str_from("ls | grep foo"));
+    check("pipeline detected", load64(pli) == IntentTag.PIPELINE);
+    check("pipeline splits into TWO stages", vec_len(load64(pli + 56)) == 2);
+    var pl3 = Interpreter_parse(pl, str_from("a | b | c"));
+    check("pipeline splits three stages", vec_len(load64(pl3 + 56)) == 3);
+    # the ` then ` form goes through str_split_ci, whose sep IS a cstring
+    var plt = Interpreter_parse(pl, str_from("ls then wc"));
+    check("then-form still splits", vec_len(load64(plt + 56)) == 2);
+    # Direct confirmation of the underlying contract, so the reason stays pinned
+    # even if the parser changes: a literal at str_split's sep does NOT split.
+    check("str_split with str_from splits",
+      vec_len(str_split(str_from("a | b"), str_from(" | "))) == 2);
+    check("str_split with a byte separator splits",
+      vec_len(str_split(str_from("a\nb"), 10)) == 2);
+
+    # safe_branch_name_in_str — the ADR-006 Str twin. prompt_detect_git_branch
+    # returns a Str, so the cstring original read the fat-pointer header and the
+    # ANSI-escape guard on a value taken out of .git/HEAD never fired.
+    check("branch name plain ok", safe_branch_name_in_str(str_from("main")) == 1);
+    check("branch name with slash ok", safe_branch_name_in_str(str_from("feat/x")) == 1);
+    check("branch name rejects escape", safe_branch_name_in_str(str_from("m\x1b[31main")) == 0);
+    check("branch name rejects newline", safe_branch_name_in_str(str_from("a\nb")) == 0);
+    check("branch name rejects DEL", safe_branch_name_in_str(str_from("a\x7fb")) == 0);
+    check("branch name rejects empty", safe_branch_name_in_str(str_from("")) == 0);
+    check("branch name rejects null", safe_branch_name_in_str(0) == 0);
+
+    # audit_format_table held its "NO"/"yes" literals in VARIABLES and passed
+    # them to Str-typed str_builder_add — a literal at that parameter is promoted
+    # by the compiler, a variable-held one is not, so it read a garbage length.
+    check("audit table empty case returns a real Str",
+      str_len(audit_format_table(vec_new())) > 0);
+    var atv = vec_new();
+    vec_push(atv, AuditEntry_new(str_from("user"), str_from("AI-AUTO"),
+        str_from("show files"), str_from("ls"), 1, str_from("proposed")));
+    vec_push(atv, AuditEntry_new(str_from("user"), str_from("STRICT"),
+        str_from("dd if=/dev/zero"), str_from("dd"), 0, str_from("blocked")));
+    var att = audit_format_table(atv);
+    check("audit table renders both rows", str_contains(att, str_from("dd")) == 1);
+    check("audit table renders the approved column", str_contains(att, str_from("yes")) == 1);
+    check("audit table renders the denied column", str_contains(att, str_from("NO")) == 1);
+
     # ---- 1.9.6 optimization: behaviour pinned across the rewrites ----
     # is_safe_path was four passes (two predicates, each with its own strlen and
     # scan) and is now one fused pass. The dot logic is the subtle part: a

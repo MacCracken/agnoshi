@@ -564,7 +564,14 @@ fn Interpreter_parse(self, input) {
         var intent = Intent_new(IntentTag.PIPELINE);
         var parts = vec_new();
         if (str_contains(trimmed, " | ") == 1) {
-            parts = str_split(trimmed, " | ");
+            # ⛔ str_split's `sep` parameter is UNANNOTATED, so a bare literal is
+            # NOT promoted to Str the way it is for `needle: Str` on str_contains
+            # just above. The raw literal address is > 256, so str_split_a takes
+            # its STR path and reads load64(sep) / load64(sep+8) — the literal's
+            # own bytes — as a data pointer and a length. The result: `ls | grep foo`
+            # was DETECTED as a pipeline (str_contains works) and then never
+            # SPLIT — one stage instead of two.
+            parts = str_split(trimmed, str_from(" | "));
         } else {
             parts = str_split_ci(trimmed, " then ");
         }

@@ -11,11 +11,16 @@ fn PromptContext_new(cwd, username, ai_mode) {
     var home = str_from("/tmp");
     var home_env = getenv("HOME");
     if (home_env != 0) { home = home_env; }
-    var hostname_buf[256];
+    # ⛔ struct utsname is SIX 65-byte fields = 390 bytes, and function-scope
+    # `var X[N]` is N BYTES (module-scope is 8N — the two differ). At [256] the
+    # kernel wrote 134 bytes past the end on every prompt render. The read below
+    # takes the `nodename` field at offset 65, which is correct — the buffer was
+    # simply sized for one field instead of the whole struct the kernel fills.
+    var hostname_buf[512];
     var hostname = str_from("localhost");
     var result = syscall(SYS_UNAME, &hostname_buf);
     if (result == 0) {
-        # str_clone to escape the local `var hostname_buf[256]` —
+        # str_clone to escape the local `var hostname_buf[512]` —
         # the resulting Str gets stored long-term in the prompt
         # context (offset 24) and would otherwise alias a stale
         # buffer once PromptContext_new is called again.
@@ -93,14 +98,18 @@ fn prompt_detect_git_branch(cwd) {
             }
             return content;
         }
-        # v1.0 walked up via `fs_parent(dir)`; `fs_parent` doesn't
-        # exist in Cyrius 5.10.x and walking via string manipulation
-        # on a Str is non-trivial. For v1.3.1 the function only
-        # checks the immediate cwd's `.git/HEAD`. Parent-walk lands
-        # with the rest of the prompt module's wire-up in v1.4.0
-        # (TODO: dirname-style truncate on the Str's data; needs a
-        # cstring-friendly path representation throughout the prompt
-        # module). Break after one iteration.
+        # v1.0 walked up via `fs_parent(dir)`, which does not exist in the
+        # current stdlib, so this only ever checks the immediate cwd's
+        # `.git/HEAD` — a repo subdirectory shows no branch.
+        #
+        # ✅ THE STATED BLOCKER IS GONE (verified against the 6.5.36 snapshot):
+        # `path_dirname(path: Str)` ships in lib/fs.cyr:57 and does exactly the
+        # "dirname-style truncate on the Str's data" this note asked for, so the
+        # parent walk is a loop over it plus the existing .git/HEAD probe.
+        # Deliberately NOT implemented here: prompt.cyr is not in the binary's
+        # include graph, so new logic added now could not be executed or tested.
+        # It belongs with the prompt wire-up, where it can be. Break after one
+        # iteration until then.
         break;
     }
     return 0;
@@ -108,7 +117,9 @@ fn prompt_detect_git_branch(cwd) {
 fn prompt_render_git(cwd) {
     var branch = prompt_detect_git_branch(cwd);
     if (branch == 0) { return str_from(""); }
-    if (is_safe_branch_name(branch) == 0) {
+    # Str-side guard: `branch` is a Str (str_new/str_substr above), so the
+    # cstring is_safe_branch_name read its header, not its text.
+    if (safe_branch_name_in_str(branch) == 0) {
         branch = strip_control_chars(branch);
     }
     var builder = str_builder_new();

@@ -167,7 +167,9 @@ fn AuditViewer_query(self, filter) {
 fn audit_format_table(entries) {
     var count = vec_len(entries);
     if (count == 0) {
-        return "No audit entries found.";
+        # str_from: this function returns a Str (str_builder_build below), so a
+        # bare cstring here would hand callers a value of the wrong shape.
+        return str_from("No audit entries found.");
     }
     var builder = str_builder_new();
     str_builder_add(builder, "TIMESTAMP                USER         ACTION     OK?      INPUT\n");
@@ -178,8 +180,14 @@ fn audit_format_table(entries) {
     for (var i = 0; i < count; i = i + 1) {
         var e = vec_get(entries, i);
         var ts = str_substr(load64(e), 0, 24);
-        var approved_str = "NO";
-        if (load64(e + 40) == 1) { approved_str = "yes"; }
+        # ⛔ str_builder_add is declared (sb, s: Str). A LITERAL at that
+        # parameter is promoted by the compiler, which is why the header and
+        # separator lines above work — but a literal held in a VARIABLE is not,
+        # so these two read load64(approved_str + 8) as a length and memcpy'd
+        # that many bytes. Verified: str_len on a variable-held cstring returns
+        # a garbage 19-digit value.
+        var approved_str = str_from("NO");
+        if (load64(e + 40) == 1) { approved_str = str_from("yes"); }
         var input_display = load64(e + 24);
         if (str_len(load64(e + 24)) > 30) {
             input_display = str_cat(str_substr(load64(e + 24), 0, 27), str_from("..."));

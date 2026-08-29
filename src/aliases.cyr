@@ -20,7 +20,9 @@ fn AliasManager_set(self, name, expansion) {
 }
 fn AliasManager_remove(self, name) {
     if (map_has(load64(self), name) == 1) {
-        map_del(load64(self), name);
+        # `map_del` was renamed `map_delete` in the stdlib; this call has been
+        # to a function that does not exist since the rename.
+        map_delete(load64(self), name);
         store64(self + 8, load64(self + 8) - 1);
         return 1;
     }

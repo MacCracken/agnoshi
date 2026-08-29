@@ -26,8 +26,13 @@
 fn tmp_state_path(stem) {
     var uid = sys_getuid();
     if (uid < 0) { uid = 0; }
-    # decimal uid, at most 20 digits
-    var ubuf[3];
+    # ⛔ FUNCTION-SCOPE `var X[N]` IS N BYTES, NOT N SLOTS. (Module-scope is 8N —
+    # the two differ, and both spellings appear in this tree.) This was declared
+    # `var ubuf[3]` in 1.9.4 against a comment saying "at most 20 digits": three
+    # bytes. A uid of 1000 writes four digits and ran one byte past the buffer;
+    # a 10-digit uid ran seven past. 24 bytes covers the 19 digits of a positive
+    # i64 with slack.
+    var ubuf[24];
     var ulen = 0;
     if (uid == 0) { store8(&ubuf, 48); ulen = 1; }
     else {

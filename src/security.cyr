@@ -54,13 +54,14 @@ fn security_get_username(uid) {
     if (n <= 0) { return str_from("unknown"); }
     store8(buf + n, 0);
     var content = str_new(buf, n);
-    var lines = str_split(content, "\n");
+    # Byte separator (10 = '\n') — see the str_split note in interpreter.cyr.
+    var lines = str_split(content, 10);
     var nlines = vec_len(lines);
     var uid_str = str_from_int(uid);
     for (var i = 0; i < nlines; i = i + 1) {
         var line = vec_get(lines, i);
         if (str_len(line) == 0) { continue; }
-        var fields = str_split(line, ":");
+        var fields = str_split(line, 58);    # 58 = ':'
         if (vec_len(fields) >= 3) {
             var field_uid = vec_get(fields, 2);
             if (str_eq(field_uid, uid_str) == 1) {

@@ -8,6 +8,14 @@
 # over silently-plausible garbage. Deferred originally because "the fallback
 # needs a policy decision"; the decision is made here.
 fn session_cwd_or_unknown() {
+    # ⛔ SYS_GETCWD is undefined for the agnos target (and there is no
+    # sys_getcwd wrapper on any target), so a bare reference would be a compile
+    # error there. agnos has no per-process cwd at all, so "?" is the honest
+    # answer rather than a stub call.
+    #ifdef CYRIUS_TARGET_AGNOS
+    return str_clone(str_from("?"));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var cwd_buf[4096];
     var rc = syscall(SYS_GETCWD, &cwd_buf, 4095);
     if (rc < 0) {
@@ -18,6 +26,7 @@ fn session_cwd_or_unknown() {
     # str_clone: cwd_buf is a module-scope buffer, so a borrowed Str would be
     # clobbered by the next caller (ADR-006 static-buf escape rule).
     return str_clone(str_from(&cwd_buf));
+    #endif
 }
 struct Session {
     mode_mgr;
@@ -41,12 +50,20 @@ fn Session_new(config, security, initial_mode) {
     var cwd = session_cwd_or_unknown();
     var username = SecurityContext_username(security);
     var prompt_ctx = PromptContext_new(cwd, username, initial_mode);
-    var history_path = str_from("/tmp/.agnsh_history");
-    var home = getenv("HOME");
-    if (home != 0) {
-        history_path = str_cat(home, str_from("/.agnsh_history"));
-    }
-    var history = CommandHistory_new(history_path, load64(config + 8));
+    # ⛔ THIS HAND-ROLLED PATH WAS BROKEN TWICE OVER, and is now redundant.
+    # (1) `str_cat(home, ...)` passed getenv's raw CSTRING as str_cat's
+    #     `a: Str` parameter, so load64(home) / load64(home+8) read the path
+    #     text as a data pointer and a length — a wild-pointer memcpy, a hard
+    #     SIGSEGV on wire-up, and one the lint shield cannot see because it
+    #     matches only literal arguments.
+    # (2) The result is a Str, but CommandHistory_new wants a cstring — it
+    #     hands the value straight to file_exists / file_open.
+    # Both disappear by calling the shared resolver: statepaths.cyr (added in
+    # 1.9.7) already returns a correct NUL-terminated cstring, already handles
+    # the HOME-unset fallback with a uid-qualified /tmp path (1.9.4), and is
+    # the same function the live binary uses — so session.cyr can no longer
+    # drift from it.
+    var history = CommandHistory_new(history_path(), load64(config + 8));
     var checkpoint = CheckpointManager_new();
     var output_fmt = OutputFormatter_default();
     var p = alloc(88);
@@ -166,14 +183,23 @@ fn Session_execute_shell(self, input) {
         if (vec_len(args) > 0) {
             var dir = vec_get(args, 0);
             if (str_byte_at(dir, 0) == 126) {
+                # Same str_cat(cstring, Str) hazard as the history path above:
+                # getenv returns a cstring and str_cat's first parameter is
+                # `a: Str`. Wrap it so both sides are real Strs.
                 var home = getenv("HOME");
                 if (home != 0) {
-                    dir = str_cat(home, str_substr(dir, 1, str_len(dir)));
+                    dir = str_cat(str_from(home), str_substr(dir, 1, str_len(dir)));
                 }
             }
             # str_cstr, not str_data — str_cat output is not NUL-terminated and
             # the kernel would read past it. (v1.3.1 MEDIUM, closed in 1.9.1.)
-            var result = syscall(SYS_CHDIR, str_cstr(dir));
+            # sys_chdir, not the raw syscall: SYS_CHDIR the CONSTANT is not defined
+            # for the agnos target at all, so `syscall(SYS_CHDIR, ...)` is an
+            # undefined-variable COMPILE ERROR there — session.cyr could never be
+            # wired in on agnos, which is the primary target. The wrapper exists on
+            # every target (agnos returns -38, "no cwd concept in ring 3"), so this
+            # compiles everywhere and degrades into the existing error branch.
+            var result = sys_chdir(str_cstr(dir));
             if (result == 0) {
                 store64(self + 72, session_cwd_or_unknown());
                 store64(load64(self + 48), load64(self + 72));
@@ -267,7 +293,13 @@ fn Session_execute_translation(self, translation) {
             var dir = vec_get(load64(translation + 8), 0);
             # str_cstr, not str_data — str_cat output is not NUL-terminated and
             # the kernel would read past it. (v1.3.1 MEDIUM, closed in 1.9.1.)
-            var result = syscall(SYS_CHDIR, str_cstr(dir));
+            # sys_chdir, not the raw syscall: SYS_CHDIR the CONSTANT is not defined
+            # for the agnos target at all, so `syscall(SYS_CHDIR, ...)` is an
+            # undefined-variable COMPILE ERROR there — session.cyr could never be
+            # wired in on agnos, which is the primary target. The wrapper exists on
+            # every target (agnos returns -38, "no cwd concept in ring 3"), so this
+            # compiles everywhere and degrades into the existing error branch.
+            var result = sys_chdir(str_cstr(dir));
             if (result == 0) {
                 store64(self + 72, session_cwd_or_unknown());
                 store64(load64(self + 48), load64(self + 72));

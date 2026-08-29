@@ -4,6 +4,114 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.8] - 2026-08-29 — two of the "latent" defects were live, and one of them was mine
+
+Final numbered slice of the v1.9.x hardening arc
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)). The slice was framed as
+"latent defects in the non-compiled modules". Verifying each claim before fixing it found that two
+were **not** latent, and turned up a third that no audit had reported.
+
+### Fixed — a pipeline was detected and then never split *(live)*
+
+⛔ `str_split(trimmed, " | ")` in `src/interpreter.cyr` — a **compiled** module. `str_split`'s `sep`
+parameter is **unannotated**, so a bare literal is not promoted to `Str` the way it is for
+`needle: Str` on the `str_contains` call directly above it. The raw literal address is > 256, so
+`str_split_a` takes its Str path and reads `load64(sep)` / `load64(sep+8)` — the literal's own bytes
+— as a data pointer and a length.
+
+Measured through the real parser: `ls | grep foo` produced tag 41 (PIPELINE) with **one** stage.
+Detection worked; the split never happened. Now two.
+
+⚠ **This exact bug had already been found once and fixed in one place.** `history.cyr` carries a
+comment explaining it switched to the byte form because the cstring-needle path "returned the whole
+buffer as a single Str on a first probe" — and the same pattern was left in five other call sites
+(`interpreter.cyr`, `output.cyr` ×3, `security.cyr` ×2). All six are now either byte separators or
+explicit `str_from`.
+
+### Fixed — `audit_format_table` read a garbage length *(live module, dead call)*
+
+⛔ It held its `"NO"` / `"yes"` literals in **variables** and passed them to Str-typed
+`str_builder_add`. A literal *at* that parameter is promoted by the compiler — which is why the
+header and separator lines worked — but a variable-held one is not, so it read
+`load64(approved_str + 8)` as a length and `memcpy`'d that many bytes. Confirmed directly:
+`str_len` on a variable-held cstring returns a garbage 19-digit value. It also returned a bare
+cstring from its empty-input path while every other return is a Str. Nothing calls it today, so it
+was dead-but-compiled — and it is now tested.
+
+### Fixed — a 134-byte overflow on every prompt render
+
+⛔ `PromptContext_new` handed a **function-scope** `var hostname_buf[256]` to `uname(2)`, which
+writes a whole `struct utsname` — six 65-byte fields, **390 bytes**. The read afterwards takes
+`nodename` at offset 65, which is correct; the buffer was simply sized for one field instead of the
+struct the kernel fills.
+
+### Fixed — a 7-byte overflow I introduced in 1.9.4
+
+⛔ `tmp_state_path` declared `var ubuf[3]` under a comment reading "decimal uid, at most 20 digits".
+Function-scope `var X[N]` is **N bytes**, so that is three. A uid of 1000 writes four digits and ran
+one byte past; a 10-digit uid ran seven past. Found by sweeping the whole buffer class rather than
+by reading the audit list — **it was in code this arc shipped four releases ago.**
+
+### Fixed — `session.cyr` could never be wired in on agnos at all
+
+⛔ It called the raw `syscall(SYS_CHDIR, …)` and `syscall(SYS_GETCWD, …)`. Those **constants are
+undefined for the agnos target**, so those lines are undefined-variable *compile errors* there — not
+the runtime `-38` that had been assumed. The distinction is exact: `sys_chdir` the *wrapper* does
+exist on agnos (returning −38); `SYS_CHDIR` the *constant* does not. Now routed through the wrapper,
+with `getcwd` `#ifdef`-guarded to return `"?"` on agnos, which has no per-process cwd at all.
+
+### Fixed — the rest of the tracked list
+
+- `session.cyr` hand-rolled its history path with `str_cat(getenv-cstring, Str)` — a wild-pointer
+  `memcpy`, and the lint shield cannot see it because it matches only *literal* arguments — and then
+  handed the resulting `Str` to `CommandHistory_new`, which wants a cstring. **Both disappear by
+  calling `history_path()`**, the shared resolver `statepaths.cyr` gained in 1.9.7: it is already
+  correct, already handles the uid-qualified `/tmp` fallback, and is the same function the live
+  binary uses, so the two can no longer drift.
+- The same `str_cat(cstring, Str)` shape in session.cyr's `~` expansion.
+- `prompt.cyr` passed a `Str` to the cstring-typed `is_safe_branch_name`, so the ANSI-escape guard on
+  a value read out of `.git/HEAD` never fired — a crafted ref name could put escape sequences
+  straight into the rendered prompt. Fixed with an ADR-006 `_in_str` twin, matching the pattern 1.9.1
+  used for commit messages.
+- `aliases.cyr` called `map_del`, which does not exist — the stdlib name is `map_delete`.
+
+### Not fixed, deliberately
+
+- **`checkpoint.cyr` needs 7 stdlib symbols that no longer exist** — `fs_basename`, `fs_copy`,
+  `fs_exists`, `fs_is_dir`, `fs_mkdir_p`, `fs_remove`, `fs_rename`. Verified absent from the whole
+  6.5.36 snapshot. That is a re-implementation, not a defect fix, and it belongs with the checkpoint
+  wire-up.
+- **`prompt.cyr`'s git parent-walk is unblocked but not implemented.** `path_dirname(path: Str)`
+  ships in `lib/fs.cyr:57` and does exactly what the TODO asked for, so the blocker is gone and the
+  comment now says so. Writing the loop here would be adding new logic to a module that is not in
+  the include graph — unexecutable and untestable. It belongs with the wire-up, where it can be run.
+
+### Method
+
+⚠ **One agent-reported claim was wrong, and I nearly "fixed" working code on the strength of it.**
+Two comments in `run_agnos.cyr` appeared to contradict each other about buffer sizing, which made
+`var sh_env_blob[128]` look like a 128-byte buffer with a 1024-byte clamp — an 896-byte overflow on
+the primary target's exec path. A direct probe settled it: **module-scope `var X[N]` is 8N bytes,
+function-scope is N bytes.** The comments describe different scopes and are both right.
+`sh_env_blob` is 1024 bytes and correct; so are `rl_buf[512]`, `job_pid[8]` and `job_cmd[128]`.
+
+The same probe is what proved `hostname_buf[256]` and `ubuf[3]` *are* real — the rule cuts both
+ways, and a sweep of the buffer class was worth more than the audit's list.
+
+### Tests
+
+**506 → 523 unit**, 26 security, 88 smoke; coverage **161/180 host-reachable (89%)**. New assertions
+cover the pipeline split (two and three stages, plus the ` then ` form, plus the underlying
+`str_split` contract so the *reason* stays pinned), `safe_branch_name_in_str` against escapes /
+newline / DEL, and `audit_format_table` rendering both rows and both approval columns.
+
+### Notes
+
+- All three targets warning-free; all gates green; benchmarks unchanged.
+- **The v1.9.x hardening arc's numbered slices are complete.** What remains on the roadmap is the
+  standing agnos verification debt and five carry-overs, none of which is a defect.
+
+
 ## [1.9.7] - 2026-08-29 — the coverage gate was measuring the modules it already knew were covered
 
 Sixth slice of the v1.9.x hardening arc

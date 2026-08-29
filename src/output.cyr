@@ -41,7 +41,8 @@ fn output_format_json(output) {
     return str_builder_build(builder);
 }
 fn output_format_table(output) {
-    var lines = str_split(output, "\n");
+    # Byte separator (10 = '\n') — see the str_split note in interpreter.cyr.
+    var lines = str_split(output, 10);
     var nlines = vec_len(lines);
     if (nlines == 0) { return output; }
     var all_rows = vec_new();
@@ -49,9 +50,9 @@ fn output_format_table(output) {
     for (var i = 0; i < nlines; i = i + 1) {
         var line = vec_get(lines, i);
         if (str_len(line) == 0) { continue; }
-        var cols = str_split(line, "\t");
+        var cols = str_split(line, 9);       # 9 = '\t'
         if (vec_len(cols) <= 1) {
-            cols = str_split(line, "  ");
+            cols = str_split(line, str_from("  "));
         }
         vec_push(all_rows, cols);
         if (vec_len(cols) > max_cols) {
