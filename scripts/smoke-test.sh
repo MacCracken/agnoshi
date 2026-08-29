@@ -108,7 +108,11 @@ check "command field has ls" "Command: ls" "$out"
 out=$("$BIN" -c "what is dns" 2>&1)
 check "question hint surfaces" "Hint: question intent" "$out"
 out=$("$BIN" -c "ls | grep foo" 2>&1)
-check "pipeline hint surfaces" "Hint: pipeline intent" "$out"
+# The hint text changed in 1.9.2. It used to read "auto-exec arrives with the
+# exec wire-up", which had been false for six releases — pipelines DO auto-exec
+# on agnos. Assert on the stable "Hint: pipeline" prefix rather than re-pinning
+# a full sentence that will drift again.
+check "pipeline hint surfaces" "Hint: pipeline" "$out"
 out=$("$BIN" -c "remove ../etc/passwd" 2>&1)
 check "safety-reject hint surfaces" "Hint: translator safety check rejected" "$out"
 # Happy-path inputs should NOT carry a hint line.
@@ -259,6 +263,55 @@ else
     FAILED_TESTS="$FAILED_TESTS
   FAIL: binary size $SIZE > 512KB limit"
 fi
+
+# ---- 1.9.2: the EXEC surface is audited ----
+# Before 1.9.2 every path that actually ran a program wrote ZERO audit records:
+# `agnsh -c 'run /bin/echo'` executed the program and did not even create the
+# log file, so the audit trail contained only the actions that never happened.
+# These cases fail loudly if that regresses.
+EXEC_HOME=$(mktemp -d)
+EXEC_LOG="$EXEC_HOME/.agnsh_audit.log"
+HOME="$EXEC_HOME" "$BIN" -c "run /bin/echo" >/dev/null 2>&1 || true
+HOME="$EXEC_HOME" "$BIN" -c "run /bin/false" >/dev/null 2>&1 || true
+HOME="$EXEC_HOME" "$BIN" -c "run /tmp/x;evil" >/dev/null 2>&1 || true
+if [ -f "$EXEC_LOG" ]; then
+    exec_log=$(cat "$EXEC_LOG")
+    PASS=$((PASS + 1))
+else
+    exec_log=""
+    FAIL=$((FAIL + 1))
+    FAILED_TESTS="$FAILED_TESTS
+  FAIL: exec audit log not created at $EXEC_LOG"
+fi
+# A launch writes a pre-exec record so a program that hangs or kills the shell
+# still leaves a trace, then an outcome record.
+check "exec audit: launched record" '"result":"launched"' "$exec_log"
+check "exec audit: clean exit -> executed + code 0" '"result":"executed","exit_code":0' "$exec_log"
+check "exec audit: non-zero exit -> failed + code 1" '"result":"failed","exit_code":1' "$exec_log"
+# A refusal must be recorded too, and must NOT read as approved.
+check "exec audit: refusal recorded as denied" '"result":"denied"' "$exec_log"
+check "exec audit: refusal is not approved" '"approved":0,"result":"denied"' "$exec_log"
+# exit_code is always present, and null (never the raw sentinel) when N/A.
+check "exec audit: exit_code null when N/A" '"exit_code":null' "$exec_log"
+if echo "$exec_log" | grep -q "999999"; then
+    FAIL=$((FAIL + 1))
+    FAILED_TESTS="$FAILED_TESTS
+  FAIL: exec audit leaked the AUDIT_NO_EXIT sentinel into the record"
+else
+    PASS=$((PASS + 1))
+fi
+# Every emitted line must still be valid JSON.
+if command -v python3 >/dev/null 2>&1; then
+    if python3 -c "import json,sys
+[json.loads(l) for l in open('$EXEC_LOG')]" >/dev/null 2>&1; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS="$FAILED_TESTS
+  FAIL: exec audit log is not valid JSON"
+    fi
+fi
+rm -rf "$EXEC_HOME"
 
 echo ""
 echo "Passed: $PASS"

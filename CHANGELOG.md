@@ -4,6 +4,127 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.2] - 2026-08-29 — the audit log now records what the shell DID, not just what it considered
+
+First slice of the v1.9.x hardening arc opened by the 2026-08-29 P(-1)
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)).
+
+### Fixed — every path that actually executed a program wrote zero audit records
+
+⛔ **`audit_one_shot` was reached only from `print_intent_result`, which runs only when NOTHING has
+executed.** The `run` builtin, bareword launch, pipelines, redirection and background jobs all
+skipped it entirely. Reproduced on 1.9.1:
+
+```
+$ HOME=$tmp agnsh -c 'run /bin/echo'     # the program runs, exit 0
+$ ls $tmp/.agnsh_audit.log               # No such file — not even created
+$ HOME=$tmp agnsh -c 'show files'        # executes NOTHING
+$ cat $tmp/.agnsh_audit.log              # ...and this one IS recorded
+```
+
+⇒ **The audit log contained exactly the actions that never happened, while the entire real
+execution surface was invisible.** On agnos it was worse in both directions: `owl /x >
+/.agnsh_audit.log` truncated the shell's own audit trail and left no record of the redirect either
+before or after. This directly contradicted CLAUDE.md's "every command must be auditable".
+
+**Now audited, on both targets:**
+
+| path | target | records |
+|---|---|---|
+| `run /abs/path` | host + agnos | `launched` → `executed` / `failed` / `error` |
+| bareword `/bin/<name>` | agnos | via `sh_run_program` (same pair) |
+| `cmd1 \| cmd2` | agnos | `launched` → outcome (stage 2's status, matching the return contract) |
+| `cmd > file` | agnos | `launched` → outcome |
+| `prog &` | agnos | `launched` at spawn, outcome at reap |
+| every refusal on all of the above | both | `denied` with `approved:0` |
+
+### Added — a launch record is written BEFORE the child starts
+
+⚠ **The pair is the point.** A foreground child can hang forever, kill the shell, or — for
+`reboot`/`poweroff`/`halt` — take the whole machine down. An outcome-only record leaves no trace of
+any of those. **A `launched` line with no matching outcome IS the signal**, and it is the only way
+a hang or a machine-death shows up in the trail at all.
+
+Background jobs get the same treatment across a much wider gap: the launch is recorded at spawn and
+the outcome at `job_reap_poll`, which can be many prompt ticks later.
+
+- The job table gained a **per-job command slot** (8 × 128 B, matching the 127-char cap
+  `sh_run_program_bg` already enforced). Without it the reap knew only a pid, and "[3] Done" is not
+  an audit record.
+- ⚠ The reap deliberately does **not** use the dispatch context for `input`. A reap happens at some
+  later prompt tick, so the context points at whatever the user most recently typed — attributing
+  the completion to that line would be an actively wrong record. The command stored at launch is
+  the honest answer.
+
+### Added — `exit_code` on the audit record
+
+`AuditEntry` carries the child's status, serialised as a bare number when one applies and JSON
+`null` when it does not (a refusal, or the pre-launch line) — never the raw sentinel, which a
+consumer could misread as a real status. `AuditEntry_new` keeps its 6-argument shape so the
+parse-time call sites and their tests are untouched; `AuditEntry_new_x` carries the code.
+
+**The two vocabularies are deliberately disjoint.** The six parse-time labels
+(`proposed` / `needs_approval` / `blocked` / `rejected_safety` / `needs_llm` / `needs_exec`)
+describe what the shell **decided**; the five exec labels
+(`launched` / `executed` / `failed` / `error` / `denied`) describe what it **did**. One `select`
+now separates them:
+
+```bash
+jq 'select(.result == "executed" or .result == "failed")' ~/.agnsh_audit.log
+```
+
+⚠ The 1.3.0 comment promised that `"proposed"` would be *replaced* by executed/denied/error once
+exec landed. That turned out to be the wrong shape — a proposal and an execution are different
+events and both deserve a record — so the note has been corrected rather than honoured.
+
+### Security — `>` no longer truncates the shell's own state files
+
+`cmd > file` opens the target `AO_TRUNC`, so `owl /x > /.agnsh_audit.log` erased the audit trail.
+The redirect path now refuses a target equal to `audit_log_path()` or `history_path()`, and records
+the attempt as `denied`.
+
+⚠ **Scope, stated plainly**: this is an exact-string comparison against the resolved path. It stops
+the direct case, not every alias (`//.agnsh_audit.log`, a symlink, a bind mount) — closing that
+needs canonicalisation, and agnos has no `realpath`. **It is a foot-gun guard, not a security
+boundary**: an actor who can already run arbitrary `/bin` programs has other ways to truncate a
+file. What it does guarantee is that the accidental case is refused and that either way the attempt
+is now on the record.
+
+### Changed
+
+- **Exec audit is dispatch-context-scoped**, set once per input line at the two dispatch entry
+  points, rather than threaded as a parameter through the launch chain. Threading it would have
+  meant changing five function signatures inside `#ifdef CYRIUS_TARGET_AGNOS` — code that cannot be
+  executed on a Linux host. A context set at the entry points is verifiable on both targets.
+- `audit_exec_outcome` moved to `src/audit.cyr` (pure, and it belongs beside the record it labels)
+  and is the single mapping point, so no call site re-decides `<0 / 0 / >0`. The duplicate sentinel
+  was folded into `AUDIT_NO_EXIT`.
+- **Stale comments cleared.** The pipeline hint still read "auto-exec arrives with the exec
+  wire-up" — false since 1.8.0, six releases earlier; pipelines *do* auto-exec on agnos. It now
+  distinguishes the agnos case (stages must be `/bin` programs) from the host case (parse-only).
+
+### Tests
+
+366 unit (was 356) + 26 security + **68 smoke (was 59)**. The smoke additions are the real guard
+here: they run the binary, then assert the log exists, that a launch/outcome pair is present, that
+a refusal is recorded with `approved:0`, that `exit_code` is `null` rather than the sentinel when
+inapplicable, and that **every emitted line parses as JSON**.
+
+### Notes
+
+- Binary 315,408 → 315,512 B (+104). Benchmarks unchanged — the audit fires only on exec paths,
+  none of which are benchmarked.
+- ⚠ **Verification is asymmetric and worth stating.** The `run` path (host + agnos code shared) was
+  exercised end-to-end on the host: clean exit, non-zero exit, missing binary, and all four refusal
+  branches. The **agnos-only** launchers — pipeline, redirect, background — are **compile-verified
+  on all three targets and code-reviewed, but not executed**; they need an agnos smoke case on
+  iron. That gap is why this slice was deferred out of 1.9.1 in the first place, and it is now
+  narrower but not closed.
+- One host-side limitation, unchanged: `run /bin/does-not-exist` records `failed` with
+  `exit_code:127`, not `error`. With fork/exec the child exits 127 when exec fails, so the parent
+  cannot distinguish it from a program that genuinely exited 127.
+
+
 ## [1.9.1] - 2026-08-29 — P(-1) sweep: the risk classifier was dead on every direct command
 
 Full P(-1) audit/refactor/hardening/optimization/security cycle. Eight review dimensions, each

@@ -14,35 +14,17 @@ Items leave this file when they ship; they are not marked done and kept.
 **This is the immediate next work.** The 1.9.1 sweep fixed 35 finding-clusters and left these
 deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
-severity, not by convenience.
-
-### 1.9.2 — Audit the execution surface *(highest severity open item)*
-
-⛔ **Every path that actually executes a program writes zero audit records.** `audit_one_shot`
-is reached only from `print_intent_result`, which runs only when *nothing* has executed. The
-`run` builtin, bareword launch, pipelines, redirection and background jobs all skip it.
-Verified: `agnsh -c 'run /bin/echo'` runs the program and creates **no audit file at all**.
-
-⇒ The only actions the audit log records are the ones that never happened, while the entire real
-execution surface is invisible. On agnos, `owl /x > /.agnsh_audit.log` truncates the shell's own
-log and leaves no record either time. This directly contradicts CLAUDE.md's "every command must
-be auditable" and is the single largest gap between what agnoshi claims and what it does.
-
-Deferred out of 1.9.1 because it spans five launch sites almost entirely inside
-`#ifdef CYRIUS_TARGET_AGNOS`, unexercisable on a Linux host — landing it half-wired would be
-worse than landing it deliberately.
-
-- Factor `audit_exec(input, cmd, mode_label, result_label, exit_code)` out of `audit_one_shot`.
-- Call it from `sh_run_program` (both return points), `sh_run_program_bg`, `sh_run_pipeline`,
-  `sh_run_redirect`, and the `run` builtin's refusal branches.
-- Use the vocabulary the code already promises at `agnsh.cyr:163-175`: `executed` / `denied` /
-  `error`, and delete the stale TODO there that still says so.
-- Log the launch *intent* before exec and the outcome after, so a program that never returns
-  still leaves a record.
-- Refuse a redirect target equal to `audit_log_path()` / `history_path()`.
-- Needs an agnos smoke case; cannot be verified on the host alone.
+severity, not by convenience. (1.9.2, the exec-audit slice, shipped — see the CHANGELOG;
+its residual agnos verification moved into 1.9.3.)
 
 ### 1.9.3 — Exec-path error handling (agnos)
+
+⚠ **Carried over from 1.9.2**: the exec audit surface shipped, but its agnos-only half —
+pipeline, redirect and background-job records — is **compile-verified and code-reviewed, not
+executed**. The `run` path was exercised end-to-end on the host; the rest needs an agnos smoke
+case on iron. Fold that verification into this slice, since it touches the same launchers:
+assert a `launched` line plus a matching outcome for `cmd1 | cmd2`, `cmd > file` and `prog &`,
+and confirm `> /.agnsh_audit.log` is refused and recorded.
 
 - **One-shot redirect sentinel collision** — `sh_run_redirect` returns `sh_exec_line`'s `-1`
   launch-failure code, which the dispatcher reads as "not a redirect, fall through", so a failed
@@ -110,7 +92,7 @@ All six carry a named benchmark; none is speculative.
   parsing helpers or an agnos-side harness. Decide which.
 - **The coverage gate's denominator omits five modules that are in the binary today**, so the
   reported figure overstates real coverage.
-- No test asserts an audit record is produced for an executed command (blocked on 1.9.2).
+- ✅ *(closed in 1.9.2)* Smoke now asserts the exec audit end-to-end: log created, launch/outcome pair present, refusal recorded with `approved:0`, `exit_code` null rather than the sentinel when inapplicable, and every line valid JSON. Still missing: the same assertions on the **agnos-only** launchers — see the 1.9.3 carry-over.
 
 ### 1.9.8 — Latent defects in the non-compiled modules
 

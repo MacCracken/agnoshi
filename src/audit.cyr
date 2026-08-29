@@ -6,10 +6,21 @@ struct AuditEntry {
     action;
     approved;
     result;
+    exit_code;
 }
+# Sentinel for "this record describes something that never ran, so an exit code
+# is not meaningful". Emitted as JSON `null` rather than a magic number so a
+# consumer cannot mistake it for a real status. Real codes are 0..255 and
+# launch failures are small negatives, so this cannot collide.
+var AUDIT_NO_EXIT = 0 - 999999;
 fn AuditEntry_new(user, mode, input, action, approved, result) {
+    return AuditEntry_new_x(user, mode, input, action, approved, result, AUDIT_NO_EXIT);
+}
+# Exit-code-carrying constructor. AuditEntry_new stays 6-arg so the parse-time
+# (non-exec) call sites and their tests are untouched.
+fn AuditEntry_new_x(user, mode, input, action, approved, result, exit_code) {
     var ts = chrono_now_rfc3339();
-    var p = alloc(56);
+    var p = alloc(64);
     store64(p, ts);
     store64(p + 8, user);
     store64(p + 16, mode);
@@ -17,7 +28,21 @@ fn AuditEntry_new(user, mode, input, action, approved, result) {
     store64(p + 32, action);
     store64(p + 40, approved);
     store64(p + 48, result);
+    store64(p + 56, exit_code);
     return p;
+}
+# Map a launcher's return value to an exec-surface result label. Lives here
+# beside the record it labels, and is the SINGLE mapping point so no call site
+# re-decides it. Negative = launch failure (every launcher's convention),
+# 0 = clean exit, positive = the child's own non-zero status.
+#
+# These five labels (launched / executed / failed / error / denied) are
+# deliberately DISJOINT from classify_audit_result's six parse-time labels, so
+# one `select` separates what the shell DID from what it merely considered.
+fn audit_exec_outcome(exit_code) {
+    if (exit_code < 0) { return "error"; }
+    if (exit_code == 0) { return "executed"; }
+    return "failed";
 }
 fn AuditEntry_to_json(self) {
     var builder = str_builder_new();
@@ -35,7 +60,15 @@ fn AuditEntry_to_json(self) {
     str_builder_add(builder, str_from_int(load64(self + 40)));
     str_builder_add(builder, ",\"result\":\"");
     str_builder_add(builder, json_escape(load64(self + 48)));
-    str_builder_add(builder, "\"}");
+    # exit_code is always present so the record shape is stable for consumers;
+    # `null` when the entry describes something that never ran.
+    str_builder_add(builder, "\",\"exit_code\":");
+    if (load64(self + 56) == AUDIT_NO_EXIT) {
+        str_builder_add(builder, "null");
+    } else {
+        str_builder_add(builder, str_from_int(load64(self + 56)));
+    }
+    str_builder_add(builder, "}");
     return str_builder_build(builder);
 }
 struct AuditLogger { file_path; }

@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.9.1 · Cyrius 6.5.36 · 22 modules · ~5 K src lines · 308 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 356 unit + 26 security + 59 smoke tests**
+**1.9.2 · Cyrius 6.5.36 · 22 modules · ~5 K src lines · 308 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 366 unit + 26 security + 68 smoke tests**
 
 ## Features
 

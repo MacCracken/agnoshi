@@ -30,18 +30,35 @@
 # ===================================================================================
 var job_pid[8];          # child pids of live background jobs
 var job_num[8];          # the "[n]" job number shown to the user
+# Command line per live job — 8 slots x 128 bytes ([128] = 1024 B, 8N). Needed
+# so job_reap_poll can say WHAT finished in the audit record: the reap happens
+# long after the launch, the caller's line buffer has been reused by then, and
+# a bare pid is not an audit trail. 128 matches the 127-char cap that
+# sh_run_program_bg already enforces, so a stored command is never truncated.
+var job_cmd[128];
 var job_count = 0;       # live jobs in [0, job_count)
 var job_next_num = 1;    # monotonic job-number counter
 
 fn job_any(): i64 { return job_count; }
 
 # Record a freshly-spawned bg child + announce it as "[n] <pid>".
-fn job_add(pid): i64 {
+fn job_add(pid, cmd): i64 {
     if (job_count >= 8) { println("run: too many background jobs (max 8)"); return 0 - 1; }
     var n = job_next_num;
     job_next_num = job_next_num + 1;
     store64(&job_pid + job_count * 8, pid);
     store64(&job_num + job_count * 8, n);
+    # Copy (not borrow) the command: the caller's buffer is the reused line
+    # buffer and this outlives the current dispatch.
+    var dst = &job_cmd + job_count * 128;
+    var ci = 0;
+    while (ci < 127) {
+        var cb = load8(cmd + ci);
+        if (cb == 0) { break; }
+        store8(dst + ci, cb);
+        ci = ci + 1;
+    }
+    store8(dst + ci, 0);
     job_count = job_count + 1;
     str_print(str_from("[")); str_print(str_from_int(n)); str_print(str_from("] "));
     str_print(str_from_int(pid)); println("");
@@ -59,9 +76,19 @@ fn job_reap_poll(): i64 {
         if (r != 0 - 2) {                                   # exited (not WOULD_BLOCK)
             var n = load64(&job_num + i * 8);
             str_print(str_from("[")); str_print(str_from_int(n)); println("] Done");
+            # The background half of the exec audit surface. The launch wrote a
+            # `launched` line; this is its matching outcome, and without it a bg
+            # job was the one execution path that could complete with no record
+            # of having finished at all.
+            audit_exec_bg_done(&job_cmd + i * 128, r);
             job_count = job_count - 1;                       # compact: last slot -> i
             store64(&job_pid + i * 8, load64(&job_pid + job_count * 8));
             store64(&job_num + i * 8, load64(&job_num + job_count * 8));
+            # Move the last slot's command with its pid/num.
+            var src = &job_cmd + job_count * 128;
+            var dst2 = &job_cmd + i * 128;
+            var cj = 0;
+            while (cj < 128) { store8(dst2 + cj, load8(src + cj)); cj = cj + 1; }
             # do NOT advance i — re-check the swapped-in slot
         } else { i = i + 1; }
     }
@@ -88,11 +115,18 @@ fn sh_strip_trailing_amp(line): i64 {
 # Mirrors sh_run_program's mode gate (HUMAN/STRICT confirm; AUTO/ASSIST run directly).
 fn sh_run_program_bg(cmd, mode): i64 {
     if (mode_needs_confirm(mode) == 1) {
-        if (verb_confirm(str_cat3_cstr("run ", cmd, " &")) == 0) { return 1; }
+        if (verb_confirm(str_cat3_cstr("run ", cmd, " &")) == 0) {
+            audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
+            return 1;
+        }
     }
     var len = 0;
     while (load8(cmd + len) != 0) { len = len + 1; }
-    if (len > 127) { println("run: command too long for a background job (max 127)"); return 1; }
+    if (len > 127) {
+        println("run: command too long for a background job (max 127)");
+        audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
     # Literal 43 = spawn_path (the literal-37 execwait precedent below): lib/ is the
     # gitignored, `cyrius update`-regenerated stdlib snapshot, so an enum added THERE is
     # silently lost on regeneration — committed src must not depend on it. (1.6.1 fix: the
@@ -102,8 +136,19 @@ fn sh_run_program_bg(cmd, mode): i64 {
     var pid = 0 - 1;
     if (blen > 0) { pid = syscall(43, cmd, len, &sh_env_blob, blen); }
     else { pid = syscall(43, cmd, len, 0, 0); }
-    if (pid < 0) { println("run: failed to launch background job"); return 1; }
-    job_add(pid);
+    if (pid < 0) {
+        println("run: failed to launch background job");
+        audit_exec_ctx(cmd, "error", pid);
+        return 1;
+    }
+    # job_add can still refuse (table full). Audit what actually happened rather
+    # than assuming success: an unrecorded child is exactly the case that must
+    # not vanish from the trail.
+    if (job_add(pid, cmd) < 0) {
+        audit_exec_ctx(cmd, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
+    audit_exec_ctx(cmd, "launched", AUDIT_NO_EXIT);
     return 0;
 }
 
@@ -344,24 +389,58 @@ fn sh_run_pipeline(line, mode): i64 {
     while (load8(line + llen) != 0) { llen = llen + 1; }
     var cmd1 = _sh_bin_segment(line, 0, pi);          # [0, pi)   — _sh_bin_segment rtrims any gap before '|'
     var cmd2 = _sh_bin_segment(line, pi + 1, llen);   # (pi, end) — _sh_bin_segment ltrims any gap after '|'
-    if (cmd1 == 0) { println("run: empty pipeline stage before '|'"); return 1; }
-    if (cmd2 == 0) { println("run: empty pipeline stage after '|'"); return 1; }
+    if (cmd1 == 0) {
+        println("run: empty pipeline stage before '|'");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    if (cmd2 == 0) {
+        println("run: empty pipeline stage after '|'");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
     # Validate EACH stage individually — the '|' is split out, so no stage holds it.
-    if (is_safe_path(cmd1) == 0) { println("run: unsafe path in pipeline stage 1"); return 1; }
-    if (is_safe_path(cmd2) == 0) { println("run: unsafe path in pipeline stage 2"); return 1; }
+    if (is_safe_path(cmd1) == 0) {
+        println("run: unsafe path in pipeline stage 1");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    if (is_safe_path(cmd2) == 0) {
+        println("run: unsafe path in pipeline stage 2");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
     # Both stages must EXIST before we open the pipe + arm any redirect — else a missing
     # cmd1/cmd2 fails its #37 with the fd-swap armed, dangling onto the NEXT command (same
     # one-shot-redirect hazard the `>` path guards against).
-    if (_sh_bin_probe(cmd1) == 0) { println("run: no such command in pipeline stage 1"); return 1; }
-    if (_sh_bin_probe(cmd2) == 0) { println("run: no such command in pipeline stage 2"); return 1; }
+    if (_sh_bin_probe(cmd1) == 0) {
+        println("run: no such command in pipeline stage 1");
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
+    if (_sh_bin_probe(cmd2) == 0) {
+        println("run: no such command in pipeline stage 2");
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
     # HUMAN/STRICT confirm the whole pipeline BEFORE arming any redirect (verb_confirm
     # never execs, so it can't consume the one-shot redirect).
     if (mode_needs_confirm(mode) == 1) {
-        if (verb_confirm(str_cat3_cstr("run pipeline: ", line, "")) == 0) { return 1; }
+        if (verb_confirm(str_cat3_cstr("run pipeline: ", line, "")) == 0) {
+            audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+            return 1;
+        }
     }
+    # Written before the pipe is wired and either stage is spawned: from here on
+    # the shell has committed, and a stage that hangs must still leave a trace.
+    audit_exec_ctx(line, "launched", AUDIT_NO_EXIT);
     # Wire the pipe. var X[N] is N BYTES at function scope, so [16] = two u64 slots.
     var fds[16];
-    if (sh_pipe(&fds) != 0) { println("run: pipe() failed"); return 1; }
+    if (sh_pipe(&fds) != 0) {
+        println("run: pipe() failed");
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
     var rfd = load64(&fds);
     var wfd = load64(&fds + 8);
     # Stage 1: stdout -> pipe write end; runs to completion, fills the buffer, exits
@@ -387,7 +466,13 @@ fn sh_run_pipeline(line, mode): i64 {
     # `grep . /etc/ssl/cert.pem | wc` reported **4080** — the ring size, to the byte.
     sh_exec_redirect(1, wfd);
     var pid1 = _sh_pipe_spawn(cmd1);
-    if (pid1 < 0) { println("run: failed to launch pipeline stage 1"); sys_close(wfd); sys_close(rfd); return 1; }
+    if (pid1 < 0) {
+        println("run: failed to launch pipeline stage 1");
+        sys_close(wfd);
+        sys_close(rfd);
+        audit_exec_ctx(line, "error", pid1);
+        return 1;
+    }
     # ⛔ CLOSE OUR WRITE END NOW, BEFORE STAGE 2 EXISTS. The kernel decides EOF by scanning for ANY
     # open write end anywhere on the box; stage 1 holds its own copy, so this drops only the SHELL's
     # claim. Leave it open and stage 2 never sees EOF even after the producer exits — and cmd1 exiting
@@ -397,10 +482,18 @@ fn sh_run_pipeline(line, mode): i64 {
     # drains while stage 1 writes and sees a genuine EOF once stage 1's write end is gone.
     sh_exec_redirect(0, rfd);
     var pid2 = _sh_pipe_spawn(cmd2);
-    if (pid2 < 0) { println("run: failed to launch pipeline stage 2"); _sh_pipe_reap(pid1); sys_close(rfd); return 1; }
+    if (pid2 < 0) {
+        println("run: failed to launch pipeline stage 2");
+        _sh_pipe_reap(pid1);
+        sys_close(rfd);
+        audit_exec_ctx(line, "error", pid2);
+        return 1;
+    }
     var rc2 = _sh_pipe_reap(pid2);
     _sh_pipe_reap(pid1);                            # producer normally exits first; reap it regardless
     sys_close(rfd);
+    # The pipeline's exit status is stage 2's, matching the return contract.
+    audit_exec_ctx(line, audit_exec_outcome(rc2), rc2);
     return rc2;
 }
 
@@ -483,30 +576,85 @@ fn sh_run_redirect(line, mode): i64 {
     while (load8(line + llen) != 0) { llen = llen + 1; }
     var cmd = _sh_bin_segment(line, 0, ri);          # "/bin/<cmd [args]>"
     var file = _sh_path_segment(line, ri + 1, llen); # the target file path
-    if (cmd == 0) { println("run: empty command before '>'"); return 1; }
-    if (file == 0) { println("run: no file after '>'"); return 1; }
+    if (cmd == 0) {
+        println("run: empty command before '>'");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    if (file == 0) {
+        println("run: no file after '>'");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
     # Validate EACH side individually — the '>' is split out, so neither holds it. This is
     # the injection guard (audit C2): a metachar in cmd or file is rejected right here.
-    if (is_safe_path(cmd) == 0) { println("run: unsafe path in command"); return 1; }
-    if (is_safe_path(file) == 0) { println("run: unsafe redirect target"); return 1; }
+    if (is_safe_path(cmd) == 0) {
+        println("run: unsafe path in command");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    if (is_safe_path(file) == 0) {
+        println("run: unsafe redirect target");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    # ⛔ REFUSE TO REDIRECT OVER THE SHELL'S OWN STATE FILES. The target is opened
+    # AO_TRUNC, so `owl /x > /.agnsh_audit.log` truncated the audit trail — and,
+    # before 1.9.2, left no record of having done so, in either direction. An audit
+    # log that a single ordinary command can silently erase is not an audit log.
+    # Checked here rather than in is_safe_path because these are agnsh-specific
+    # paths, not a general traversal/metachar property.
+    #
+    # ⚠ SCOPE: this is an exact-string comparison against the resolved path, so
+    # it stops the direct `> /.agnsh_audit.log` case, not every alias of it
+    # (`//.agnsh_audit.log`, a symlink pointing at it, a bind mount). Closing
+    # that properly needs canonicalisation, which agnos has no realpath for.
+    # It is a foot-gun guard, NOT a security boundary — an actor who can already
+    # run arbitrary /bin programs has other ways to truncate a file. What it
+    # does guarantee is that the *accidental* case is refused and, either way,
+    # the attempt is now recorded.
+    if (streq(file, audit_log_path()) == 1) {
+        println("run: refusing to redirect over the shell's audit log");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    if (streq(file, history_path()) == 1) {
+        println("run: refusing to redirect over the shell's history file");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
     # Probe the command EXISTS before opening the target or arming the one-shot redirect.
     # Otherwise a typo (`notacmd > f`) would arm exec_redirect#62, then #37 fails on the
     # missing binary BEFORE the kernel consumes/restores it — leaving the redirect live to
     # swallow the NEXT command's stdout. Probing first = no dangling arm, and no empty
     # target file created for a typo.
-    if (_sh_bin_probe(cmd) == 0) { println("run: no such command"); return 1; }
+    if (_sh_bin_probe(cmd) == 0) {
+        println("run: no such command");
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
     # HUMAN/STRICT confirm BEFORE opening/arming (verb_confirm never execs, so it can't
     # consume the one-shot redirect).
     if (mode_needs_confirm(mode) == 1) {
-        if (verb_confirm(str_cat3_cstr("run redirect: ", line, "")) == 0) { return 1; }
+        if (verb_confirm(str_cat3_cstr("run redirect: ", line, "")) == 0) {
+            audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+            return 1;
+        }
     }
+    # Committed from here: the target is about to be opened AO_TRUNC.
+    audit_exec_ctx(line, "launched", AUDIT_NO_EXIT);
     # Open FILE for write, truncating. agnos AO_WRONLY|AO_CREAT|AO_TRUNC = 0x1|0x100|0x200.
     var fd = sys_open(file, strlen(file), 0x301);
-    if (fd < 0) { println("run: cannot open redirect target"); return 1; }
+    if (fd < 0) {
+        println("run: cannot open redirect target");
+        audit_exec_ctx(line, "error", fd);
+        return 1;
+    }
     # Arm stdout -> FILE, then run cmd to completion (kernel auto-restores fd 1 on resume).
     sh_exec_redirect(1, fd);
     var rc = sh_exec_line(cmd);
     sys_close(fd);
+    audit_exec_ctx(line, audit_exec_outcome(rc), rc);
     return rc;
 }
 

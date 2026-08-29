@@ -1096,6 +1096,47 @@ fn main() {
     check("e2e dashed commit msg is refused (falls to unknown)",
       streq(load64(gc_e2e), "git") == 0);
 
+    # ---- 1.9.2 exec-audit surface ----
+    # The exec vocabulary must stay DISJOINT from the six parse-time labels, so a
+    # consumer can separate "the shell considered this" from "the shell did this"
+    # with one select. audit_exec_outcome is the single mapping point.
+    check("outcome negative -> error", streq(audit_exec_outcome(0 - 1), "error") == 1);
+    check("outcome zero -> executed", streq(audit_exec_outcome(0), "executed") == 1);
+    check("outcome positive -> failed", streq(audit_exec_outcome(1), "failed") == 1);
+    check("outcome 127 -> failed", streq(audit_exec_outcome(127), "failed") == 1);
+
+    # exit_code must serialise as JSON `null` when no code applies (a refusal or
+    # the pre-launch line), and as a bare number otherwise — never as the raw
+    # sentinel, which a consumer could mistake for a real status.
+    var ax_none = AuditEntry_new(
+      str_from("user"), str_from("AI-AUTO"), str_from("run /bin/x"),
+      str_from("/bin/x"), 0, str_from("denied"));
+    var ax_none_j = AuditEntry_to_json(ax_none);
+    check("no-exit record serialises exit_code null",
+      str_contains(ax_none_j, str_from("\"exit_code\":null")) == 1);
+    check("no-exit record does not leak the sentinel",
+      str_contains(ax_none_j, str_from("999999")) == 0);
+
+    var ax_ok = AuditEntry_new_x(
+      str_from("user"), str_from("AI-AUTO"), str_from("run /bin/echo"),
+      str_from("/bin/echo"), 1, str_from("executed"), 0);
+    check("executed record carries exit_code 0",
+      str_contains(AuditEntry_to_json(ax_ok), str_from("\"exit_code\":0")) == 1);
+
+    var ax_fail = AuditEntry_new_x(
+      str_from("user"), str_from("AI-AUTO"), str_from("run /bin/false"),
+      str_from("/bin/false"), 1, str_from("failed"), 1);
+    var ax_fail_j = AuditEntry_to_json(ax_fail);
+    check("failed record carries exit_code 1",
+      str_contains(ax_fail_j, str_from("\"exit_code\":1")) == 1);
+    check("failed record is still approved (it ran)",
+      str_contains(ax_fail_j, str_from("\"approved\":1")) == 1);
+
+    # The parse-time constructor must keep its 6-arg shape — the exec field is
+    # additive, and the non-exec call sites must not have to know about it.
+    check("6-arg AuditEntry_new still valid",
+      str_contains(AuditEntry_to_json(ax_none), str_from("\"result\":\"denied\"")) == 1);
+
     # Translator arg validation. Before 1.9.1 the coverage was INVERTED: the
     # low-risk file translators validated their input while every ADMIN-level
     # one (useradd / userdel / passwd / groupadd / firewall) and every git

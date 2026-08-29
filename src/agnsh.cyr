@@ -44,7 +44,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.9.1";
+var VERSION_STR = "agnoshi 1.9.2";
 
 fn print_version() {
     println(VERSION_STR);
@@ -147,8 +147,11 @@ fn classify_audit_result(tag, perm, desc_cstr) {
     #   needs_approval   -- HIGH risk (ADMIN / SYSTEM_WRITE): runnable
     #                       only after an interactive approval prompt
     #                       (interactive-shell exec wire-up).
-    #   proposed         -- SAFE / READ_ONLY / USER_WRITE: auto-runnable
-    #                       once exec lands; logged as-is today.
+    #   proposed         -- SAFE / READ_ONLY / USER_WRITE: the shell would
+    #                       allow this, but the NL path does not exec yet
+    #                       (roadmap Bucket 1 slice 5). An actual execution is
+    #                       recorded separately by the exec surface, which uses
+    #                       launched/executed/failed/error/denied.
     # QUESTION and PIPELINE tags first — PIPELINE has no translator
     # arm (`translate_extended` doesn't handle 41) so the dispatch
     # falls through to translate_unknown, stamping the same "Unknown
@@ -167,9 +170,16 @@ fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr, tag, desc_cstr) {
     # auto-runnable (SAFE/READ_ONLY/USER_WRITE), 0 for anything that
     # would require an interactive approval prompt (SYSTEM_WRITE/ADMIN)
     # or is outright blocked. `result` carries the slice-9 audit-result
-    # vocabulary (see classify_audit_result). When the exec wire-up
-    # lands, "proposed" will be replaced by "executed" / "denied" /
-    # "error" at the exec call site; the other five labels stay.
+    # vocabulary (see classify_audit_result).
+    #
+    # NB this function covers the PARSE-TIME surface only — what the shell
+    # decided about a line it did not run. The exec surface has its own
+    # vocabulary and its own entry point (audit_exec / audit_exec_ctx, 1.9.2);
+    # the two label sets are disjoint on purpose so a consumer can separate
+    # "considered" from "did" with one `select`. The old note here promised
+    # that "proposed" would be *replaced* by executed/denied/error once exec
+    # landed — that turned out to be the wrong shape: a proposal and an
+    # execution are different events and both deserve a record.
     var approved = 0;
     if (perm == PermissionLevel.SAFE) { approved = 1; }
     elif (perm == PermissionLevel.READ_ONLY) { approved = 1; }
@@ -185,6 +195,97 @@ fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr, tag, desc_cstr) {
       );
     var logger = AuditLogger_new(audit_log_path());
     AuditLogger_log(logger, entry);
+}
+
+# ---- The EXEC audit surface ----
+#
+# ⛔ Until 1.9.2 NOTHING THAT ACTUALLY RAN A PROGRAM WAS AUDITED. `audit_one_shot`
+# is reached only from `print_intent_result`, which runs only when nothing has
+# executed — so the audit log recorded exactly the actions that never happened,
+# while `run`, bareword launch, pipelines, redirection and background jobs were
+# all invisible. `agnsh -c 'run /bin/echo'` ran the program and did not even
+# create the log file. That directly contradicted CLAUDE.md's "every command
+# must be auditable".
+#
+# Result vocabulary for this surface. The six parse-time labels
+# (classify_audit_result) describe what the shell DECIDED; these describe what
+# it DID, and the two sets are deliberately disjoint so a consumer can tell them
+# apart with a single `select`:
+#   launched  -- emitted BEFORE the child starts
+#   executed  -- child ran to completion, exit 0
+#   failed    -- child ran to completion, non-zero exit
+#   error     -- the launch itself failed (missing binary, exec refused)
+#   denied    -- refused before any launch (mode confirm declined, unsafe path,
+#                non-absolute path, usage error)
+#
+# WHY A `launched` RECORD IS WRITTEN BEFORE THE EXEC: a foreground child can
+# hang forever, kill the shell, or (reboot/poweroff/halt) take the whole
+# machine down. An outcome-only record would leave no trace of any of those.
+# The pair is the point — a `launched` with no matching outcome IS the signal.
+# Dispatch-scoped audit context. Set ONCE per input line, then read by every
+# launcher, so the exec audit needs no signature change to the agnos-only
+# launch chain (sh_run_program / sh_try_bareword_launch / sh_try_pipeline_launch
+# / sh_try_redirect_launch / sh_run_program_bg). Threading an extra parameter
+# through that chain would mean editing five functions inside
+# `#ifdef CYRIUS_TARGET_AGNOS` that cannot be exercised on a Linux host; a
+# context set at the two dispatch entry points is verifiable on both.
+#
+# Lifetime: g_audit_line points at the caller's line buffer (the interactive
+# loop's `&buf`, or argv for -c). Every audit_exec_ctx call happens inside the
+# same dispatch iteration, and audit_exec copies via str_from before the buffer
+# is reused, so the borrow never outlives the line.
+var g_audit_line = 0;
+var g_audit_mode = 0;
+
+fn audit_set_context(line_cstr, mode_label_cstr) {
+    g_audit_line = line_cstr;
+    g_audit_mode = mode_label_cstr;
+    return 0;
+}
+
+# Context-using form — what the launchers call.
+fn audit_exec_ctx(cmd_cstr, result_label_cstr, exit_code) {
+    var line = g_audit_line;
+    if (line == 0) { line = cmd_cstr; }
+    var mode_label = g_audit_mode;
+    if (mode_label == 0) { mode_label = "unknown"; }
+    return audit_exec(line, cmd_cstr, mode_label, result_label_cstr, exit_code);
+}
+
+fn audit_exec(input_cstr, cmd_cstr, mode_label_cstr, result_label_cstr, exit_code) {
+    # `approved` means "the shell permitted this to proceed", so only an
+    # explicit refusal is 0. A child that ran and failed was still approved.
+    var approved = 1;
+    if (streq(result_label_cstr, "denied") == 1) { approved = 0; }
+    var entry = AuditEntry_new_x(
+      str_from("user"),
+      str_from(mode_label_cstr),
+      str_from(input_cstr),
+      str_from(cmd_cstr),
+      approved,
+      str_from(result_label_cstr),
+      exit_code
+      );
+    var logger = AuditLogger_new(audit_log_path());
+    return AuditLogger_log(logger, entry);
+}
+
+# Outcome record for a BACKGROUND job, emitted from job_reap_poll.
+#
+# ⚠ The dispatch context is deliberately NOT used for `input` here. A reap
+# happens at some later prompt tick, so g_audit_line points at whatever the user
+# most recently typed — attributing the completion to that line would be an
+# actively wrong audit record. The command stored in the job table at launch is
+# the honest answer, so it serves as both input and action. `mode` still comes
+# from the context because the shell's mode at observation time is real.
+#
+# `wait_rc` is whatever waitpid(#4) returned for a completed child; it is passed
+# through rather than reinterpreted, and audit_exec_outcome maps <0 / 0 / >0 the
+# same way it does for the foreground paths.
+fn audit_exec_bg_done(cmd_cstr, wait_rc) {
+    var mode_label = g_audit_mode;
+    if (mode_label == 0) { mode_label = "unknown"; }
+    return audit_exec(cmd_cstr, cmd_cstr, mode_label, audit_exec_outcome(wait_rc), wait_rc);
 }
 fn print_intent_result(input_cstr, mode_label_cstr) {
     var s = str_from(input_cstr);
@@ -249,7 +350,17 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
     if (tag == IntentTag.QUESTION) {
         println("  Hint: question intent -- LLM streaming arrives in a later slice");
     } elif (tag == IntentTag.PIPELINE) {
-        println("  Hint: pipeline intent -- auto-exec arrives with the exec wire-up");
+        # Reaching HERE means the agnos pipeline launcher did NOT claim the line
+        # (host build, or a stage that is not a /bin program), so the NL path saw
+        # it. On agnos a real `cmd1 | cmd2` never gets this far — it auto-execs.
+        # The old text ("auto-exec arrives with the exec wire-up") outlived that
+        # by six releases.
+        #ifdef CYRIUS_TARGET_AGNOS
+        println("  Hint: pipeline stages must be /bin programs to auto-run");
+        #endif
+        #ifndef CYRIUS_TARGET_AGNOS
+        println("  Hint: pipeline auto-exec is AGNOS-only; this host build parses only");
+        #endif
     } elif (streq(load64(translation + 16), "Unknown intent") == 1) {
         println("  Hint: translator safety check rejected this input -- try rephrasing");
     }
@@ -422,6 +533,7 @@ var RUN_EXECWAIT_READY = 1;
 fn sh_run_program(path, mode) {
     if (RUN_EXECWAIT_READY == 0) {
         println("run: external programs not yet available (pending agnos 1.43.x execwait)");
+        audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
         return 1;
     }
     # Launching an arbitrary on-disk binary is at least as consequential as a
@@ -430,8 +542,16 @@ fn sh_run_program(path, mode) {
     if (mode_needs_confirm(mode) == 1) {
         # verb_confirm prints "(aborted)" itself on a no/Enter, matching the
         # rm/mv convention — stay silent here rather than double-reporting.
-        if (verb_confirm(str_cat3_cstr("run ", path, "")) == 0) { return 1; }
+        if (verb_confirm(str_cat3_cstr("run ", path, "")) == 0) {
+            audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
+            return 1;
+        }
     }
+    # Written BEFORE the child starts. A foreground program can hang forever,
+    # kill the shell, or (reboot/poweroff/halt) take the machine down — an
+    # outcome-only record would leave no trace of any of those. A `launched`
+    # with no matching outcome line IS the signal.
+    audit_exec_ctx(path, "launched", AUDIT_NO_EXIT);
     # agnos: route through execwait #37 (sh_exec_line) — the kernel owns the load and
     # stages argv from the full command line. The vendored lib run() is sys_spawn-based
     # (no argv, hard-hangs on iron) so it is NOT used here.
@@ -456,6 +576,7 @@ fn sh_run_program(path, mode) {
     var ecode = sh_exec_line_sched(path);
     if (ecode < 0) {
         println("run: failed to launch program");
+        audit_exec_ctx(path, "error", ecode);
         return 1;
     }
     if (ecode != 0) {
@@ -463,6 +584,7 @@ fn sh_run_program(path, mode) {
         str_print(str_from_int(ecode));
         println("");
     }
+    audit_exec_ctx(path, audit_exec_outcome(ecode), ecode);
     return ecode;
     #endif
     # host: the lib fork/exec path (PATH-resolved run()), unchanged.
@@ -475,9 +597,11 @@ fn sh_run_program(path, mode) {
             str_print(str_from_int(code));
             println("");
         }
+        audit_exec_ctx(path, audit_exec_outcome(code), code);
         return code;
     }
     println("run: failed to launch program");
+    audit_exec_ctx(path, "error", 0 - 1);
     return 1;
     #endif
 }
@@ -516,6 +640,10 @@ fn interactive_loop() {
         var n = read_line(&buf, 4096);
         if (n < 0) { break; }
         if (n == 0) { continue; }
+        # One context per input line, read by every launcher below. See
+        # audit_set_context for why the exec audit is context-scoped rather
+        # than threaded through the agnos-only launch chain.
+        audit_set_context(&buf, mode_display(cur_mode));
 
         if (streq(&buf, "exit") == 1) { break; }
         if (streq(&buf, "quit") == 1) { break; }
@@ -627,6 +755,7 @@ fn interactive_loop() {
         # owns the mode gate + the kernel-gated exec (see RUN_EXECWAIT_READY).
         if (streq(&buf, "run") == 1) {
             println("usage: run /abs/path/to/program");
+            audit_exec_ctx("", "denied", AUDIT_NO_EXIT);
             continue;
         }
         if (cstr_starts_with(&buf, "run ") == 1) {
@@ -634,14 +763,20 @@ fn interactive_loop() {
             while (load8(rpath) == 32) { rpath = rpath + 1; }
             if (load8(rpath) == 0) {
                 println("usage: run /abs/path/to/program");
+                audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 continue;
             }
             if (load8(rpath) != 47) {
                 println("run: path must be absolute (start with /)");
+                audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 continue;
             }
+            # A path rejected by is_safe_path is exactly the case an operator
+            # most wants in the trail — it is an attempted traversal or a shell
+            # metacharacter in a launch path, and before 1.9.2 it left no record.
             if (is_safe_path(rpath) == 0) {
                 println("run: unsafe path (traversal or shell metacharacter)");
+                audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 continue;
             }
             sh_run_program(rpath, cur_mode);
@@ -751,18 +886,35 @@ fn main() {
             return 1;
         }
         var c_cmd = argv(c_idx + 1);
+        audit_set_context(c_cmd, mode_display(c_mode));
         # File verbs are delegated to /bin/kriya via the bareword launcher below
         # (1.5.0); `cat` -> owl nudge (no /bin/cat; owl is AGNOS's cat).
         if (sh_cat_owl_warning(c_cmd) == 1) { return 0; }
         # `run PATH` in one-shot mode (`agnsh -c "run /bin/klug"`). Same
         # validation + kernel gate as the interactive path.
-        if (streq(c_cmd, "run") == 1) { println("usage: run /abs/path/to/program"); return 1; }
+        if (streq(c_cmd, "run") == 1) {
+            println("usage: run /abs/path/to/program");
+            audit_exec_ctx("", "denied", AUDIT_NO_EXIT);
+            return 1;
+        }
         if (cstr_starts_with(c_cmd, "run ") == 1) {
             var rpath = c_cmd + 4;
             while (load8(rpath) == 32) { rpath = rpath + 1; }
-            if (load8(rpath) == 0) { println("usage: run /abs/path/to/program"); return 1; }
-            if (load8(rpath) != 47) { println("run: path must be absolute (start with /)"); return 1; }
-            if (is_safe_path(rpath) == 0) { println("run: unsafe path (traversal or shell metacharacter)"); return 1; }
+            if (load8(rpath) == 0) {
+                println("usage: run /abs/path/to/program");
+                audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
+                return 1;
+            }
+            if (load8(rpath) != 47) {
+                println("run: path must be absolute (start with /)");
+                audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
+                return 1;
+            }
+            if (is_safe_path(rpath) == 0) {
+                println("run: unsafe path (traversal or shell metacharacter)");
+                audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
+                return 1;
+            }
             return sh_run_program(rpath, c_mode);
         }
         # Bareword program launch in one-shot mode (`agnsh -c "doom /DOOM1.WAD"`),
