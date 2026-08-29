@@ -4,6 +4,101 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.3] - 2026-08-29 — exec-path error handling, and the untrusted-input parsers become testable
+
+Second slice of the v1.9.x hardening arc
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)).
+
+### Changed — the exec-path parsers are host-testable for the first time
+
+`src/run_agnos.cyr` was a single `#ifdef CYRIUS_TARGET_AGNOS` block from line 21 to the end, so on a
+Linux host the whole file compiled to nothing and `cyrius test` could not reach any of it: **22/22
+untested, on the least trustworthy input in the program** — the code that decides where a pipe
+splits, where a redirect target begins, and whether a line is a background request.
+
+Five of those parsers (`sh_scan_trailing_amp`, `_sh_find_pipe`, `_sh_find_redirect`,
+`_sh_bin_segment`, `_sh_path_segment`) are pure byte manipulation plus `alloc` — no syscall, no
+agnos ABI — so they now sit **outside** the `#ifdef`. Same code and same call sites on agnos;
+directly assertable from `tests/test_core.tcyr` on the host. Anything needing a syscall
+(`_sh_bin_probe`, every launcher) stays inside.
+
+⇒ **This is what made the rest of this release verifiable rather than merely reviewed.** It was
+done first, on purpose, before any behaviour changed.
+
+### Fixed — `&`-detection truncated the caller's buffer
+
+⛔ `sh_strip_trailing_amp` truncated the line **in place**, at the top of
+`sh_try_bareword_launch` — before the token scan, before the existence probe, and therefore before
+the two paths that hand the line *back* to the caller. So `sleeper &` with no `/bin/sleeper` fell
+through to the natural-language path as plain `sleeper`, and that truncated text is what reached the
+NL parser, the history file and the audit record.
+
+⇒ **The line the shell reported was not the line the user typed.** Replaced by
+`sh_scan_trailing_amp`, which returns the *length* of the command part and leaves the buffer
+untouched on every path. Proven with a regression test that was run against the old implementation
+first and confirmed to fail (`"sleeper &"` → `"sleeper"`).
+
+### Fixed — the launcher opened an unvalidated path before checking it
+
+⛔ **Check-after-use.** `sh_try_bareword_launch` built a probe path from the raw input and called
+`sys_open` on it, then ran `is_safe_path` *afterwards*. The `open` is a real effect on agnos, so
+traversal-shaped input was opened before anything decided it was allowed. Reordered: build the
+command, validate it, and only then probe.
+
+### Fixed — two sentinel collisions silently re-ran failed launches
+
+⛔ `sh_run_redirect` returned `sh_exec_line`'s raw `#37` result, and `sh_run_pipeline` returned
+`_sh_pipe_reap`'s. Both can be `-1` on failure — and the dispatcher reads `<0` as **"this launcher
+did not claim the line, fall through"**.
+
+⇒ A redirect or pipeline that *failed to launch* was therefore indistinguishable from "not a
+redirect / not a pipeline", and the line was silently retried as a bareword and then as natural
+language — with the redirect target already created and truncated. Both now collapse a negative to
+a handled `1`; the audit line carries the real code.
+
+### Fixed — `exec_redirect#62`'s return was discarded at all three arm sites
+
+⛔ If arming the fd swap failed, the child ran anyway with its output still on the terminal. A
+pipeline degraded into "run stage 1 normally, then feed stage 2 nothing"; a `>` redirect left the
+user's file created-and-emptied while the output went to the screen — and both reported a
+plausible-looking exit code. All three sites now fail closed.
+
+### Fixed — a 9th background job spawned a child nothing could ever reap
+
+⛔ `sh_run_program_bg` spawned first and recorded second, ignoring `job_add`'s refusal. Past the
+8-job table limit that left a **live child that is never reaped, never listed, and never audited on
+completion — because nothing knows it exists.** Capacity is now checked *before* the spawn
+(`job_full`), so the refusal costs nothing. The post-spawn check is kept as a belt-and-braces
+branch rather than a silent discard.
+
+### Fixed — the launch-confirmation prompt could dereference null
+
+⛔ `str_cat3_cstr` did not check its `alloc`, and every caller feeds the result straight to
+`verb_confirm`, which would `strlen()` a null pointer. It now returns 0 on failure, and
+`verb_confirm` **fails closed**: this is the HUMAN/STRICT gate in front of every program launch, so
+the only safe answer when the prompt cannot even be rendered is *no*. Proceeding would have run a
+program the user was never asked about.
+
+### Tests
+
+384 unit (was 366) + 26 security + 68 smoke. The new unit tests are the first coverage of
+`run_agnos.cyr` in the project's history: separator offsets, `/bin/` prefixing and trimming,
+empty-segment handling, and the amp cases — including the explicit **non-mutation** assertions that
+the old implementation fails.
+
+### Notes
+
+- Binary 315,512 → 319,656 B (+4,144). Benchmarks unchanged within jitter.
+- All three targets build warning-free; all gates green.
+- ⚠ **Verification status, stated precisely.** The parser fixes (`&` non-mutation, segment/offset
+  behaviour) are **executed and asserted on the host**. The launcher fixes — probe ordering,
+  sentinel collapse, arm-return checks, job-table capacity — are **compile-verified on all three
+  targets and code-reviewed, but still not executed**, because every one of them lives behind
+  `#ifdef CYRIUS_TARGET_AGNOS` and needs an agnos smoke run on iron. That verification carried into
+  this slice from 1.9.2 and **carries forward again**; it is now the only open item on the exec
+  surface, and this release narrows what it has to cover rather than closing it.
+
+
 ## [1.9.2] - 2026-08-29 — the audit log now records what the shell DID, not just what it considered
 
 First slice of the v1.9.x hardening arc opened by the 2026-08-29 P(-1)

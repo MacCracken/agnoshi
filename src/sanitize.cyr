@@ -535,6 +535,16 @@ fn verb_read_yes(): i64 {
 # Prompt `  ⚠ <action> ? [y/N] `, read one line, return 1 to PROCEED / 0 to
 # ABORT (prints "(aborted)" itself). Only called when mode_needs_confirm==1.
 fn verb_confirm(action_cstr): i64 {
+    # ⛔ FAIL CLOSED. `action_cstr` is built by str_cat3_cstr, which returns 0 if
+    # the allocation fails; verb_out_cstr would then strlen() a null pointer. More
+    # importantly this is the HUMAN/STRICT gate in front of every program launch,
+    # so the only safe answer when the prompt cannot even be rendered is "no".
+    # Proceeding on an un-shown confirmation would run the program the user was
+    # never asked about.
+    if (action_cstr == 0) {
+        verb_out_cstr("  cannot render confirmation prompt -- declining\n");
+        return 0;
+    }
     verb_out_cstr("  \xE2\x9A\xA0 ");   # two-space indent + U+26A0 WARNING SIGN
     verb_out_cstr(action_cstr);
     verb_out_cstr(" ? [y/N] ");
@@ -550,6 +560,10 @@ fn str_cat3_cstr(a, b, c): i64 {
     var lb = strlen(b);
     var lc = strlen(c);
     var buf = alloc(la + lb + lc + 1);
+    # Returns 0 on allocation failure. Unchecked, the memcpys below wrote through
+    # a null base. Every caller feeds the result straight to verb_confirm, which
+    # now treats 0 as "cannot prompt" and declines — see there.
+    if (buf == 0) { return 0; }
     memcpy(buf, a, la);
     memcpy(buf + la, b, lb);
     memcpy(buf + la + lb, c, lc);

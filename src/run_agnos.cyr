@@ -18,6 +18,107 @@
 # the untouched "PATH args" line straight through; no client-side splitting.
 #
 # This whole file is agnos-only; the host build keeps the lib fork/exec run().
+# ---- Host-testable command-line parsers ----
+#
+# These sit OUTSIDE the CYRIUS_TARGET_AGNOS block ON PURPOSE. They are pure byte
+# manipulation over the raw input line (plus alloc), with no syscall and no agnos
+# ABI, and they are the shell's UNTRUSTED-INPUT PARSERS — the code that decides
+# where a pipe splits, where a redirect target begins, and whether a line is a
+# background request.
+#
+# Until 1.9.3 the whole file was one #ifdef, so on a Linux host they compiled to
+# nothing and `cyrius test` could not reach them: 22/22 untested, on the least
+# trustworthy input in the program. Hoisting them here costs nothing on agnos
+# (same code, same call sites) and makes them directly assertable from
+# tests/test_core.tcyr, which is what let 1.9.3's fixes below be verified rather
+# than merely reviewed.
+#
+# Anything needing a syscall (_sh_bin_probe's open/close, every launcher) stays
+# inside the #ifdef.
+
+# Detect a trailing `&` (ASCII 38) and report the length of the command part
+# before it. Returns that length for a background request, or -1 if the line is
+# not one. **Does NOT modify the line.**
+#
+# ⛔ This replaced an in-place `sh_strip_trailing_amp` that TRUNCATED the caller's
+# buffer at the top of sh_try_bareword_launch — before the token scan, before the
+# existence probe, and therefore before the two paths that give the line BACK to
+# the caller. So `sleeper &` with no /bin/sleeper fell through to the natural-
+# language path as plain `sleeper`, and that truncated text is what reached the
+# NL parser, the history file and the audit record. The line the shell reported
+# was not the line the user typed. Returning a length leaves the caller's buffer
+# untouched on every path, including the fall-throughs.
+fn sh_scan_trailing_amp(line): i64 {
+    var len = 0;
+    while (load8(line + len) != 0) { len = len + 1; }
+    var e = len;
+    while (e > 0) { if (load8(line + e - 1) == 32) { e = e - 1; } else { break; } }  # skip trailing spaces
+    if (e == 0) { return 0 - 1; }
+    if (load8(line + e - 1) != 38) { return 0 - 1; }         # no trailing '&'
+    e = e - 1;                                               # the '&' position
+    while (e > 0) { if (load8(line + e - 1) == 32) { e = e - 1; } else { break; } }  # spaces before '&'
+    return e;                                                # length of the command part
+}
+
+# Offset of the FIRST '|' pipe separator (byte 124), or -1 if absent. Surrounding spaces
+# are OPTIONAL — `a|b`, `a |b`, `a| b`, and `a | b` all split identically because
+# _sh_bin_segment ltrim/rtrims each stage. The tolerance is deliberate: the xHCI keyboard
+# drops the occasional keystroke on iron (the agnos pipe-smoke.py harness retries on exactly
+# this), and a swallowed space around the '|' must NOT silently demote a pipeline to a
+# bareword launch — whose is_safe_path then rejects the '|' as a shell metacharacter, the
+# baffling "run: unsafe path" the 1.46.11 burn hit on `anuenue | brnmr` (one space eaten).
+fn _sh_find_pipe(line): i64 {
+    var i = 0;
+    while (load8(line + i) != 0) {
+        if (load8(line + i) == 124) { return i; }   # '|'
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Build "/bin/" + line[start..end], leading/trailing spaces trimmed, NUL-terminated.
+# Returns a freshly alloc'd cstr, or 0 on an empty/alloc-failed segment.
+fn _sh_bin_segment(line, start, end): i64 {
+    while (start < end) { if (load8(line + start) == 32) { start = start + 1; } else { break; } }  # ltrim
+    while (end > start) { if (load8(line + end - 1) == 32) { end = end - 1; } else { break; } }    # rtrim
+    var sl = end - start;
+    if (sl <= 0) { return 0; }
+    var cmd = alloc(5 + sl + 1);
+    if (cmd == 0) { return 0; }
+    store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);   # "/bi"
+    store8(cmd + 3, 110); store8(cmd + 4, 47);                        # "n/"
+    var k = 0;
+    while (k < sl) { store8(cmd + 5 + k, load8(line + start + k)); k = k + 1; }
+    store8(cmd + 5 + sl, 0);
+    return cmd;
+}
+
+# Offset of the FIRST '>' (byte 62), or -1 if absent. Spaces around it are optional
+# (_sh_bin_segment / _sh_path_segment trim each side), same tolerance as the pipe split.
+fn _sh_find_redirect(line): i64 {
+    var i = 0;
+    while (load8(line + i) != 0) {
+        if (load8(line + i) == 62) { return i; }   # '>'
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# line[start..end] trimmed + NUL-terminated, VERBATIM (no "/bin/" prefix — this is a
+# file path, not a program). Fresh alloc, or 0 on an empty / alloc-failed segment.
+fn _sh_path_segment(line, start, end): i64 {
+    while (start < end) { if (load8(line + start) == 32) { start = start + 1; } else { break; } }
+    while (end > start) { if (load8(line + end - 1) == 32) { end = end - 1; } else { break; } }
+    var sl = end - start;
+    if (sl <= 0) { return 0; }
+    var p = alloc(sl + 1);
+    if (p == 0) { return 0; }
+    var k = 0;
+    while (k < sl) { store8(p + k, load8(line + start + k)); k = k + 1; }
+    store8(p + sl, 0);
+    return p;
+}
+
 #ifdef CYRIUS_TARGET_AGNOS
 
 # ===================================================================================
@@ -40,6 +141,13 @@ var job_count = 0;       # live jobs in [0, job_count)
 var job_next_num = 1;    # monotonic job-number counter
 
 fn job_any(): i64 { return job_count; }
+
+# Is the job table full? Checked BEFORE spawning (see sh_run_program_bg) so a
+# refusal never strands a live child.
+fn job_full(): i64 {
+    if (job_count >= 8) { return 1; }
+    return 0;
+}
 
 # Record a freshly-spawned bg child + announce it as "[n] <pid>".
 fn job_add(pid, cmd): i64 {
@@ -95,21 +203,6 @@ fn job_reap_poll(): i64 {
     return 0;
 }
 
-# Strip a trailing `&` (ASCII 38) + the whitespace before it, IN PLACE. Returns 1 if the
-# line was a background request, 0 otherwise. "sleeper &" -> "sleeper" + return 1.
-fn sh_strip_trailing_amp(line): i64 {
-    var len = 0;
-    while (load8(line + len) != 0) { len = len + 1; }
-    var e = len;
-    while (e > 0) { if (load8(line + e - 1) == 32) { e = e - 1; } else { break; } }  # skip trailing spaces
-    if (e == 0) { return 0; }
-    if (load8(line + e - 1) != 38) { return 0; }            # no trailing '&'
-    e = e - 1;                                              # the '&' position
-    while (e > 0) { if (load8(line + e - 1) == 32) { e = e - 1; } else { break; } }  # spaces before '&'
-    store8(line + e, 0);                                    # truncate
-    return 1;
-}
-
 # Background launch: spawn `cmd` ("/bin/<word> [args..]") via spawn_path(#43, non-blocking)
 # and record the pid. Returns 0 on launch (the child runs concurrently), 1 on refusal/failure.
 # Mirrors sh_run_program's mode gate (HUMAN/STRICT confirm; AUTO/ASSIST run directly).
@@ -124,6 +217,17 @@ fn sh_run_program_bg(cmd, mode): i64 {
     while (load8(cmd + len) != 0) { len = len + 1; }
     if (len > 127) {
         println("run: command too long for a background job (max 127)");
+        audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
+        return 1;
+    }
+    # ⛔ CHECK CAPACITY BEFORE SPAWNING. The order used to be spawn-then-record,
+    # and job_add's refusal was ignored: a 9th background request spawned a real
+    # child, failed to record it, and returned — leaving a process that is never
+    # reaped, never shown by the job list, and never audited on completion,
+    # because nothing knows it exists. Refusing before the spawn means the
+    # failure costs nothing.
+    if (job_full() == 1) {
+        println("run: too many background jobs (max 8)");
         audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
         return 1;
     }
@@ -144,6 +248,9 @@ fn sh_run_program_bg(cmd, mode): i64 {
     # job_add can still refuse (table full). Audit what actually happened rather
     # than assuming success: an unrecorded child is exactly the case that must
     # not vanish from the trail.
+    # Belt-and-braces: capacity was checked above, so this cannot fire today.
+    # Kept because the consequence of it firing (an unrecorded live child) is bad
+    # enough to be worth an explicit branch rather than a silent discard.
     if (job_add(pid, cmd) < 0) {
         audit_exec_ctx(cmd, "error", AUDIT_NO_EXIT);
         return 1;
@@ -261,43 +368,61 @@ fn sh_exec_line_sched(line): i64 {
 # STRICT still confirm before launch; AUTO / ASSIST run directly (matching `run`).
 fn sh_try_bareword_launch(line, mode): i64 {
     if (load8(line) == 47) { return 0 - 1; }       # absolute path → use the `run` builtin
-    # 1.44.13: a trailing `&` backgrounds the launch (stripped IN PLACE before the token scan
-    # so the path token + argv never see it). bg==1 routes to spawn_path(#43) instead of execwait.
-    var bg = sh_strip_trailing_amp(line);
-    # first-token length (the command word, up to the first space)
-    var tl = 0;
-    while (load8(line + tl) != 0) { if (load8(line + tl) == 32) { break; } tl = tl + 1; }
-    if (tl == 0) { return 0 - 1; }                 # leading space / empty → NL path
-
-    # probe = "/bin/" + token (existence check for the binary). ASCII: '/'=47 'b'=98
-    # 'i'=105 'n'=110 '/'=47.
-    var probe = alloc(5 + tl + 1);
-    store8(probe + 0, 47); store8(probe + 1, 98); store8(probe + 2, 105);
-    store8(probe + 3, 110); store8(probe + 4, 47);
-    var i = 0;
-    while (i < tl) { store8(probe + 5 + i, load8(line + i)); i = i + 1; }
-    store8(probe + 5 + tl, 0);
-    # Existence probe. `probe` is already absolute ("/bin/<word>"), so open it
-    # directly (AO_RDONLY); the old verb_open_read helper went with the verbs.
-    var fd = sys_open(probe, strlen(probe), 0x0);
-    if (fd < 0) { return 0 - 1; }                  # no such /bin program → NL intent
-    sys_close(fd);
-
-    # cmd = "/bin/" + whole line (path token + args), handed to execwait so the kernel
-    # opens /bin/<word> and stages argv from the full line.
+    # 1.44.13: a trailing `&` backgrounds the launch. 1.9.3: detected by LENGTH
+    # (sh_scan_trailing_amp) rather than by truncating the caller's buffer, so
+    # every fall-through below hands the ORIGINAL line back to the NL path,
+    # history and audit. `ll` is the effective length — the command part only,
+    # with the `&` and its padding excluded — and every scan below is bounded by
+    # it instead of running to the NUL.
     var ll = 0;
     while (load8(line + ll) != 0) { ll = ll + 1; }
+    var bg = 0;
+    var amp = sh_scan_trailing_amp(line);
+    if (amp >= 0) { bg = 1; ll = amp; }
+    if (ll == 0) { return 0 - 1; }                 # empty / bare `&` → NL path
+
+    # first-token length (the command word, up to the first space), within ll
+    var tl = 0;
+    while (tl < ll) { if (load8(line + tl) == 32) { break; } tl = tl + 1; }
+    if (tl == 0) { return 0 - 1; }                 # leading space → NL path
+
+    # cmd = "/bin/" + the command part, handed to execwait so the kernel opens
+    # /bin/<word> and stages argv from the full line.
     var cmd = alloc(5 + ll + 1);
+    # ⛔ alloc can fail. Unchecked, the store8s below wrote through a null base and
+    # faulted at a line with no obvious relationship to the exhaustion.
+    if (cmd == 0) { println("run: out of memory"); return 1; }
     store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);
     store8(cmd + 3, 110); store8(cmd + 4, 47);
     var j = 0;
     while (j < ll) { store8(cmd + 5 + j, load8(line + j)); j = j + 1; }
     store8(cmd + 5 + ll, 0);
 
+    # ⛔ VALIDATE BEFORE OPENING ANYTHING. The existence probe used to run FIRST,
+    # so `sys_open` was handed an unvalidated, attacker-shaped path ("/bin/" +
+    # whatever the user typed, traversal included) and the safety check ran only
+    # afterwards on a path that had already been opened — check-after-use. The
+    # open is a real effect on agnos, so the ordering is the fix.
     if (is_safe_path(cmd) == 0) {
         println("run: unsafe path (traversal or shell metacharacter)");
         return 1;
     }
+
+    # probe = "/bin/" + token (existence check for the binary). ASCII: '/'=47 'b'=98
+    # 'i'=105 'n'=110 '/'=47.
+    var probe = alloc(5 + tl + 1);
+    if (probe == 0) { println("run: out of memory"); return 1; }
+    store8(probe + 0, 47); store8(probe + 1, 98); store8(probe + 2, 105);
+    store8(probe + 3, 110); store8(probe + 4, 47);
+    var i = 0;
+    while (i < tl) { store8(probe + 5 + i, load8(line + i)); i = i + 1; }
+    store8(probe + 5 + tl, 0);
+    # Existence probe. `probe` is already absolute ("/bin/<word>") AND the command
+    # line it came from has passed is_safe_path, so opening it is now safe.
+    var fd = sys_open(probe, strlen(probe), 0x0);
+    if (fd < 0) { return 0 - 1; }                  # no such /bin program → NL intent
+    sys_close(fd);
+
     if (bg == 1) { return sh_run_program_bg(cmd, mode); }   # `prog &` → non-blocking #43 + job table
     return sh_run_program(cmd, mode);
 }
@@ -317,39 +442,6 @@ fn sh_try_bareword_launch(line, mode): i64 {
 # signal the driver could see); pipes are single-foreground only — the redirect swaps
 # the GLOBAL fd table so this is correct only under #37 run-to-completion, NOT SMP
 # STEP-2-safe (per-process fd tables are the follow-on). 2-stage only (no N-stage chain).
-
-# Offset of the FIRST '|' pipe separator (byte 124), or -1 if absent. Surrounding spaces
-# are OPTIONAL — `a|b`, `a |b`, `a| b`, and `a | b` all split identically because
-# _sh_bin_segment ltrim/rtrims each stage. The tolerance is deliberate: the xHCI keyboard
-# drops the occasional keystroke on iron (the agnos pipe-smoke.py harness retries on exactly
-# this), and a swallowed space around the '|' must NOT silently demote a pipeline to a
-# bareword launch — whose is_safe_path then rejects the '|' as a shell metacharacter, the
-# baffling "run: unsafe path" the 1.46.11 burn hit on `anuenue | brnmr` (one space eaten).
-fn _sh_find_pipe(line): i64 {
-    var i = 0;
-    while (load8(line + i) != 0) {
-        if (load8(line + i) == 124) { return i; }   # '|'
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
-# Build "/bin/" + line[start..end], leading/trailing spaces trimmed, NUL-terminated.
-# Returns a freshly alloc'd cstr, or 0 on an empty/alloc-failed segment.
-fn _sh_bin_segment(line, start, end): i64 {
-    while (start < end) { if (load8(line + start) == 32) { start = start + 1; } else { break; } }  # ltrim
-    while (end > start) { if (load8(line + end - 1) == 32) { end = end - 1; } else { break; } }    # rtrim
-    var sl = end - start;
-    if (sl <= 0) { return 0; }
-    var cmd = alloc(5 + sl + 1);
-    if (cmd == 0) { return 0; }
-    store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);   # "/bi"
-    store8(cmd + 3, 110); store8(cmd + 4, 47);                        # "n/"
-    var k = 0;
-    while (k < sl) { store8(cmd + 5 + k, load8(line + start + k)); k = k + 1; }
-    store8(cmd + 5 + sl, 0);
-    return cmd;
-}
 
 # Thin syscall wrappers — literals, same convention as the literal-37/43 execwait/spawn
 # calls above (the agnos syscall enum has no slot for these, so there's no constant).
@@ -464,7 +556,18 @@ fn sh_run_pipeline(line, mode): i64 {
     # Either leaves exactly one stage alive at a time, so the producer can only ever deliver one
     # ring-full before a consumer exists. Measured with stage 1 on `sh_exec_line_sched`:
     # `grep . /etc/ssl/cert.pem | wc` reported **4080** — the ring size, to the byte.
-    sh_exec_redirect(1, wfd);
+    # ⛔ CHECK THE ARM. exec_redirect#62's return was discarded at all three arm
+    # sites: if arming failed, the stage ran anyway with its stdout still on the
+    # terminal, so a pipeline silently degraded into "run stage 1 normally, then
+    # feed stage 2 nothing" — output in the wrong place and a plausible-looking
+    # exit code. Fail closed instead.
+    if (sh_exec_redirect(1, wfd) < 0) {
+        println("run: failed to arm pipeline stage 1 redirect");
+        sys_close(wfd);
+        sys_close(rfd);
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
     var pid1 = _sh_pipe_spawn(cmd1);
     if (pid1 < 0) {
         println("run: failed to launch pipeline stage 1");
@@ -480,7 +583,13 @@ fn sh_run_pipeline(line, mode): i64 {
     sys_close(wfd);
     # Stage 2: stdin -> the read end, ALSO spawned, so producer and consumer are alive together. It
     # drains while stage 1 writes and sees a genuine EOF once stage 1's write end is gone.
-    sh_exec_redirect(0, rfd);
+    if (sh_exec_redirect(0, rfd) < 0) {
+        println("run: failed to arm pipeline stage 2 redirect");
+        _sh_pipe_reap(pid1);
+        sys_close(rfd);
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
     var pid2 = _sh_pipe_spawn(cmd2);
     if (pid2 < 0) {
         println("run: failed to launch pipeline stage 2");
@@ -494,6 +603,12 @@ fn sh_run_pipeline(line, mode): i64 {
     sys_close(rfd);
     # The pipeline's exit status is stage 2's, matching the return contract.
     audit_exec_ctx(line, audit_exec_outcome(rc2), rc2);
+    # ⛔ NEVER RETURN A BARE NEGATIVE. The dispatcher reads <0 as "this launcher
+    # did not claim the line, fall through" — so a reap failure was indistinguish-
+    # able from "not a pipeline", and the line was silently retried down the
+    # bareword and NL paths after both stages had already run. Collapse the
+    # failure to a handled 1; the audit line above carries the real code.
+    if (rc2 < 0) { return 1; }
     return rc2;
 }
 
@@ -523,32 +638,6 @@ fn sh_try_pipeline_launch(line, mode): i64 {
 # append, multiple `>`, and combined pipe+redirect are NOT supported — each safely fails
 # the is_safe_path check on the residual '>' rather than misbehaving. The target should
 # be an absolute path (agnos userland has no cwd). Agnos-only, like the pipeline.
-
-# Offset of the FIRST '>' (byte 62), or -1 if absent. Spaces around it are optional
-# (_sh_bin_segment / _sh_path_segment trim each side), same tolerance as the pipe split.
-fn _sh_find_redirect(line): i64 {
-    var i = 0;
-    while (load8(line + i) != 0) {
-        if (load8(line + i) == 62) { return i; }   # '>'
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
-# line[start..end] trimmed + NUL-terminated, VERBATIM (no "/bin/" prefix — this is a
-# file path, not a program). Fresh alloc, or 0 on an empty / alloc-failed segment.
-fn _sh_path_segment(line, start, end): i64 {
-    while (start < end) { if (load8(line + start) == 32) { start = start + 1; } else { break; } }
-    while (end > start) { if (load8(line + end - 1) == 32) { end = end - 1; } else { break; } }
-    var sl = end - start;
-    if (sl <= 0) { return 0; }
-    var p = alloc(sl + 1);
-    if (p == 0) { return 0; }
-    var k = 0;
-    while (k < sl) { store8(p + k, load8(line + start + k)); k = k + 1; }
-    store8(p + sl, 0);
-    return p;
-}
 
 # "/bin/<word>" (the FIRST token of a "/bin/<word> [args]" cmd) exists on disk?
 # 1 = yes, 0 = no / empty. Mirrors the sh_try_bareword_launch probe (O_RDONLY open +
@@ -651,10 +740,25 @@ fn sh_run_redirect(line, mode): i64 {
         return 1;
     }
     # Arm stdout -> FILE, then run cmd to completion (kernel auto-restores fd 1 on resume).
-    sh_exec_redirect(1, fd);
+    # The arm's return is checked: unarmed, the command would run with its output
+    # on the terminal while the (already-created, already-truncated) target stayed
+    # empty — the user's file silently emptied and the output somewhere else.
+    if (sh_exec_redirect(1, fd) < 0) {
+        println("run: failed to arm redirect");
+        sys_close(fd);
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return 1;
+    }
     var rc = sh_exec_line(cmd);
     sys_close(fd);
     audit_exec_ctx(line, audit_exec_outcome(rc), rc);
+    # ⛔ Same sentinel collision as the pipeline: sh_exec_line returns the raw
+    # #37 result, and a -1 launch failure propagated out of sh_run_redirect ->
+    # sh_try_redirect_launch, where the dispatcher read it as "not a redirect"
+    # and fell through — so a redirect that FAILED to launch was retried as a
+    # bareword and then as natural language, with the target file already
+    # truncated. Collapse to a handled 1.
+    if (rc < 0) { return 1; }
     return rc;
 }
 

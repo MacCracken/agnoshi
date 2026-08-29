@@ -14,31 +14,34 @@ Items leave this file when they ship; they are not marked done and kept.
 **This is the immediate next work.** The 1.9.1 sweep fixed 35 finding-clusters and left these
 deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
-severity, not by convenience. (1.9.2, the exec-audit slice, shipped — see the CHANGELOG;
-its residual agnos verification moved into 1.9.3.)
+severity, not by convenience. (1.9.2 exec-audit and 1.9.3 exec-path error handling have
+shipped — see the CHANGELOG. Their untested agnos half is recorded below as verification debt.)
 
-### 1.9.3 — Exec-path error handling (agnos)
+### Verification debt — the agnos exec surface has never been executed
 
-⚠ **Carried over from 1.9.2**: the exec audit surface shipped, but its agnos-only half —
-pipeline, redirect and background-job records — is **compile-verified and code-reviewed, not
-executed**. The `run` path was exercised end-to-end on the host; the rest needs an agnos smoke
-case on iron. Fold that verification into this slice, since it touches the same launchers:
-assert a `launched` line plus a matching outcome for `cmd1 | cmd2`, `cmd > file` and `prog &`,
-and confirm `> /.agnsh_audit.log` is refused and recorded.
+⚠ **Not a feature slice. This is the standing gap behind everything 1.9.2 and 1.9.3 changed**, and
+it has now carried forward twice, so it is recorded as debt rather than folded into another slice
+where it can quietly vanish again.
 
-- **One-shot redirect sentinel collision** — `sh_run_redirect` returns `sh_exec_line`'s `-1`
-  launch-failure code, which the dispatcher reads as "not a redirect, fall through", so a failed
-  redirect is silently retried down another path.
-- **Job table overflow leaks a child** — `sh_run_program_bg` ignores `job_add`'s refusal: a 9th
-  background child is spawned, never recorded, never reaped.
-- **`exec_redirect#62` return discarded** at all three arm sites — a failed redirect is treated
-  as success, so output goes somewhere other than where the user asked.
-- **`alloc()` return unchecked** in the bareword launch path and `str_cat3_cstr` — exhaustion
-  faults at a later, less obvious line.
-- **Bareword probe opens before validating** — `sh_try_bareword_launch` opens an unvalidated
-  traversal path before `is_safe_path` runs (check-after-use ordering).
-- **`&`-strip mutates the caller's buffer** — `sh_strip_trailing_amp` truncates in place, so on a
-  probe miss the line recorded in history/audit is not the line the user typed.
+The exec audit surface (1.9.2) and the exec-path error handling (1.9.3) both landed with their
+host-reachable halves **executed and asserted** — the `run` path end-to-end, and the five pure
+parsers that 1.9.3 hoisted out of the `#ifdef`. Everything else lives behind
+`#ifdef CYRIUS_TARGET_AGNOS` and is **compile-verified on all three targets and code-reviewed, but
+has never been run**:
+
+- pipeline / redirect / background-job audit records (launch line + matching outcome)
+- the probe-before-validate reordering in `sh_try_bareword_launch`
+- the two sentinel collapses (a failed redirect or pipeline no longer reads as "not mine")
+- the three `exec_redirect#62` arm-return checks
+- the pre-spawn job-table capacity check
+
+**What would close it** — an agnos smoke run on iron asserting, for `cmd1 | cmd2`, `cmd > file` and
+`prog &`: a `launched` record followed by a matching outcome record; `> /.agnsh_audit.log` refused
+and recorded as `denied`; a 9th background job refused *without* a stray child; and a deliberately
+missing binary in a pipeline stage reported once rather than silently retried down the NL path.
+
+The host smoke suite (`scripts/smoke-test.sh`) already has the shape to copy — it exercises the
+binary and parses the resulting audit log. What is missing is a target to run it on.
 
 ### 1.9.4 — State-file and error-output hygiene
 
@@ -86,10 +89,11 @@ All six carry a named benchmark; none is speculative.
 
 ### 1.9.7 — Test reachability
 
-- **`run_agnos.cyr`'s parsers are 22/22 untested and unreachable by `cyrius test` on the host** —
-  they are the shell's untrusted-input parsers (redirect split, pipe split, bareword) and they
-  are the least tested code in the tree. Needs either a host-compilable extraction of the pure
-  parsing helpers or an agnos-side harness. Decide which.
+- ✅ *(largely closed in 1.9.3)* `run_agnos.cyr`'s **pure** parsers — `sh_scan_trailing_amp`,
+  `_sh_find_pipe`, `_sh_find_redirect`, `_sh_bin_segment`, `_sh_path_segment` — were hoisted out
+  of the `#ifdef` and now have host unit coverage (the "host-compilable extraction" option was
+  the one taken). What remains untestable on the host is everything that needs a syscall:
+  `_sh_bin_probe` and the launchers themselves — see the verification-debt entry above.
 - **The coverage gate's denominator omits five modules that are in the binary today**, so the
   reported figure overstates real coverage.
 - ✅ *(closed in 1.9.2)* Smoke now asserts the exec audit end-to-end: log created, launch/outcome pair present, refusal recorded with `approved:0`, `exit_code` null rather than the sentinel when inapplicable, and every line valid JSON. Still missing: the same assertions on the **agnos-only** launchers — see the 1.9.3 carry-over.

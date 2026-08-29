@@ -30,6 +30,11 @@ include "src/interpreter.cyr"
 include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
+# 1.9.3: run_agnos.cyr's pure command-line parsers now sit outside the
+# CYRIUS_TARGET_AGNOS block, so a host build gets exactly those and nothing
+# else. This is the first time the shell's untrusted-input parsers are
+# reachable from the test suite.
+include "src/run_agnos.cyr"
 include "src/security.cyr"
 
 # Compose a SecurityContext (56 bytes — uid, gid, euid, username,
@@ -45,6 +50,16 @@ fn _mock_sec(is_root, restricted, sudo_available) {
     store64(p + 40, restricted);
     store64(p + 48, sudo_available);
     return p;
+}
+
+# Copy a cstring literal into a scratch buffer. The amp cases need a WRITABLE
+# buffer so the "does not mutate" assertions are meaningful — asserting
+# non-mutation of a read-only literal would prove nothing.
+fn _t_cpy(dst, src): i64 {
+    var i = 0;
+    while (load8(src + i) != 0) { store8(dst + i, load8(src + i)); i = i + 1; }
+    store8(dst + i, 0);
+    return 0;
 }
 
 fn main() {
@@ -1134,6 +1149,61 @@ fn main() {
 
     # The parse-time constructor must keep its 6-arg shape — the exec field is
     # additive, and the non-exec call sites must not have to know about it.
+    # ---- 1.9.3 exec-path parsers (first host coverage) ----
+    # Writable scratch buffer, so the non-mutation assertions below are real.
+    var pbuf[64];
+
+    # _sh_find_pipe / _sh_find_redirect: offset of the separator, -1 when absent.
+    check("find_pipe absent", _sh_find_pipe("ls -la") == 0 - 1);
+    check("find_pipe at offset", _sh_find_pipe("ls | wc") == 3);
+    check("find_redirect absent", _sh_find_redirect("ls -la") == 0 - 1);
+    check("find_redirect at offset", _sh_find_redirect("ls > f") == 3);
+
+    # _sh_bin_segment prefixes "/bin/" and trims; _sh_path_segment just trims.
+    check("bin_segment prefixes /bin/",
+      streq(_sh_bin_segment("  ls -la  ", 0, 10), "/bin/ls -la") == 1);
+    check("bin_segment empty -> 0", _sh_bin_segment("    ", 0, 4) == 0);
+    check("path_segment trims", streq(_sh_path_segment("  /tmp/f  ", 0, 10), "/tmp/f") == 1);
+    check("path_segment empty -> 0", _sh_path_segment("   ", 0, 3) == 0);
+
+    # sh_scan_trailing_amp: length of the command part for a background request,
+    # -1 when the line is not one.
+    _t_cpy(&pbuf, "sleeper &");
+    check("amp detected -> command length", sh_scan_trailing_amp(&pbuf) == 7);
+    # ⛔ THE REGRESSION THIS SLICE EXISTS FOR. The old sh_strip_trailing_amp
+    # truncated the caller's buffer in place, at the TOP of
+    # sh_try_bareword_launch — before the existence probe, and therefore before
+    # the fall-through that hands the line back to the NL path. `sleeper &` with
+    # no /bin/sleeper reached the parser, the history file and the audit record
+    # as plain `sleeper`: the line the shell reported was not the line typed.
+    check("amp scan does NOT mutate the caller's buffer",
+      streq(&pbuf, "sleeper &") == 1);
+
+    _t_cpy(&pbuf, "sleeper");
+    check("no amp -> -1", sh_scan_trailing_amp(&pbuf) == 0 - 1);
+    check("no amp leaves line intact", streq(&pbuf, "sleeper") == 1);
+
+    # Padding on either side of the `&` is excluded from the command length.
+    _t_cpy(&pbuf, "sleeper   &   ");
+    check("amp with padding -> command length", sh_scan_trailing_amp(&pbuf) == 7);
+    check("padded amp does not mutate", streq(&pbuf, "sleeper   &   ") == 1);
+
+    # A bare `&` has a zero-length command part; the launcher treats that as
+    # "not a bareword launch" and falls through to the NL path.
+    _t_cpy(&pbuf, "&");
+    check("bare amp -> length 0", sh_scan_trailing_amp(&pbuf) == 0);
+    _t_cpy(&pbuf, "prog & extra");
+    check("amp not trailing -> -1", sh_scan_trailing_amp(&pbuf) == 0 - 1);
+
+    # str_cat3_cstr — used to build every launch-confirmation prompt. Its alloc
+    # was unchecked; it now returns 0 on failure and verb_confirm declines rather
+    # than strlen()-ing a null pointer (fail closed: the HUMAN/STRICT gate must
+    # never proceed on a prompt it could not render).
+    check("str_cat3_cstr concatenates",
+      streq(str_cat3_cstr("run ", "/bin/ls", " &"), "run /bin/ls &") == 1);
+    check("str_cat3_cstr handles empty parts",
+      streq(str_cat3_cstr("", "x", ""), "x") == 1);
+
     check("6-arg AuditEntry_new still valid",
       str_contains(AuditEntry_to_json(ax_none), str_from("\"result\":\"denied\"")) == 1);
 
