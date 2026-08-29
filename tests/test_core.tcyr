@@ -1222,6 +1222,90 @@ fn main() {
     # on every open.
     check("audit flags exclude TRUNC",
       ((OPEN_WRONLY | OPEN_CREAT | OPEN_APPEND | OPEN_NOFOLLOW) & OPEN_TRUNC) == 0);
+    # ---- 1.9.5 parser shadowing ----
+    # Each of these produced a WRONG COMMAND from a reasonable sentence, because
+    # a broad parser earlier in the dispatch claimed the input before the
+    # specific parser that already handled it correctly could see it.
+    var sh = Interpreter_new();
+
+    # (1) parse_file_ops (2nd) claimed every "delete"/"remove", so USER_DELETE
+    # and FIREWALL_DELETE (parse_admin_ops, 5th) were unreachable and the shell
+    # emitted `rm` against a file named after the account or the rule.
+    check("delete user -> USER_DELETE",
+      load64(Interpreter_parse(sh, str_from("delete user bob"))) == IntentTag.USER_DELETE);
+    check("remove user -> USER_DELETE",
+      load64(Interpreter_parse(sh, str_from("remove user bob"))) == IntentTag.USER_DELETE);
+    check("delete firewall rule -> FIREWALL_DELETE",
+      load64(Interpreter_parse(sh, str_from("delete firewall rule 22"))) == IntentTag.FIREWALL_DELETE);
+    # ...and the guard must use WHOLE-token matching. With prefix matching,
+    # "user" also fires on "user_data.txt" and a plain file deletion would be
+    # routed into user management.
+    check("remove user_data.txt stays REMOVE",
+      load64(Interpreter_parse(sh, str_from("remove user_data.txt"))) == IntentTag.REMOVE);
+    check("delete report.txt stays REMOVE",
+      load64(Interpreter_parse(sh, str_from("delete report.txt"))) == IntentTag.REMOVE);
+    check("remove usergroups.txt stays REMOVE",
+      load64(Interpreter_parse(sh, str_from("remove usergroups.txt"))) == IntentTag.REMOVE);
+
+    # (2) parse_show_commands (1st) matched "content" and returned LIST_FILES,
+    # whose path comes from `extract_after(" in ")` — absent here — so the
+    # command became a bare `ls` and the FILENAME WAS DROPPED.
+    var shcof = Interpreter_parse(sh, str_from("show contents of /etc/hosts"));
+    check("show contents of FILE -> SHOW_FILE", load64(shcof) == IntentTag.SHOW_FILE);
+    check("show contents of FILE keeps the filename",
+      streq(str_cstr(load64(shcof + 8)), "/etc/hosts") == 1);
+
+    # (3) The SEARCH_CONTENT gate accepts " in ", "within" and "inside", but both
+    # fields were extracted with " in " only — so the "inside" phrasing passed
+    # the gate and produced a BARE grep: no pattern, no path.
+    var si = Interpreter_parse(sh, str_from("search for hello inside /tmp"));
+    check("search inside -> SEARCH_CONTENT", load64(si) == IntentTag.SEARCH_CONTENT);
+    check("search inside extracts the pattern",
+      streq(str_cstr(load64(si + 8)), "hello") == 1);
+    check("search inside extracts the path",
+      streq(str_cstr(load64(si + 16)), "/tmp") == 1);
+    var sw = Interpreter_parse(sh, str_from("search for needle within /var/log"));
+    check("search within extracts the pattern",
+      streq(str_cstr(load64(sw + 8)), "needle") == 1);
+    # the original " in " phrasing must keep working
+    var sin = Interpreter_parse(sh, str_from("search for hello in /tmp"));
+    check("search in still extracts the pattern",
+      streq(str_cstr(load64(sin + 8)), "hello") == 1);
+    check("search in still extracts the path",
+      streq(str_cstr(load64(sin + 16)), "/tmp") == 1);
+
+    # (4) The bare "usage" keyword in parse_show_commands claimed memory
+    # questions and answered them with `df -h` — a DISK report — even though
+    # parse_state_queries has an explicit "memory usage" arm.
+    check("show memory usage -> SYSTEM_INFO",
+      load64(Interpreter_parse(sh, str_from("show memory usage"))) == IntentTag.SYSTEM_INFO);
+    check("show free memory -> SYSTEM_INFO",
+      load64(Interpreter_parse(sh, str_from("show free memory"))) == IntentTag.SYSTEM_INFO);
+    # ...without breaking real disk questions.
+    check("show disk usage stays DISK_USAGE",
+      load64(Interpreter_parse(sh, str_from("show disk usage"))) == IntentTag.DISK_USAGE);
+    check("show disk space stays DISK_USAGE",
+      load64(Interpreter_parse(sh, str_from("show disk space"))) == IntentTag.DISK_USAGE);
+    check("show storage usage stays DISK_USAGE",
+      load64(Interpreter_parse(sh, str_from("show storage usage"))) == IntentTag.DISK_USAGE);
+    # ...and without breaking plain listing.
+    check("show me all files stays LIST_FILES",
+      load64(Interpreter_parse(sh, str_from("show me all files"))) == IntentTag.LIST_FILES);
+    check("list files in /tmp stays LIST_FILES",
+      load64(Interpreter_parse(sh, str_from("list files in /tmp"))) == IntentTag.LIST_FILES);
+
+    # input_has_exact_word — the matcher the guards depend on.
+    check("exact word matches a whole token",
+      input_has_exact_word(str_from("delete user bob"), "user") == 1);
+    check("exact word rejects a prefix",
+      input_has_exact_word(str_from("remove user_data.txt"), "user") == 0);
+    check("exact word matches at end of input",
+      input_has_exact_word(str_from("show memory"), "memory") == 1);
+    check("exact word is case-insensitive",
+      input_has_exact_word(str_from("Delete USER bob"), "user") == 1);
+    check("exact word absent -> 0",
+      input_has_exact_word(str_from("delete report.txt"), "user") == 0);
+
     check("history flags include TRUNC",
       ((OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC | OPEN_NOFOLLOW) & OPEN_TRUNC) != 0);
 

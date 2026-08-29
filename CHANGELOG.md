@@ -4,6 +4,102 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.5] - 2026-08-29 — parser shadowing: four reasonable sentences, four wrong commands
+
+Fourth slice of the v1.9.x hardening arc
+([`docs/audit/2026-08-29-pminus1.md`](docs/audit/2026-08-29-pminus1.md)).
+
+**One root cause, four symptoms.** The parser dispatch runs broad keyword matchers *before*
+specific ones — `parse_show_commands` is 1st, `parse_file_ops` 2nd, `parse_admin_ops` 5th,
+`parse_state_queries` 8th. In every case below the correct branch **already existed** further down
+and was simply never reached: the broad parser claimed the input and emitted the wrong command.
+
+### Fixed — `delete user bob` deleted a *file* named `bob`
+
+⛔ `parse_file_ops`' REMOVE branch matched every `remove` / `delete` / `rm` unconditionally, so
+`USER_DELETE` and `FIREWALL_DELETE` in `parse_admin_ops` were **unreachable by their most natural
+phrasing**. `delete user bob` → `rm`, `delete firewall rule 22` → `rm`. The emitted command
+operated on a file named after the account or the rule.
+
+Now falls through when the object is unambiguously an admin one.
+
+⚠ **The guard uses whole-token matching, and that distinction is the whole fix.** The existing
+`input_has_word` matches token *prefixes* (deliberately — so "file" finds "files"), which means a
+guard written with it would also fire on `remove user_data.txt` and route a plain file deletion into
+user management — trading one wrong command for another. New `input_has_exact_word` requires a
+boundary on both sides. Asserted in both directions: `delete user bob` → `userdel`,
+`remove user_data.txt` → `rm`, `remove usergroups.txt` → `rm`.
+
+### Fixed — `show contents of FILE` emitted a bare `ls` and dropped the filename
+
+⛔ `parse_show_commands` matched `content` and returned LIST_FILES, whose path comes from
+`extract_after(" in ")` — absent in this phrasing — so the command became a bare `ls`: **wrong
+command, and the filename silently discarded**. `parse_file_ops` has had a correct
+`contents of` → SHOW_FILE branch the whole time, one position later in the dispatch. Now
+`show contents of /etc/hosts` → `cat /etc/hosts`, filename intact.
+
+### Fixed — `search for X inside Y` produced a grep with no pattern and no path
+
+⛔ The SEARCH_CONTENT gate accepts `" in "`, `"within"` **or** `"inside"`, but both fields were
+extracted with `" in "` alone. `"inside"` does not contain `" in "` (the trailing space fails), so
+there was no accidental rescue: the input passed the gate and then extracted nothing usable.
+
+⚠ **The first attempt at this fix was wrong, and the tests caught it.** Chaining
+`if (field == 0) { try the next separator; }` looks right but never fires: `extract_between` falls
+back to *"everything after `before_kw`"* when the separator is missing, so it **never returns 0**
+once `before_kw` is present — the chain kept the first, wrong answer and made the pattern
+`"hello inside /tmp"`. The separator must be **selected before extracting**, not recovered
+afterwards. Now `search for hello inside /tmp` → pattern `hello`, path `/tmp`, and the `" in "` and
+`"within"` phrasings are asserted alongside it.
+
+### Fixed — `show memory usage` answered a memory question with a disk report
+
+⛔ The bare `usage` keyword in `parse_show_commands` claimed every kind of usage and returned
+DISK_USAGE → `df -h`, even though `parse_state_queries` has an explicit `memory usage` → SYSTEM_INFO
+arm. The two parsers disagreed and the broad one won by position. Memory-shaped inputs now fall
+through; `disk` / `space` / `storage usage` are untouched.
+
+⚠ **Stated plainly: this fixes the shadowing, not the answer.** `show memory usage` now routes to
+SYSTEM_INFO, which emits `uname -a` — no longer a *disk* report for a memory question, but not a
+memory report either. There is no MEMORY_INFO intent and no `free -h` translator. That is a missing
+capability rather than a shadowing bug, so it is recorded on the roadmap instead of being smuggled
+into this slice.
+
+### Performance
+
+⚠ **A regression I introduced, measured and then mostly repaid.** The `contents of` / `file content`
+exclusions run on the LIST_FILES path, which is `parse/list_files` — a benchmarked hot path. Testing
+both long phrases unconditionally cost **+31%** (2.464us → 3.23us, stable across three runs). Both
+exclusions require the word `content`, and the common inputs here (`show me all files`,
+`list files in /tmp`) do not contain it, so the pair is now gated behind one short scan:
+
+| benchmark | 1.9.4 | naive guard | shipped |
+|---|---|---|---|
+| `parse/list_files` | 2.464us | 3.23us (+31%) | **2.591us (+5%)** |
+
+The residual ~5% is one `content` scan and is the honest price of the correctness fix. It is
+amplified by an existing inefficiency — `input_has_word` characterises the needle and then
+`is_word_prefix` repeats the identical work — which is already tracked in the 1.9.6 optimization
+slice. All other benchmarks unchanged.
+
+### Tests
+
+419 unit (was 393) + 26 security + **88 smoke (was 78)**. Every fix is asserted in **both**
+directions — the bug case and the case that must not regress — because three of the four fixes are
+guards that could over-reject: `remove user_data.txt` must stay `rm`, `show disk usage` must stay
+`df`, `show me all files` must stay `ls`, and the `" in "` search phrasing must keep working. The
+unit tests check the **extracted fields**, not just the command, since two of these bugs were
+silent argument loss rather than a wrong verb.
+
+### Notes
+
+- Binary 319,784 → 323,968 B (+4,184). All three targets warning-free; all gates green.
+- Carried to the roadmap: no MEMORY_INFO intent (above), and the still-open question of whether the
+  dispatch should be ordered specific-before-broad rather than patched guard by guard. Four
+  shadowing bugs from one ordering is evidence, not proof — but it is worth deciding deliberately
+  rather than waiting for the fifth.
+
+
 ## [1.9.4] - 2026-08-29 — state-file and error-output hygiene
 
 Third slice of the v1.9.x hardening arc

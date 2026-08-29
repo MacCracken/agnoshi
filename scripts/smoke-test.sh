@@ -379,6 +379,35 @@ rm -f "/tmp/agnsh_audit.log.$(id -u)" "/tmp/agnsh_history.$(id -u)"
 
 rm -rf "$HYG_HOME"
 
+# ---- 1.9.5: parser shadowing ----
+# Each of these produced a WRONG COMMAND from a reasonable sentence because a
+# broad parser earlier in the dispatch claimed the input before the specific
+# parser that already handled it correctly could see it. Asserted at the binary
+# level, not just the parser, so the whole pipeline is covered.
+PS_HOME=$(mktemp -d)
+psh() { HOME="$PS_HOME" "$BIN" -c "$1" 2>/dev/null | head -1 || true; }
+
+# `delete user bob` used to emit `rm` — an rm against a FILE named "bob".
+check "delete user -> userdel" "Command: userdel" "$(psh 'delete user bob')"
+check "remove user -> userdel" "Command: userdel" "$(psh 'remove user bob')"
+check "delete firewall rule -> ufw" "Command: ufw" "$(psh 'delete firewall rule 22')"
+# ...but a plain file deletion whose name merely STARTS with "user" must stay rm.
+check "remove user_data.txt stays rm" "Command: rm" "$(psh 'remove user_data.txt')"
+check "delete report.txt stays rm" "Command: rm" "$(psh 'delete report.txt')"
+
+# `show contents of FILE` used to emit a bare `ls`, dropping the filename.
+check "show contents of FILE -> cat" "Command: cat" "$(psh 'show contents of /etc/hosts')"
+
+# `show memory usage` used to emit `df -h` — a DISK report for a MEMORY question.
+check "show memory usage is not df" "Command: uname" "$(psh 'show memory usage')"
+# ...without breaking real disk questions.
+check "show disk usage stays df" "Command: df" "$(psh 'show disk usage')"
+check "show disk space stays df" "Command: df" "$(psh 'show disk space')"
+# ...or plain listing.
+check "show me all files stays ls" "Command: ls" "$(psh 'show me all files')"
+
+rm -rf "$PS_HOME"
+
 echo ""
 echo "Passed: $PASS"
 echo "Failed: $FAIL"

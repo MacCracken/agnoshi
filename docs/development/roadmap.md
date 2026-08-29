@@ -14,8 +14,8 @@ Items leave this file when they ship; they are not marked done and kept.
 **This is the immediate next work.** The 1.9.1 sweep fixed 35 finding-clusters and left these
 deliberately, each with a reason. Full context per item in
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md). Slices are ordered by
-severity, not by convenience. (1.9.2 exec-audit, 1.9.3 exec-path error handling and
-1.9.4 state-file/error-output hygiene have shipped — see the CHANGELOG. The untested agnos half of
+severity, not by convenience. (1.9.2 exec-audit, 1.9.3 exec-path error handling,
+1.9.4 state-file/error-output hygiene and 1.9.5 parser shadowing have shipped — see the CHANGELOG. The untested agnos half of
 1.9.2/1.9.3 is recorded below as verification debt.)
 
 ### Verification debt — the agnos exec surface has never been executed
@@ -53,17 +53,24 @@ configurable one. Decide which is right, make it the single source, and wire the
 (or delete the dead field). Small; it was noticed while fixing the load path, not fixed there,
 because "make the config real" is a different change from "stop eating the history file".
 
-### 1.9.5 — Parser shadowing bugs
+### Carried from 1.9.5 — no MEMORY_INFO intent, and a dispatch-ordering decision
 
-Each produces a wrong command from a reasonable sentence:
+**No memory answer.** `show memory usage` no longer emits `df -h` (a disk report), but it routes to
+SYSTEM_INFO → `uname -a`, which does not report memory either. There is no MEMORY_INFO tag and no
+`free -h` translator. That is a missing capability, not a shadowing bug, which is why 1.9.5 fixed
+the routing and stopped there. Small: one IntentTag, one parser arm, one translator.
 
-- **`delete user bob` emits `rm`** — `parse_file_ops`' REMOVE branch claims every later "delete"
-  intent, so `FIREWALL_DELETE` and `USER_DELETE` are unreachable by that phrasing.
-- **`show contents of FILE` emits a bare `ls`**, dropping the filename — LIST_FILES shadows it.
-- **`search for X inside Y`** — the gate accepts "inside" but extraction requires the literal
-  `" in "`, producing a bare `grep`.
-- **`show memory usage` emits `df -h`** — `parse_show_commands`' "usage" keyword hijacks it,
-  contradicting `parse_state_queries`.
+**The ordering question.** The dispatch runs broad keyword matchers before specific ones
+(`parse_show_commands` 1st, `parse_file_ops` 2nd, `parse_admin_ops` 5th, `parse_state_queries` 8th),
+and 1.9.5 fixed **four** shadowing bugs that all came from that single property — each one a
+guard bolted onto the broad parser to make it decline. Four from one cause is evidence that the
+ordering is the defect and the guards are symptom management.
+
+Worth deciding deliberately rather than waiting for the fifth: either reorder specific-before-broad
+(and re-verify every existing parse, which is why it was not done inside a bug-fix slice), or
+accept guard-by-guard and write that down as the chosen posture so the next person does not
+re-litigate it. Note the guards are not free — 1.9.5 measured one at +31% on `parse/list_files`
+before it was optimised down to +5%.
 
 ### 1.9.6 — Measured optimization
 
@@ -77,7 +84,10 @@ All six carry a named benchmark; none is speculative.
 - `analyze_command_permission` runs up to 75 full `streq` calls (two `strlen` walks each) with no
   first-byte gate.
 - `input_has_word` characterises the needle, then `is_word_prefix` repeats the identical
-  `strlen` + trim.
+  `strlen` + trim. ⚠ **Now has a measured price tag**: 1.9.5 added two keyword guards on the
+  LIST_FILES path and paid **+31%** on `parse/list_files` for them (2.464us → 3.23us), reduced to
+  +5% only by gating them behind a shorter needle. Every guard the parser gains pays this twice
+  over, so fixing the double scan makes future correctness fixes cheaper, not just this one faster.
 - `is_safe_path` walks the path twice with two separate `strlen` calls where one fused pass
   answers both predicates.
 - `get_command_basename` scans forward to find the *last* slash instead of scanning back.

@@ -84,6 +84,23 @@ fn parse_show_commands(trimmed) {
       || input_has_word(trimmed, "dir") == 1
       || input_has_word(trimmed, "folder") == 1
       || input_has_word(trimmed, "content") == 1) {
+        # ⛔ "content" HERE SHADOWED THE SHOW_FILE BRANCH THAT ALREADY EXISTS.
+        # parse_show_commands runs 1st in the dispatch; parse_file_ops runs 2nd
+        # and has a correct `contents of` -> SHOW_FILE arm. So
+        # `show contents of /etc/hosts` matched "content", became LIST_FILES,
+        # and — because LIST_FILES takes its path from `extract_after(" in ")`,
+        # which finds nothing here — emitted a BARE `ls`: the wrong command AND
+        # the filename silently dropped. Let the specific phrasing through.
+        # Gated on the SHORT needle first: both exclusions require "content", and
+        # the common input on this path ("show me all files", "list files in X")
+        # does not contain it. Testing the two long phrases unconditionally cost
+        # a measured +31% on parse/list_files — this brings that back to ~0 by
+        # paying one short scan instead of two long ones for inputs that can
+        # never match either.
+        if (input_has_word(trimmed, "content") == 1) {
+            if (input_has_word(trimmed, "contents of") == 1) { return 0; }
+            if (input_has_word(trimmed, "file content") == 1) { return 0; }
+        }
         var intent = Intent_new(IntentTag.LIST_FILES);
         var path = extract_after(trimmed, " in ");
         store64(intent + 8, path);
@@ -114,6 +131,15 @@ fn parse_show_commands(trimmed) {
     if (input_has_word(trimmed, "disk") == 1
       || input_has_word(trimmed, "space") == 1
       || input_has_word(trimmed, "usage") == 1) {
+        # ⛔ THE BARE "usage" KEYWORD CLAIMED EVERY KIND OF USAGE. parse_show_commands
+        # runs 1st and parse_state_queries runs 8th, so `show memory usage` matched
+        # here and emitted `df -h` — a DISK report for a MEMORY question — even
+        # though parse_state_queries has an explicit "memory usage" -> SYSTEM_INFO
+        # arm. The two disagreed and the broad one won by position.
+        # Only "disk"/"space" are genuine disk signals; hand anything memory-shaped
+        # to the specific parser.
+        if (input_has_exact_word(trimmed, "memory") == 1) { return 0; }
+        if (input_has_exact_word(trimmed, "ram") == 1) { return 0; }
         var intent = Intent_new(IntentTag.DISK_USAGE);
         store64(intent + 8, extract_after(trimmed, " in "));
         return intent;
@@ -163,10 +189,29 @@ fn parse_file_ops(trimmed) {
           || input_has_word(trimmed, "within") == 1
           || input_has_word(trimmed, "inside") == 1) {
             var intent = Intent_new(IntentTag.SEARCH_CONTENT);
-            store64(intent + 8, extract_between(trimmed, "for ", " in "));
-            if (load64(intent + 8) == 0) { store64(intent + 8, extract_between(trimmed, "search ", " in ")); }
-            store64(intent + 16, extract_after(trimmed, " in "));
-            if (load64(intent + 16) == 0) { store64(intent + 16, extract_after(trimmed, "within ")); }
+            # ⛔ THE GATE AND THE EXTRACTORS DISAGREED. The branch above accepts
+            # " in ", "within" OR "inside", but both fields were extracted using
+            # " in " alone (plus a lone "within " fallback for the path). So
+            # `search for hello inside /tmp` passed the gate and then produced a
+            # BARE `grep` — no pattern, no path. ("inside" does not contain
+            # " in ": the trailing space fails, so there was no accidental rescue.)
+            #
+            # ⚠ THE SEPARATOR MUST BE CHOSEN BEFORE EXTRACTING, not by chaining
+            # `== 0` fallbacks. extract_between falls back to "everything after
+            # before_kw" when after_kw is absent, so it NEVER returns 0 once
+            # before_kw is present — a chain of 0-checks would keep the FIRST,
+            # wrong answer and silently make the pattern "hello inside /tmp".
+            var sep = 0;
+            if (str_find_ci(trimmed, " in ") >= 0) { sep = " in "; }
+            elif (str_find_ci(trimmed, " inside ") >= 0) { sep = " inside "; }
+            elif (str_find_ci(trimmed, " within ") >= 0) { sep = " within "; }
+            if (sep != 0) {
+                store64(intent + 8, extract_between(trimmed, "for ", sep));
+                if (load64(intent + 8) == 0) {
+                    store64(intent + 8, extract_between(trimmed, "search ", sep));
+                }
+                store64(intent + 16, extract_after(trimmed, sep));
+            }
             return intent;
         }
     }
@@ -202,6 +247,21 @@ fn parse_file_ops(trimmed) {
     if (input_has_word(trimmed, "remove") == 1
       || input_has_word(trimmed, "delete") == 1
       || input_has_word(trimmed, "rm") == 1) {
+        # ⛔ THIS BRANCH USED TO CLAIM EVERY "delete"/"remove" IN THE LANGUAGE.
+        # parse_file_ops runs 2nd in the dispatch and parse_admin_ops runs 5th,
+        # so `delete user bob` and `delete firewall rule 22` were both turned
+        # into `rm` — USER_DELETE and FIREWALL_DELETE were unreachable by their
+        # most natural phrasing, and the emitted command operated on a FILE
+        # named after the account or the rule.
+        #
+        # Fall through to the specific parser when the object is unambiguously
+        # an admin one. input_has_exact_word, NOT input_has_word: the latter
+        # matches token prefixes, so "user" would also fire on
+        # `remove user_data.txt` and route a plain file deletion into user
+        # management. Whole-token matching keeps that a REMOVE.
+        if (input_has_exact_word(trimmed, "user") == 1) { return 0; }
+        if (input_has_exact_word(trimmed, "group") == 1) { return 0; }
+        if (input_has_exact_word(trimmed, "firewall") == 1) { return 0; }
         var intent = Intent_new(IntentTag.REMOVE);
         store64(intent + 8, extract_last_arg(trimmed));
         store64(intent + 40, 0);
