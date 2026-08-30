@@ -105,6 +105,22 @@ seams. Comments are now stripped before the search, which exposed **five** funct
 (`verb_read_yes`, `verb_confirm`, `extract_after`, `has_system_path_arg`, `Translation_with_mcp`)
 that had never actually been asserted. All five now are.
 
+### Fixed — the format gate could only ever check one file locally
+
+`cyrius fmt` **ignores every file after the first**, in both forms:
+`cyrius fmt --check a.cyr b.cyr` checks only `a.cyr` and exits 0 however badly
+`b.cyr` drifts, and `cyrius fmt a.cyr b.cyr` reformats only `a.cyr` while looking
+like it worked. A glob is the natural thing to type, so a local sweep across
+`src/*.cyr tests/*.tcyr` checked exactly one file and reported clean — this cut
+reached CI with drift in `tests/test_core.tcyr` after exactly that.
+
+CI was not wrong here — it loops per-file. The gap was between CI and what a
+developer types, and a loop inlined in the workflow could not close it. The loop now
+lives in **`scripts/check-fmt.sh`** and CI runs that script, so both run the same
+code. It carries `--fix` and a `--selftest` that plants drift and asserts the
+gate reports it — the same make-it-fail-first check applied to lint Category H
+and the coverage gate in this release.
+
 ### Performance
 
 No regression. The obvious spelling of the `MEMORY_INFO` parser arm — six keyword checks — measured

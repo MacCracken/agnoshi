@@ -39,7 +39,7 @@ These match the CI gate set. Run them before pushing — any drift fails the bui
 cyrius check src/agnsh.cyr             # syntax (entry-walk; modules are stitched through agnsh.cyr)
 cyrius capacity --check src/agnsh.cyr  # fn-table / code-size headroom (must be <85%)
 cyrius vet src/agnsh.cyr               # include-graph audit
-cyrius fmt --check <file>              # fmt-drift gate (non-mutating; bare `cyrius fmt <file>` REWRITES IN PLACE)
+sh scripts/check-fmt.sh                # fmt-drift gate, all files (--fix to repair)
 cyrius lint <file>                     # warn-as-error
 sh scripts/lint-cstr-str.sh src        # Str/cstring antipatterns (A-G) + test-seam containment (H)
 sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reachable)
@@ -49,6 +49,15 @@ sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reac
 **literal** argument, so a cstring carried in a variable is invisible to it. A
 clean run is not proof — it was green through both the dead SHELL_COMMAND
 classifier (1.9.1) and the `audit_format_table` defect (1.9.8).
+
+⛔ **`cyrius fmt` ignores every file after the first — use the script.**
+Both forms do it, and the rewrite form is the more dangerous:
+`cyrius fmt --check a.cyr b.cyr` checks only `a.cyr` and exits 0 however badly
+`b.cyr` drifts, and `cyrius fmt a.cyr b.cyr` reformats only `a.cyr` while looking
+like it worked. A glob is the natural thing to type and it silently checks one
+file: that is how 1.9.10 reached CI with drift after a locally "clean" sweep.
+`sh scripts/check-fmt.sh` loops per-file, is the same code CI runs, and carries a
+`--selftest` that plants drift and asserts the gate reports it.
 
 ⛔ **Category H — the audit-path test seam stays a test seam.**
 `audit_path_override_set` (`src/statepaths.cyr`) redirects where the security log

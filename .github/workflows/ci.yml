@@ -87,17 +87,18 @@ jobs:
         # also silently reformatting the checkout). `--check` is a real
         # non-mutating check in 6.5.x (it was a no-op back in 5.9.x, which is
         # why the diff form existed): it exits 1 and names the first differing
-        # line. Use it directly. `--dry` reports without touching the file too.
-        run: |
-          fail=0
-          for f in src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr; do
-            [ -f "$f" ] || continue
-            if ! cyrius fmt --check "$f"; then
-              echo "needs fmt: $f"
-              fail=1
-            fi
-          done
-          [ $fail -eq 0 ] || { echo "fmt: drift detected"; exit 1; }
+        # line. `--dry` reports without touching the file too.
+        #
+        # ⛔ The per-file loop that used to be inlined here now lives in
+        # scripts/check-fmt.sh, so CI and a developer's terminal run THE SAME
+        # CODE. The loop is not optional styling: `cyrius fmt` ignores every
+        # file after the first, in both the --check and rewrite forms. A local
+        # `cyrius fmt --check src/*.cyr tests/*.tcyr` therefore checks exactly
+        # one file and reports success — which is how 1.9.10 reached CI with
+        # drift after a "clean" local sweep. CI caught it; the gap was between
+        # CI and what a developer types, and a loop inlined here could not
+        # close it — only a script both sides run can.
+        run: sh scripts/check-fmt.sh
 
       - name: Lint
         # Auto-discover so new modules are covered without editing CI.

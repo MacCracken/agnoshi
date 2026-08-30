@@ -37,7 +37,11 @@ agnoshi (AI natural language shell, Cyrius)
 3. Cleanliness gates (match CI):
    - `cyrius check src/agnsh.cyr` (syntax — walk from the ENTRY; modules do not
      declare their own includes, so a per-file check trips on cross-module refs)
-   - `cyrius fmt --check <file>` (fmt-drift gate — non-mutating; bare `cyrius fmt <file>` rewrites in place)
+   - `sh scripts/check-fmt.sh` (fmt-drift gate, every file; `--fix` repairs)
+     ⛔ Do NOT hand-roll this as `cyrius fmt --check <glob>` — `cyrius fmt`
+     ignores every file after the first in BOTH the `--check` and rewrite forms,
+     so a glob checks exactly one file and reports success. The script loops
+     per-file and is the same code CI runs.
    - `cyrius lint <file>` — warn-as-error
    - `cyrius vet src/agnsh.cyr` (include-graph audit)
    - `cyrius capacity --check src/agnsh.cyr` (fn-table / code-size headroom)

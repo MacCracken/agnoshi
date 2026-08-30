@@ -1947,7 +1947,7 @@ fn main() {
     var badlog = AuditLogger_new("/proc/definitely/not/writable/agnsh.log");
     check("AuditLogger_log reports an unwritable path",
       AuditLogger_log(badlog, AuditEntry_new(str_from("u"), str_from("m"),
-        str_from("i"), str_from("a"), 1, str_from("proposed"))) == 0 - 1);
+          str_from("i"), str_from("a"), 1, str_from("proposed"))) == 0 - 1);
 
     # --- AuditViewer ---
     # Documented as a v1.2.x stub that returns empty until the stdlib alignment
