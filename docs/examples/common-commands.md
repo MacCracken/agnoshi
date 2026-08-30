@@ -28,6 +28,9 @@ Natural language inputs and their translations.
 | `show system info` | SYSTEM_INFO | `uname -a` |
 | `show network info` | NETWORK_INFO | `ip addr show` |
 | `show disk usage` | DISK_USAGE | `df -h` |
+| `show memory usage` | MEMORY_INFO | `free -h` |
+| `show free memory` | MEMORY_INFO | `free -h` |
+| `ram usage` | MEMORY_INFO | `free -h` |
 | `install vim` | INSTALL_PACKAGE | `apt install -y vim` (requires approval) |
 | `start service nginx` | SERVICE_CONTROL | `systemctl start nginx` |
 | `stop service apache2` | SERVICE_CONTROL | `systemctl stop apache2` |

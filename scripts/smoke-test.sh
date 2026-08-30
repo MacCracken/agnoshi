@@ -399,10 +399,18 @@ check "delete report.txt stays rm" "Command: rm" "$(psh 'delete report.txt')"
 check "show contents of FILE -> cat" "Command: cat" "$(psh 'show contents of /etc/hosts')"
 
 # `show memory usage` used to emit `df -h` — a DISK report for a MEMORY question.
-check "show memory usage is not df" "Command: uname" "$(psh 'show memory usage')"
+# 1.9.5 moved it off df; this check then asserted `uname`, which does not report
+# memory either — the test named itself "is not df" and settled for not-df.
+# 1.9.10 gave memory its own intent, so it can now assert the actual answer.
+check "show memory usage -> free" "Command: free" "$(psh 'show memory usage')"
+check "show free memory -> free" "Command: free" "$(psh 'show free memory')"
+check "ram usage -> free" "Command: free" "$(psh 'ram usage')"
 # ...without breaking real disk questions.
 check "show disk usage stays df" "Command: df" "$(psh 'show disk usage')"
 check "show disk space stays df" "Command: df" "$(psh 'show disk space')"
+# ...or the system query the memory keywords used to be parked on.
+check "system info stays uname" "Command: uname" "$(psh 'system info')"
+check "show hostname stays uname" "Command: uname" "$(psh 'show hostname')"
 # ...or plain listing.
 check "show me all files stays ls" "Command: ls" "$(psh 'show me all files')"
 

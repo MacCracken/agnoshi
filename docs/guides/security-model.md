@@ -176,6 +176,21 @@ sequence was itself a race), opened `O_NOFOLLOW`, and the audit log's mode is
 looser umask, restored from a backup, or copied into place used to keep whatever
 mode it had, indefinitely.
 
+⚠ **The audit log's path is overridable in-process, by design.**
+`audit_path_override_set` (`src/statepaths.cyr`, 1.9.10) redirects it. It exists
+because the audit writers resolve their own destination — so before it, a test
+had no file to read back and the six functions that write the security log had
+**no assertion of any kind**. They now have assertions on record *content*.
+
+The reason this is not a hole, stated rather than assumed: **nothing in the shell
+calls the setter.** Cyrius has no dynamic dispatch, no reflection and no
+call-by-name, so a function with no call site is unreachable from any
+input-driven path — an attacker with control of a command line cannot get to it.
+`scripts/lint-cstr-str.sh` **Category H** fails the build if any file under
+`src/` other than the definition site so much as names it, which is what stops a
+future edit from quietly turning a test hook into a runtime redirect. The
+override is per-process and cannot persist between runs.
+
 ⚠ **When `$HOME` is unset** these fall back to `/tmp/agnsh_history.<uid>` and
 `/tmp/agnsh_audit.log.<uid>`. The uid qualifier (1.9.4 — they were previously
 fixed, shared names) removes the collision between users on a multi-user host and

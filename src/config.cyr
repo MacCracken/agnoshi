@@ -15,7 +15,10 @@ struct ShellConfig {
 fn ShellConfig_default() {
     var p = alloc(72);
     store64(p, Mode.AI_ASSISTED);
-    store64(p + 8, 10000);
+    # HISTORY_MAX_ENTRIES (src/history.cyr), not a second literal — this field
+    # said 10000 while the live loop used 1000, and since config.cyr is not in
+    # the binary's include graph the documented value was the dead one.
+    store64(p + 8, HISTORY_MAX_ENTRIES);
     store64(p + 16, 1);
     store64(p + 24, 0);
     store64(p + 32, 300);

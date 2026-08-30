@@ -4,6 +4,129 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.10] - 2026-08-29 — the config, the memory answer, and the seams that made the audit log testable
+
+Three roadmap slices in one cut (1.9.10 + 1.9.11). The seams were the point: making six
+security-log writers assertable immediately found **two real defects that no existing test could
+have caught**, which is the part worth reading.
+
+### Fixed — the history file silently lost its oldest entry on every load
+
+⛔ `CommandHistory_save` terminates every entry with `\n`, so `str_split` on load left a trailing
+**empty element**. That empty was filtered out downstream and never became a bogus entry, so
+nothing looked wrong — but it was still counted as a line by the load cap, and the cap arithmetic
+is positional (`keep_from = nlines - max_size`). Every load started one entry too far in.
+
+A full 1000-entry history loaded **999**, oldest-first, on every single startup, and the dropped
+command was not recoverable. Present since the load cap was added. Found by the first test that
+ever round-tripped a saved file back through `CommandHistory_new` — writing the test found the bug.
+
+### Fixed — a missing binary was logged as `launched`, then `failed`
+
+The exec-surface vocabulary defines `error` as "the launch itself failed (missing binary, exec
+refused)" and `failed` as "the child ran to completion, non-zero exit". On the **host** path a
+missing binary means the *fork* succeeded and the exec failed inside the child, so `run()` returned
+`Ok(127)` and the audit log claimed a program had launched when nothing had:
+
+| `run /nonexistent` | was | now |
+|---|---|---|
+| audit records | `launched` + `failed` (`exit_code:127`) | `error` (`exit_code:-1`), one record |
+
+agnos was never affected — `sh_exec_line_sched` returns < 0 for a launch failure and already mapped
+to `error`. ⚠ This closes the common case, not the whole gap: a file that exists but is not
+executable still fails inside the child and is still reported as `failed`. Stated rather than
+papered over.
+
+### Added — `MEMORY_INFO`, so a memory question gets a memory answer
+
+`show memory usage` used to emit `df -h` — a **disk** report. 1.9.5 stopped that but only moved it
+to `SYSTEM_INFO` → `uname -a`, which does not report memory either; the smoke test named itself
+`show memory usage is not df` and settled for not-df. The three query lanes are now disjoint:
+
+| input | 1.9.4 | 1.9.5 | now |
+|---|---|---|---|
+| `show memory usage` / `show free memory` / `ram usage` | `df -h` | `uname -a` | **`free -h`** |
+| `show disk usage` / `show free space` | `df -h` | `df -h` | `df -h` |
+| `system info` / `show hostname` / `uptime` | `uname -a` | `uname -a` | `uname -a` |
+
+⚠ `Interpreter_translate`'s extended-dispatch bound was widened 42 → 44 in the same change. A tag
+added above that bound parses correctly and then translates to `echo`, silently — the trap
+`writing-intents.md` documents. A test now drives `MEMORY_INFO` **through the dispatch** rather than
+calling the translator directly, so the bound cannot silently strand a future tag.
+
+### Changed — the history cap has one answer instead of two
+
+The interactive loop constructed history with a literal **1000** while `ShellConfig_default`
+declared **10000**, and `config.cyr` is not in the binary's include graph — so the documented,
+configurable figure was never the one in force. All three sites now read
+`HISTORY_MAX_ENTRIES` (`src/history.cyr`). 1000 is kept as the live value: changing it would change
+behaviour for every existing history file, which is not what "make the config real" means.
+
+The test that covered this asserted `== 10000` and **passed**, locking in the value nothing used.
+It now asserts against the constant, so the two cannot silently agree with the wrong one again.
+
+### Added — test seams: 89% → 100% host-reachable coverage
+
+Three surfaces were unassertable for three different structural reasons. Each got the smallest seam
+that makes it testable, and no more:
+
+- **The audit writers** resolve their own destination path, so a test had no file to read back —
+  the six functions that write the security log had **no assertion of any kind**. Seam:
+  `audit_path_override_set` (`src/statepaths.cyr`), guarded by a new lint **Category H** that fails
+  the build if any file under `src/` other than the definition site references it. The safety
+  argument for that global is "nothing calls the setter"; the gate is what keeps that argument true.
+- **The stdin readers** route through `read_line`, which lives in the entry file. `tests/harness.cyr`
+  stubbed it to a constant **EOF** — so `verb_confirm`'s *yes* branch, the one branch that actually
+  starts a child, was unreachable from every test. Fail-closed was verified; fail-open was not. The
+  stub is now a scripted stdin. `ApprovalManager_request` reads fd 0 directly and gets a redirected
+  descriptor instead.
+- **The fd 1 / fd 2 writers** get **no production seam at all** — the test `dup2`s the descriptor at
+  a scratch file, so the shipped code stays exactly as written.
+
+New assertions cover audit record *content* (input/action/mode/approved/result/exit_code/timestamp),
+append-not-truncate, the 0600 re-chmod on an **existing** log, the `launched`-then-outcome pair, the
+deliberate asymmetry in `audit_exec_bg_done` (a background reap must **not** be attributed to
+whatever the user most recently typed), and fail-closed on every approval path. Three targeted
+mutations of `src/audit.cyr` were each caught by the new tests.
+
+### Changed — `sh_run_program` moved out of the entry file
+
+It was the last host-reachable function in the tree with no assertion, for the same structural
+reason as the 1.9.7 relocations: a test binary cannot include a file that owns `main`. Moved to
+`src/run_agnos.cyr` above the `#ifdef CYRIUS_TARGET_AGNOS` block, beside its sibling
+`sh_run_program_bg` — the move **deletes** a cross-file forward reference rather than adding one.
+The launch gate (HUMAN/STRICT confirm before launching an arbitrary on-disk binary) now has tests.
+
+### Fixed — the coverage gate credited functions for being mentioned in a comment
+
+`scripts/check-coverage.sh` grepped the raw test files, so writing `# verb_read_yes routes through
+read_line` in a comment marked `verb_read_yes` covered. It happened for real while writing these
+seams. Comments are now stripped before the search, which exposed **five** functions
+(`verb_read_yes`, `verb_confirm`, `extract_after`, `has_system_path_arg`, `Translation_with_mcp`)
+that had never actually been asserted. All five now are.
+
+### Performance
+
+No regression. The obvious spelling of the `MEMORY_INFO` parser arm — six keyword checks — measured
+**+3.9% on `parse/shell_cmd`**, the benchmark that falls through every arm. Every phrase
+("memory usage", "free memory", "ram usage", "how much memory") contains `memory` or `ram` as a
+standalone word, so two word checks subsume all four; the arm ships with **two** checks and the
+`SYSTEM_INFO` arm above gave up the same two it used to carry.
+
+| benchmark | before | after | delta |
+|---|---|---|---|
+| parse/shell_cmd (6-check arm) | 5808ns | 6043ns | **+3.9%** ⛔ |
+| parse/shell_cmd (2-check arm, shipped) | 5808ns | 5823ns | +0.3% |
+| parse/list_files | 1278ns | 1257ns | −1.6% |
+| parse/cd | 1200ns | 1190ns | −0.8% |
+| parse/find_files | 1591ns | 1572ns | −1.2% |
+
+Medians over 7 interleaved A/B runs; untouched benchmarks used as drift controls. Remaining deltas
+are within the ±2% run-to-run drift this tree has measured before.
+
+**Tests**: 678 unit (was 530) + 26 security + 92 smoke (was 88). Host-reachable coverage 100%
+(was 89%). All three targets build clean: x86_64 328 KB, agnos 336 KB, aarch64 545 KB.
+
 ## [1.9.9] - 2026-08-30 — the docs claimed security properties the binary does not have
 
 A full documentation audit against the 1.9.8 tree — 14 agents across every doc, adversarially

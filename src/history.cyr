@@ -1,3 +1,17 @@
+# ⛔ THE SINGLE SOURCE OF TRUTH FOR THE HISTORY CAP.
+#
+# Until 1.9.10 there were two answers and they disagreed: the interactive loop
+# constructed its history with a literal 1000, while ShellConfig_default declared
+# 10000. Because src/config.cyr is not in the binary's include graph, the 10000
+# was dead and 1000 was the real limit — so the documented, configurable value
+# was not the one in force, and nothing would ever have caught the drift.
+#
+# 1000 is kept as the live value (changing it would change behaviour for every
+# existing history file, which is not what "make the config real" means).
+# ShellConfig_default and the interactive loop now both read THIS, so they
+# cannot diverge again; a test asserts they agree.
+var HISTORY_MAX_ENTRIES = 1000;
+
 struct CommandHistory {
     entries;
     count;
@@ -80,6 +94,24 @@ fn CommandHistory_new(file_path, max_size) {
                 # buffer as a single Str on a first probe.
                 var lines = str_split(content, 10);
                 var nlines = vec_len(lines);
+                # ⛔ DROP THE TRAILING EMPTY ELEMENT BEFORE THE CAP ARITHMETIC.
+                # str_split leaves an empty last element when the content ends
+                # in the separator, and CommandHistory_save terminates EVERY
+                # entry with '\n' — so a file this shell wrote always ends that
+                # way. This is the normal case, not an edge case.
+                #
+                # The empty element was filtered out later by the str_len > 0
+                # check, so it never became a bogus entry and nothing looked
+                # wrong. But it was still counted as a line HERE, and the cap
+                # arithmetic below is positional: `keep_from = nlines - max_size`
+                # started one line too far in, so the OLDEST real entry was
+                # silently dropped on every load. A 1000-entry history loaded
+                # 999, every start, and the missing one was never recoverable.
+                # Found by the first test that ever round-tripped a saved file
+                # back through CommandHistory_new (1.9.10).
+                if (nlines > 0) {
+                    if (str_len(vec_get(lines, nlines - 1)) == 0) { nlines = nlines - 1; }
+                }
                 var first = 0;
                 if (load64(&tcell) == 1) {
                     # The head was skipped mid-line, so line 0 is a fragment of a

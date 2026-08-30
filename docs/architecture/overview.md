@@ -10,7 +10,7 @@ agnoshi
 │   ├── statepaths.cyr      -- where the state files live ($HOME / uid-qualified /tmp)
 │   ├── mode.cyr            -- operating mode (human/assist/auto/strict)
 │   ├── permissions.cyr     -- command classification (6-tier permission model)
-│   ├── intent.cyr          -- Intent + Translation types, 44 intent tags
+│   ├── intent.cyr          -- Intent + Translation types, 45 intent tags
 │   ├── interpreter.cyr     -- NL parse + translate dispatch
 │   ├── translate.cyr       -- 40+ per-intent translators
 │   ├── commands.cyr        -- command-line parsing, builtin detection
@@ -27,7 +27,7 @@ agnoshi
 │   ├── prompt.cyr          -- prompt rendering
 │   ├── ui.cyr              -- terminal UI helpers
 │   ├── statepaths.cyr      -- state-file paths ($HOME, or uid-qualified /tmp)
-│   ├── run_agnos.cyr       -- AGNOS launch path: exec, pipelines, redirect, bg jobs
+│   ├── run_agnos.cyr       -- launch path: sh_run_program + (AGNOS) pipelines, redirect, bg jobs
 │   └── main.cyr            -- legacy pre-port entry, never linked
 │
 │   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, mode,
@@ -39,14 +39,14 @@ agnoshi
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 530 unit tests
+│   ├── test_core.tcyr      -- 678 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
 │   ├── bench_core.bcyr     -- 11 criterion-style benchmarks
 │   └── test.sh             -- run all test suites
 ├── scripts/
 │   ├── install.sh          -- install to /usr/local/bin
 │   ├── uninstall.sh        -- clean removal
-│   ├── smoke-test.sh       -- 88 end-to-end binary tests
+│   ├── smoke-test.sh       -- 92 end-to-end binary tests
 │   └── bench-history.sh    -- benchmark CSV tracker
 └── docs/
     ├── agnsh.1             -- man page

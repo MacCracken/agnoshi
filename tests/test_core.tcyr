@@ -77,6 +77,124 @@ fn _t_cpy(dst, src): i64 {
     return 0;
 }
 
+# ================================================================
+# 1.9.10 test seams
+# ================================================================
+# Three surfaces in this binary could not be asserted at all before this
+# release, for three different structural reasons. Each gets the smallest seam
+# that makes it assertable, and no more.
+#
+#  1. THE AUDIT WRITERS. audit_one_shot / audit_exec / audit_exec_ctx /
+#     audit_exec_bg_done resolve their destination by calling audit_log_path()
+#     internally (deliberately — see the comment in audit.cyr), so a test had no
+#     file to read back and could not check what a record SAYS. Seam:
+#     audit_path_override_set in statepaths.cyr, guarded by lint Category H.
+#
+#  2. THE STDIN READERS. verb_read_yes routes through read_line, which lives in
+#     src/agnsh.cyr — a file a test binary cannot include, because it owns
+#     `main` and calls `_entry()` at top level. Seam: the test binary supplies
+#     its OWN read_line below. The forward reference sanitize.cyr already makes
+#     resolves against it, so verb_read_yes and verb_confirm are exercised as
+#     written, with scripted input instead of a terminal.
+#
+#  3. THE WRITERS TO fd 1 / fd 2. eprint_* / verb_out_* write to a fixed
+#     descriptor. Seam: none in the source at all — the test dup2's the
+#     descriptor at a scratch file and reads it back, which is strictly better
+#     than a redirectable-fd global because the production code stays fixed.
+
+var _t_cap_buf[8192];
+
+# Substring search over a byte range (the captured buffers are not cstrings —
+# an audit log holds NULs only by accident, but a captured stream may hold
+# anything, so length is carried explicitly rather than inferred).
+fn _t_mem_find(hay, haylen, needle): i64 {
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 1; }
+    if (nlen > haylen) { return 0; }
+    var i = 0;
+    while (i + nlen <= haylen) {
+        var j = 0;
+        while (j < nlen) {
+            if (load8(hay + i + j) != load8(needle + j)) { j = nlen + 1; }
+            else { j = j + 1; }
+        }
+        if (j == nlen) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _t_slurp(path): i64 {
+    var n = file_read_all(path, &_t_cap_buf, 8191);
+    if (n < 0) { n = 0; }
+    store8(&_t_cap_buf + n, 0);
+    return n;
+}
+
+# Does the file at `path` contain `needle`?
+fn _t_file_has(path, needle): i64 {
+    var n = _t_slurp(path);
+    return _t_mem_find(&_t_cap_buf, n, needle);
+}
+
+fn _t_count_nl(path): i64 {
+    var n = _t_slurp(path);
+    var c = 0;
+    var i = 0;
+    while (i < n) {
+        if (load8(&_t_cap_buf + i) == 10) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+# Redirect `fd` at a truncated scratch file, saving the original into `savefd`.
+# Returns the scratch fd, or -1. dup2 alone is enough for save-and-restore: no
+# plain dup() is needed if the caller names a spare descriptor.
+fn _t_capture_begin(fd, savefd, path): i64 {
+    if (sys_dup2(fd, savefd) < 0) { return 0 - 1; }
+    var out = file_open(path, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 384);
+    if (out < 0) { return 0 - 1; }
+    sys_dup2(out, fd);
+    file_close(out);
+    return 0;
+}
+
+# Write a cstring to `path`, replacing whatever was there. Used to stage input
+# for the readers that take fd 0 directly, and to build fixture files.
+fn _t_write_cstr(path, cstr): i64 {
+    var fd = file_open(path, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 384);
+    if (fd < 0) { return 0 - 1; }
+    var n = strlen(cstr);
+    if (n > 0) { file_write(fd, cstr, n); }
+    file_close(fd);
+    return n;
+}
+
+# Point fd 0 at `path`, saving the real stdin into `savefd`.
+# ApprovalManager_request reads fd 0 with a raw SYS_READ rather than through
+# read_line, so the scripted-stdin seam in harness.cyr cannot reach it.
+fn _t_stdin_from(path, savefd): i64 {
+    if (sys_dup2(0, savefd) < 0) { return 0 - 1; }
+    var in_fd = file_open(path, 0, 0);
+    if (in_fd < 0) { return 0 - 1; }
+    sys_dup2(in_fd, 0);
+    file_close(in_fd);
+    return 0;
+}
+
+fn _t_stdin_restore(savefd): i64 {
+    sys_dup2(savefd, 0);
+    file_close(savefd);
+    return 0;
+}
+
+fn _t_capture_end(fd, savefd): i64 {
+    sys_dup2(savefd, fd);
+    file_close(savefd);
+    return 0;
+}
+
 fn main() {
     alloc_init();
     println("=== agnoshi core tests ===");
@@ -142,7 +260,15 @@ fn main() {
 
     var config = ShellConfig_default();
     check("config mode", load64(config) == Mode.AI_ASSISTED);
-    check("config history", load64(config + 8) == 10000);
+    # ⛔ This asserted `== 10000` until 1.9.10 — and passed, because the value
+    # it locked in was the one nothing used. The interactive loop hardcoded
+    # 1000, config.cyr declared 10000, and config.cyr is not in the binary's
+    # include graph, so the documented figure was never in force. Asserting the
+    # CONSTANT rather than a literal is the point: if the two ever drift apart
+    # again, this test cannot silently agree with the wrong one.
+    check("config history == HISTORY_MAX_ENTRIES",
+      load64(config + 8) == HISTORY_MAX_ENTRIES);
+    check("HISTORY_MAX_ENTRIES is the live cap", HISTORY_MAX_ENTRIES == 1000);
     check("config ai", load64(config + 16) == 1);
     check("config approval", load64(config + 32) == 300);
 
@@ -221,8 +347,8 @@ fn main() {
       load64(Interpreter_parse(interp, str_from("load average"))) == IntentTag.SYSTEM_INFO);
     check("query kernel version SYSTEM",
       load64(Interpreter_parse(interp, str_from("kernel version"))) == IntentTag.SYSTEM_INFO);
-    check("query memory usage SYSTEM",
-      load64(Interpreter_parse(interp, str_from("memory usage"))) == IntentTag.SYSTEM_INFO);
+    check("query memory usage MEMORY",
+      load64(Interpreter_parse(interp, str_from("memory usage"))) == IntentTag.MEMORY_INFO);
     check("query disk space DISK",
       load64(Interpreter_parse(interp, str_from("disk space"))) == IntentTag.DISK_USAGE);
     check("query free space DISK",
@@ -445,6 +571,23 @@ fn main() {
     var du_t = translate_disk_usage(Intent_new(IntentTag.DISK_USAGE));
     check("translate_disk_usage cmd", streq(load64(du_t), "df") == 1);
     check("translate_disk_usage perm", load64(du_t + 24) == PermissionLevel.READ_ONLY);
+
+    # translate_memory_info — the answer to a memory question must BE about
+    # memory. Asserted next to translate_disk_usage on purpose: these two were
+    # the pair that crossed.
+    var mi_t = translate_memory_info(Intent_new(IntentTag.MEMORY_INFO));
+    check("translate_memory_info cmd", streq(load64(mi_t), "free") == 1);
+    check("translate_memory_info perm", load64(mi_t + 24) == PermissionLevel.READ_ONLY);
+    check("translate_memory_info is not df", streq(load64(mi_t), "df") == 0);
+    check("translate_memory_info is not uname", streq(load64(mi_t), "uname") == 0);
+
+    # ⚠ Dispatch reachability. Interpreter_translate routes extended tags
+    # through a bounded range; a tag added above that bound parses correctly and
+    # then translates to `echo`, silently. Going through Interpreter_translate
+    # (not translate_memory_info directly) is what makes this test load-bearing.
+    var mi_disp = Interpreter_translate(Interpreter_new(), Intent_new(IntentTag.MEMORY_INFO));
+    check("MEMORY_INFO is reachable through the dispatch",
+      streq(load64(mi_disp), "free") == 1);
 
     # translate_install_package — needs a packages vec at intent + 56
     var ip_intent = Intent_new(IntentTag.INSTALL_PACKAGE);
@@ -1290,12 +1433,45 @@ fn main() {
       streq(str_cstr(load64(sin + 16)), "/tmp") == 1);
 
     # (4) The bare "usage" keyword in parse_show_commands claimed memory
-    # questions and answered them with `df -h` — a DISK report — even though
-    # parse_state_queries has an explicit "memory usage" arm.
-    check("show memory usage -> SYSTEM_INFO",
-      load64(Interpreter_parse(sh, str_from("show memory usage"))) == IntentTag.SYSTEM_INFO);
-    check("show free memory -> SYSTEM_INFO",
-      load64(Interpreter_parse(sh, str_from("show free memory"))) == IntentTag.SYSTEM_INFO);
+    # questions and answered them with `df -h` — a DISK report. 1.9.5 stopped
+    # that, but only got them as far as SYSTEM_INFO -> `uname -a`, which does
+    # not report memory either; these two checks asserted that half-fix as if
+    # it were the answer. 1.9.10 gave memory its own intent.
+    check("show memory usage -> MEMORY_INFO",
+      load64(Interpreter_parse(sh, str_from("show memory usage"))) == IntentTag.MEMORY_INFO);
+    check("show free memory -> MEMORY_INFO",
+      load64(Interpreter_parse(sh, str_from("show free memory"))) == IntentTag.MEMORY_INFO);
+    check("ram usage -> MEMORY_INFO",
+      load64(Interpreter_parse(sh, str_from("ram usage"))) == IntentTag.MEMORY_INFO);
+    check("how much memory -> MEMORY_INFO",
+      load64(Interpreter_parse(sh, str_from("how much memory"))) == IntentTag.MEMORY_INFO);
+    check("bare show memory -> MEMORY_INFO",
+      load64(Interpreter_parse(sh, str_from("show memory"))) == IntentTag.MEMORY_INFO);
+    # The three query lanes must stay disjoint — memory, disk and system each
+    # answer their own question. This is the pairing the roadmap asked for: the
+    # anchors sit together so the two cannot re-cross unnoticed.
+    check("system info stays SYSTEM_INFO",
+      load64(Interpreter_parse(sh, str_from("system info"))) == IntentTag.SYSTEM_INFO);
+    check("show hostname stays SYSTEM_INFO",
+      load64(Interpreter_parse(sh, str_from("show hostname"))) == IntentTag.SYSTEM_INFO);
+    # ⚠ The MEMORY_INFO arm keys on the bare words "memory"/"ram" (two checks
+    # instead of six — see the note in parse_state_queries). That is only safe
+    # because the file verbs are decided BEFORE parse_state_queries is consulted.
+    # These pin that ordering: a line that merely NAMES a file called memory is
+    # a file operation, not a question about RAM.
+    check("delete memory.txt is a file op, not a memory query",
+      load64(Interpreter_parse(sh, str_from("delete memory.txt"))) == IntentTag.REMOVE);
+    check("read the file memory is a file op",
+      load64(Interpreter_parse(sh, str_from("read the file memory"))) == IntentTag.SHOW_FILE);
+    # `find ram.log` lands on SHELL_COMMAND (a bare `find` is treated as a shell
+    # command — pre-existing, unrelated to this arm). What matters here is only
+    # that a filename containing "ram" is not read as a question about RAM.
+    check("a filename containing ram is not a memory query",
+      load64(Interpreter_parse(sh, str_from("find ram.log"))) != IntentTag.MEMORY_INFO);
+    check("find files named ram.log is a search",
+      load64(Interpreter_parse(sh, str_from("find files named ram.log"))) == IntentTag.FIND_FILES);
+    check("list files in /memory is a listing",
+      load64(Interpreter_parse(sh, str_from("list files in /memory"))) == IntentTag.LIST_FILES);
     # ...without breaking real disk questions.
     check("show disk usage stays DISK_USAGE",
       load64(Interpreter_parse(sh, str_from("show disk usage"))) == IntentTag.DISK_USAGE);
@@ -1636,6 +1812,561 @@ fn main() {
     str_builder_add_byte(jbad, 0xFF);
     check("json_escape replaces invalid byte",
       str_len(json_escape(str_builder_build(jbad))) == 7);
+
+    # ================================================================
+    # 1.9.10 — the audit surface, asserted by CONTENT
+    # ================================================================
+    # Six functions write the security log and NONE of them had an assertion of
+    # any kind before this release: audit_one_shot, audit_exec, audit_exec_ctx,
+    # audit_exec_bg_done, AuditLogger_log and audit_set_context. The audit trail
+    # was simultaneously the most security-relevant code in the tree and the
+    # least tested, for the purely structural reason that they resolve their own
+    # destination path and a test had nothing to read back.
+    #
+    # These check what a record SAYS, not merely that a call returned 0. The
+    # harness pins chrono_now_rfc3339 to a fixed timestamp, so even that field
+    # is assertable.
+    var alog = tmp_state_path("agnsh_selftest_audit.log");
+    check("tmp_state_path is uid-qualified", _t_mem_find(alog, strlen(alog), "/tmp/agnsh_selftest_audit.log.") == 1);
+    xunlink(alog);
+    audit_path_override_set(alog);
+    check("override redirects audit_log_path", streq(audit_log_path(), alog) == 1);
+
+    # --- audit_one_shot: the PARSE-time record ---
+    audit_one_shot("list files", "ls", PermissionLevel.READ_ONLY, "assist",
+      IntentTag.LIST_FILES, "List files");
+    check("one_shot writes a record", _t_count_nl(alog) == 1);
+    check("one_shot records the typed input", _t_file_has(alog, "\"input\":\"list files\"") == 1);
+    check("one_shot records the action", _t_file_has(alog, "\"action\":\"ls\"") == 1);
+    check("one_shot records the mode", _t_file_has(alog, "\"mode\":\"assist\"") == 1);
+    check("one_shot marks READ_ONLY approved", _t_file_has(alog, "\"approved\":1") == 1);
+    check("one_shot result is proposed", _t_file_has(alog, "\"result\":\"proposed\"") == 1);
+    # exit_code must be present-and-null, not absent: consumers select on a
+    # stable record shape, and a missing key is a different thing from "did not
+    # run". This is the field the 1.9.2 exec surface added.
+    check("one_shot exit_code is null", _t_file_has(alog, "\"exit_code\":null") == 1);
+    check("one_shot stamps the timestamp", _t_file_has(alog, "\"timestamp\":\"2026-01-01T00:00:00Z\"") == 1);
+
+    # An ADMIN action is NOT auto-approved — this is the bit an auditor reads.
+    xunlink(alog);
+    audit_one_shot("install nginx", "apt", PermissionLevel.ADMIN, "human",
+      IntentTag.INSTALL_PACKAGE, "Install a package");
+    check("one_shot marks ADMIN unapproved", _t_file_has(alog, "\"approved\":0") == 1);
+
+    # --- The log APPENDS. A truncating audit log destroys its own evidence. ---
+    xunlink(alog);
+    audit_one_shot("a", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    audit_one_shot("b", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    audit_one_shot("c", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    check("audit log appends, never truncates", _t_count_nl(alog) == 3);
+    check("the first record survives later writes", _t_file_has(alog, "\"input\":\"a\"") == 1);
+
+    # --- 0600 is enforced on EVERY open, not just on create ---
+    # AuditLogger_log re-chmods each time precisely because a log created under
+    # a different umask, restored from a backup or copied into place keeps
+    # whatever mode it had. Prove the repair, not just the create.
+    xunlink(alog);
+    var loose = file_open(alog, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 438);   # 0666
+    if (loose >= 0) { file_close(loose); }
+    sys_chmod(alog, 438);
+    audit_one_shot("x", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    var ast[144];
+    check("audit log mode is repaired to 0600 on an existing file",
+      xstat(alog, &ast) == 0 && (load32(&ast + STAT_MODE) % 512) == 384);
+
+    # --- audit_exec: the EXEC-time record, a disjoint vocabulary ---
+    xunlink(alog);
+    check("audit_exec reports success", audit_exec("run /bin/echo", "/bin/echo", "auto", "executed", 0) == 0);
+    check("exec records the outcome label", _t_file_has(alog, "\"result\":\"executed\"") == 1);
+    check("exec records a real exit code", _t_file_has(alog, "\"exit_code\":0") == 1);
+    check("a child that ran was approved", _t_file_has(alog, "\"approved\":1") == 1);
+
+    # A child that ran and FAILED was still approved — `approved` means the
+    # shell permitted it, not that it succeeded. Conflating the two would make
+    # every failing command read as a policy denial.
+    xunlink(alog);
+    audit_exec("run /bin/false", "/bin/false", "auto", "failed", 3);
+    check("a failing child is still approved", _t_file_has(alog, "\"approved\":1") == 1);
+    check("the child's own status is recorded", _t_file_has(alog, "\"exit_code\":3") == 1);
+
+    # ONLY an explicit refusal is unapproved.
+    xunlink(alog);
+    audit_exec("run /etc/passwd", "/etc/passwd", "human", "denied", AUDIT_NO_EXIT);
+    check("a refusal is unapproved", _t_file_has(alog, "\"approved\":0") == 1);
+    check("a refusal has no exit code", _t_file_has(alog, "\"exit_code\":null") == 1);
+
+    # --- audit_set_context / audit_exec_ctx ---
+    # The context exists so the agnos-only launchers need no signature change.
+    # What it must do is attribute the record to the line the USER TYPED, while
+    # `action` stays the thing that ran.
+    xunlink(alog);
+    audit_set_context("run /bin/echo hello", "human");
+    audit_exec_ctx("/bin/echo", "launched", AUDIT_NO_EXIT);
+    check("ctx attributes the record to the typed line",
+      _t_file_has(alog, "\"input\":\"run /bin/echo hello\"") == 1);
+    check("ctx keeps action as what actually ran", _t_file_has(alog, "\"action\":\"/bin/echo\"") == 1);
+    check("ctx carries the mode", _t_file_has(alog, "\"mode\":\"human\"") == 1);
+    check("launched is written with no exit code", _t_file_has(alog, "\"result\":\"launched\"") == 1);
+
+    # With NO context set, audit_exec_ctx must still produce a usable record
+    # rather than a null-deref or an empty input — the fallback is the command.
+    xunlink(alog);
+    audit_set_context(0, 0);
+    audit_exec_ctx("/bin/ls", "executed", 0);
+    check("ctx falls back to the command when unset", _t_file_has(alog, "\"input\":\"/bin/ls\"") == 1);
+    check("ctx falls back to an explicit unknown mode", _t_file_has(alog, "\"mode\":\"unknown\"") == 1);
+
+    # --- audit_exec_bg_done ---
+    # ⛔ THE REGRESSION THIS PINS: a background reap happens at some LATER prompt
+    # tick, so the dispatch context points at whatever the user most recently
+    # typed. Attributing the completion to that line would be an actively wrong
+    # audit record — it would name a command that had nothing to do with the job.
+    # bg_done therefore uses the stored command as BOTH input and action. That
+    # is a deliberate asymmetry with audit_exec_ctx and exactly the kind of thing
+    # a later "consistency" cleanup would quietly undo.
+    xunlink(alog);
+    audit_set_context("some unrelated later line", "assist");
+    audit_exec_bg_done("/bin/sleep", 0);
+    check("bg_done does NOT attribute the reap to the current line",
+      _t_file_has(alog, "some unrelated later line") == 0);
+    check("bg_done uses the job's own command as input",
+      _t_file_has(alog, "\"input\":\"/bin/sleep\"") == 1);
+    check("bg_done still takes mode from the context", _t_file_has(alog, "\"mode\":\"assist\"") == 1);
+    check("bg_done maps a clean wait to executed", _t_file_has(alog, "\"result\":\"executed\"") == 1);
+
+    xunlink(alog);
+    audit_exec_bg_done("/bin/sleep", 7);
+    check("bg_done maps a non-zero wait to failed", _t_file_has(alog, "\"result\":\"failed\"") == 1);
+    xunlink(alog);
+    audit_exec_bg_done("/bin/sleep", 0 - 1);
+    check("bg_done maps a negative wait to error", _t_file_has(alog, "\"result\":\"error\"") == 1);
+
+    # --- AuditLogger_log reports failure instead of pretending ---
+    # A record that could not be written must not return success: the caller
+    # would otherwise believe the action was logged when nothing was.
+    var badlog = AuditLogger_new("/proc/definitely/not/writable/agnsh.log");
+    check("AuditLogger_log reports an unwritable path",
+      AuditLogger_log(badlog, AuditEntry_new(str_from("u"), str_from("m"),
+        str_from("i"), str_from("a"), 1, str_from("proposed"))) == 0 - 1);
+
+    # --- AuditViewer ---
+    # Documented as a v1.2.x stub that returns empty until the stdlib alignment
+    # is done. Asserted so the stub is a KNOWN empty rather than an unexamined
+    # one — if someone implements it, this test is where they find out it had a
+    # contract.
+    var aview = AuditViewer_new(alog);
+    check("AuditViewer_new stores the path", load64(aview) == alog);
+    check("AuditViewer_query is a documented empty stub",
+      vec_len(AuditViewer_query(aview, AuditFilter_default())) == 0);
+
+    xunlink(alog);
+    audit_path_override_set(0);
+    check("clearing the override restores real resolution",
+      streq(audit_log_path(), alog) == 0);
+    audit_set_context(0, 0);
+
+    # ================================================================
+    # 1.9.10 — the I/O surfaces, asserted through captured descriptors
+    # ================================================================
+    # These functions write to a fixed descriptor or read from stdin, so a unit
+    # test could not observe them and every one of them was uncovered. Rather
+    # than making the descriptor injectable in production code, the test dup2's
+    # the descriptor at a scratch file: the shipped code stays exactly as
+    # written, which is the point — a seam that changes what ships is testing
+    # something other than what ships.
+    var cappath = tmp_state_path("agnsh_selftest_cap");
+
+    # --- eprint_str / eprint_line: diagnostics must reach STDERR, not STDOUT ---
+    # ⛔ This is the whole reason 1.9.4 existed: every diagnostic went to stdout
+    # via println(), so `agnsh -c "..." | jq` received "run: no such command" as
+    # if it were data. Asserting the FD is the assertion that matters.
+    xunlink(cappath);
+    _t_capture_begin(2, 9, cappath);
+    eprint_str(str_from("to-stderr"));
+    _t_capture_end(2, 9);
+    check("eprint_str writes to fd 2", _t_file_has(cappath, "to-stderr") == 1);
+    check("eprint_str adds no newline", _t_count_nl(cappath) == 0);
+
+    xunlink(cappath);
+    _t_capture_begin(2, 9, cappath);
+    eprint_line(str_from("line-to-stderr"));
+    _t_capture_end(2, 9);
+    check("eprint_line writes to fd 2", _t_file_has(cappath, "line-to-stderr") == 1);
+    check("eprint_line terminates the line", _t_count_nl(cappath) == 1);
+
+    xunlink(cappath);
+    _t_capture_begin(2, 9, cappath);
+    check("eprintln_cstr returns 0", eprintln_cstr("cstr-to-stderr") == 0);
+    _t_capture_end(2, 9);
+    check("eprintln_cstr writes to fd 2", _t_file_has(cappath, "cstr-to-stderr") == 1);
+    check("eprintln_cstr terminates the line", _t_count_nl(cappath) == 1);
+
+    # And the negative: a diagnostic must NOT appear on stdout. Without this,
+    # the pair above would still pass if the function wrote to both.
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    eprintln_cstr("must-not-reach-stdout");
+    _t_capture_end(1, 9);
+    check("eprintln_cstr keeps stdout clean", _t_file_has(cappath, "must-not-reach-stdout") == 0);
+
+    # --- verb_out_cstr / verb_out_nl: the confirm PROMPT is stdout by design ---
+    # The prompt is not a diagnostic; it is the interaction, so it belongs on
+    # fd 1. Asserted so the 1.9.4 stderr migration cannot sweep it up by mistake.
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    check("verb_out_cstr returns 0", verb_out_cstr("prompt-text") == 0);
+    check("verb_out_nl returns 0", verb_out_nl() == 0);
+    _t_capture_end(1, 9);
+    check("verb_out_cstr writes to fd 1", _t_file_has(cappath, "prompt-text") == 1);
+    check("verb_out_nl emits exactly one newline", _t_count_nl(cappath) == 1);
+
+    # --- verb_read_yes / verb_confirm: the gate in front of every launch ---
+    # ⛔ Until 1.9.10 the harness pinned read_line to a constant EOF, so the
+    # branch that says YES — the one branch that actually starts a child — was
+    # unreachable from any test. Fail-closed was verified; fail-open was not.
+    _t_stdin_set("y");
+    check("verb_read_yes accepts y", verb_read_yes() == 1);
+    _t_stdin_set("Y");
+    check("verb_read_yes accepts Y", verb_read_yes() == 1);
+    _t_stdin_set("yes");
+    check("verb_read_yes accepts yes", verb_read_yes() == 1);
+    _t_stdin_set("n");
+    check("verb_read_yes rejects n", verb_read_yes() == 0);
+    _t_stdin_set("");
+    check("verb_read_yes treats an empty line as no", verb_read_yes() == 0);
+    _t_stdin_set(0);
+    check("verb_read_yes treats EOF as no", verb_read_yes() == 0);
+    # A leading space is NOT a yes — the check is on the first byte, so " y"
+    # declines. Pinned because a future "be forgiving" tweak here would loosen
+    # the launch gate.
+    _t_stdin_set(" y");
+    check("verb_read_yes does not accept a leading space", verb_read_yes() == 0);
+
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_set("y");
+    var vc_yes = verb_confirm("run /bin/echo");
+    _t_capture_end(1, 9);
+    check("verb_confirm proceeds on y", vc_yes == 1);
+    check("verb_confirm shows what it is asking about",
+      _t_file_has(cappath, "run /bin/echo") == 1);
+    check("verb_confirm shows the y/N prompt", _t_file_has(cappath, "[y/N]") == 1);
+    check("verb_confirm does not print aborted when it proceeds",
+      _t_file_has(cappath, "(aborted)") == 0);
+
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_set(0);
+    var vc_eof = verb_confirm("run /bin/echo");
+    _t_capture_end(1, 9);
+    check("verb_confirm declines at EOF", vc_eof == 0);
+    check("verb_confirm reports the abort", _t_file_has(cappath, "(aborted)") == 1);
+
+    # ⛔ FAIL CLOSED on a null action. str_cat3_cstr returns 0 when its
+    # allocation fails, and every caller feeds its result straight in here. If
+    # the prompt cannot be rendered the answer must be no — proceeding would run
+    # a program the user was never asked about.
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_set("y");
+    var vc_null = verb_confirm(0);
+    _t_capture_end(1, 9);
+    check("verb_confirm declines when the prompt cannot be rendered", vc_null == 0);
+    check("verb_confirm says why it declined",
+      _t_file_has(cappath, "cannot render confirmation prompt") == 1);
+
+    # --- sh_cat_owl_warning ---
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    var owl_hit = sh_cat_owl_warning("cat /etc/hosts");
+    _t_capture_end(1, 9);
+    check("cat is intercepted", owl_hit == 1);
+    check("the nudge names owl", _t_file_has(cappath, "owl FILE") == 1);
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    var owl_bare = sh_cat_owl_warning("cat");
+    var owl_miss = sh_cat_owl_warning("category of files");
+    var owl_miss2 = sh_cat_owl_warning("ls");
+    _t_capture_end(1, 9);
+    check("bare cat is intercepted", owl_bare == 1);
+    check("a word merely starting with cat is not", owl_miss == 0);
+    check("an unrelated line is not", owl_miss2 == 0);
+
+    # --- ApprovalManager_request ---
+    # Reads fd 0 with a raw SYS_READ rather than through read_line, so the
+    # scripted-stdin seam does not reach it; redirect the descriptor instead.
+    var apath = tmp_state_path("agnsh_selftest_stdin");
+    var apm = ApprovalManager_new();
+    var apargs = vec_new();
+
+    # A blocked pattern is refused WITHOUT reading stdin at all — the user is
+    # never prompted for something that cannot be approved.
+    ApprovalManager_block_pattern(apm, str_from("rm"));
+    check("a blocked pattern is denied before any prompt",
+      ApprovalManager_request(apm, str_from("rm"), apargs, 0, RiskLevel.LOW) == ApprovalResponse.DENIED);
+
+    var apm2 = ApprovalManager_new();
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_write_cstr(apath, "a\n");
+    _t_stdin_from(apath, 8);
+    var ar_a = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
+    _t_stdin_restore(8);
+    _t_capture_end(1, 9);
+    check("approval accepts a", ar_a == ApprovalResponse.APPROVED);
+    check("the prompt names the command", _t_file_has(cappath, "systemctl") == 1);
+    check("the prompt offers the three choices", _t_file_has(cappath, "[a]pprove") == 1);
+
+    _t_write_cstr(apath, "d\n");
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_from(apath, 8);
+    var ar_d = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
+    _t_stdin_restore(8);
+    _t_capture_end(1, 9);
+    check("approval denies on d", ar_d == ApprovalResponse.DENIED);
+
+    _t_write_cstr(apath, "m\n");
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_from(apath, 8);
+    var ar_m = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
+    _t_stdin_restore(8);
+    _t_capture_end(1, 9);
+    check("approval modifies on m", ar_m == ApprovalResponse.MODIFY);
+
+    # ⛔ FAIL CLOSED: a bare Enter, an unrecognised key and EOF must all refuse.
+    # An approval prompt that defaults to yes is worse than no prompt at all.
+    _t_write_cstr(apath, "\n");
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_from(apath, 8);
+    var ar_nl = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
+    _t_stdin_restore(8);
+    _t_capture_end(1, 9);
+    check("a bare Enter denies", ar_nl == ApprovalResponse.DENIED);
+
+    _t_write_cstr(apath, "q\n");
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_from(apath, 8);
+    var ar_q = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
+    _t_stdin_restore(8);
+    _t_capture_end(1, 9);
+    check("an unrecognised key denies", ar_q == ApprovalResponse.DENIED);
+
+    _t_write_cstr(apath, "");
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_from(apath, 8);
+    var ar_eof = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
+    _t_stdin_restore(8);
+    _t_capture_end(1, 9);
+    check("EOF times out rather than approving", ar_eof == ApprovalResponse.TIMED_OUT);
+    check("TIMED_OUT is not APPROVED", ApprovalResponse.TIMED_OUT != ApprovalResponse.APPROVED);
+
+    # An auto-approving manager still short-circuits only LOW risk.
+    var apm3 = ApprovalManager_new();
+    store64(apm3 + 8, 1);
+    check("auto-approve applies to LOW risk without reading stdin",
+      ApprovalManager_request(apm3, str_from("ls"), apargs, 0, RiskLevel.LOW) == ApprovalResponse.APPROVED);
+    xunlink(apath);
+
+    # ================================================================
+    # 1.9.10 — history persistence, asserted on disk
+    # ================================================================
+    var hpath = tmp_state_path("agnsh_selftest_hist");
+    xunlink(hpath);
+    var hh = CommandHistory_new(hpath, 3);
+    CommandHistory_add(hh, "one");
+    CommandHistory_add(hh, "two");
+    CommandHistory_add(hh, "three");
+    CommandHistory_add(hh, "four");
+    CommandHistory_add(hh, "five");
+    CommandHistory_save(hh);
+    # ⛔ The on-disk file must honour the cap even though CommandHistory_add
+    # trims lazily — `count` can transiently exceed max_size, and a save that
+    # ignored that would grow the file without bound.
+    check("save honours the cap", _t_count_nl(hpath) == 3);
+    check("save keeps the most recent entries", _t_file_has(hpath, "five") == 1);
+    check("save drops the oldest entries", _t_file_has(hpath, "one") == 0);
+    var hst[144];
+    check("the history file is 0600",
+      xstat(hpath, &hst) == 0 && (load32(&hst + STAT_MODE) % 512) == 384);
+
+    # Round-trip: what was saved must load back.
+    # ⛔ THIS TEST FAILED THE FIRST TIME IT WAS WRITTEN, and the bug was in the
+    # shell, not the test. CommandHistory_save terminates every entry with '\n',
+    # so str_split on load left a trailing EMPTY element; the load cap counted it
+    # as a line and started one entry too far in, silently dropping the OLDEST
+    # real command on every startup. A full 1000-entry history loaded 999. The
+    # empty element was filtered out downstream, so nothing ever looked wrong.
+    # Nothing had round-tripped a saved file back through the loader until now.
+    var hh2 = CommandHistory_new(hpath, 3);
+    check("history round-trips through the file", load64(hh2 + 8) == 3);
+    check("the round-trip keeps the oldest kept entry",
+      str_contains(vec_get(load64(hh2), 0), str_from("three")) == 1);
+    check("the round-trip keeps the newest entry",
+      str_contains(vec_get(load64(hh2), 2), str_from("five")) == 1);
+
+    # A file with NO trailing newline must load the same count — the two spellings
+    # of "three entries" cannot disagree.
+    _t_write_cstr(hpath, "three\nfour\nfive");
+    check("a file without a trailing newline loads the same count",
+      load64(CommandHistory_new(hpath, 3) + 8) == 3);
+
+    # And the cap still bites when the file genuinely exceeds it.
+    _t_write_cstr(hpath, "a\nb\nc\nd\ne\n");
+    var hh3 = CommandHistory_new(hpath, 3);
+    check("the load cap keeps exactly max_size", load64(hh3 + 8) == 3);
+    check("the load cap keeps the NEWEST entries",
+      str_contains(vec_get(load64(hh3), 0), str_from("c")) == 1);
+
+    # --- _hist_read_tail: the two-pass tail read (1.9.4) ---
+    # Added so a large history file loads its TAIL rather than its head, and
+    # never asserted since. Both paths matter: under the cap it reads whole,
+    # over the cap it must return the LAST maxlen bytes and say it truncated.
+    var tpath = tmp_state_path("agnsh_selftest_tail");
+    _t_write_cstr(tpath, "abcdefghij");
+    var tbuf[64];
+    var tcell2[1];
+    var tn = _hist_read_tail(tpath, &tbuf, 64, &tcell2);
+    check("tail reads a small file whole", tn == 10);
+    check("a small file is not marked truncated", load64(&tcell2) == 0);
+
+    var tn2 = _hist_read_tail(tpath, &tbuf, 4, &tcell2);
+    check("tail returns exactly maxlen when over the cap", tn2 == 4);
+    check("an over-cap read is marked truncated", load64(&tcell2) == 1);
+    # ⛔ THE TAIL, NOT THE HEAD. A read that returned "abcd" would look correct
+    # by length and be the wrong end of the file — the newest history lost and
+    # the oldest kept.
+    check("tail keeps the END of the file",
+      load8(&tbuf) == 103 && load8(&tbuf + 3) == 106);
+    check("a missing file reports failure",
+      _hist_read_tail(tmp_state_path("agnsh_selftest_absent"), &tbuf, 64, &tcell2) == 0 - 1);
+    xunlink(tpath);
+    xunlink(hpath);
+    xunlink(cappath);
+
+    # ================================================================
+    # 1.9.10 — the three fns credited only by a COMMENT mention
+    # ================================================================
+    # scripts/check-coverage.sh grepped the raw test files until this release,
+    # so naming a function in a comment marked it covered. Fixing the gate
+    # exposed these as never actually asserted.
+    check("_cmd_eq matches an exact command", _cmd_eq("dd", 100, "dd") == 1);
+    check("_cmd_eq rejects a different command", _cmd_eq("ls", 108, "dd") == 0);
+    # The first-byte fast path is an optimisation, not a second opinion: a
+    # mismatched c0 must reject even when the strings would otherwise match.
+    check("_cmd_eq trusts the first-byte prefilter", _cmd_eq("dd", 120, "dd") == 0);
+    check("_cmd_eq does not match a prefix", _cmd_eq("ddrescue", 100, "dd") == 0);
+
+    var spargs = vec_new();
+    vec_push(spargs, "/etc/passwd");
+    check("has_system_path_arg flags /etc", has_system_path_arg(spargs, 1) == 1);
+    var spargs2 = vec_new();
+    vec_push(spargs2, "/home/user/notes.txt");
+    check("has_system_path_arg ignores a home path", has_system_path_arg(spargs2, 1) == 0);
+    var spargs3 = vec_new();
+    vec_push(spargs3, "-r");
+    vec_push(spargs3, "/usr/lib/x");
+    check("has_system_path_arg scans every arg", has_system_path_arg(spargs3, 2) == 1);
+    check("has_system_path_arg on no args is 0", has_system_path_arg(vec_new(), 0) == 0);
+
+    check("extract_after takes what follows the keyword",
+      streq(str_cstr(extract_after(str_from("delete file report.txt"), "file")), "report.txt") == 1);
+    check("extract_after skips the separating spaces",
+      streq(str_cstr(extract_after(str_from("delete file    report.txt"), "file")), "report.txt") == 1);
+    check("extract_after returns 0 when the keyword is absent",
+      extract_after(str_from("delete report.txt"), "file") == 0);
+    check("extract_after returns 0 when nothing follows",
+      extract_after(str_from("delete file"), "file") == 0);
+    check("extract_after returns 0 on trailing space only",
+      extract_after(str_from("delete file   "), "file") == 0);
+
+    var mcp_t = Translation_with_mcp(str_from("audit"), vec_new(), str_from("d"),
+      PermissionLevel.READ_ONLY, str_from("e"), str_from("audit_query"), str_from("{}"));
+    check("Translation_with_mcp stores the tool", streq(str_cstr(load64(mcp_t + 40)), "audit_query") == 1);
+    check("Translation_with_mcp stores the payload", streq(str_cstr(load64(mcp_t + 48)), "{}") == 1);
+    check("Translation_with_mcp keeps the permission", load64(mcp_t + 24) == PermissionLevel.READ_ONLY);
+
+    # ================================================================
+    # 1.9.10 — sh_run_program: the launch gate
+    # ================================================================
+    # The function that decides whether an arbitrary on-disk binary runs. It was
+    # the last host-reachable function in the tree with no assertion of any kind,
+    # for the structural reason that it lived in the entry file; moved to
+    # run_agnos.cyr in this release so it can be exercised.
+    var rpath2 = tmp_state_path("agnsh_selftest_run.log");
+
+    # ⛔ HUMAN MODE MUST NOT LAUNCH ON A DECLINED CONFIRM, and must say so in the
+    # audit log. This is the one gate standing between a natural-language shell
+    # and running an arbitrary binary; before 1.9.10 nothing tested it.
+    xunlink(rpath2);
+    audit_path_override_set(rpath2);
+    audit_set_context("run /bin/true", "human");
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_set(0);
+    var rr_declined = sh_run_program("/bin/true", Mode.HUMAN);
+    _t_capture_end(1, 9);
+    check("a declined confirm refuses to launch", rr_declined == 1);
+    check("a declined launch is audited as denied", _t_file_has(rpath2, "\"result\":\"denied\"") == 1);
+    check("a declined launch is audited as unapproved", _t_file_has(rpath2, "\"approved\":0") == 1);
+    # ⛔ AND IT MUST NOT HAVE LAUNCHED. A `launched` record here would mean the
+    # confirm was asked for, declined, and the program started anyway.
+    check("a declined launch writes no launched record",
+      _t_file_has(rpath2, "\"result\":\"launched\"") == 0);
+
+    # An accepted confirm in HUMAN mode does launch, and produces the PAIR:
+    # `launched` before the child starts, then the outcome. The pair is the
+    # point — a launched with no matching outcome is the signal that a child
+    # hung or took the machine down.
+    xunlink(rpath2);
+    _t_capture_begin(1, 9, cappath);
+    _t_stdin_set("y");
+    var rr_ok = sh_run_program("/bin/true", Mode.HUMAN);
+    _t_capture_end(1, 9);
+    check("an accepted confirm launches", rr_ok == 0);
+    check("the launch is recorded before the child starts",
+      _t_file_has(rpath2, "\"result\":\"launched\"") == 1);
+    check("the outcome is recorded after it", _t_file_has(rpath2, "\"result\":\"executed\"") == 1);
+    check("launched and outcome are two separate records", _t_count_nl(rpath2) == 2);
+
+    # AUTO mode does not prompt at all — it must not consume stdin, and must
+    # still write both records.
+    xunlink(rpath2);
+    _t_stdin_set("n");
+    var rr_auto = sh_run_program("/bin/true", Mode.AI_AUTONOMOUS);
+    check("AUTO mode launches without prompting", rr_auto == 0);
+    check("AUTO mode does not consume the confirm answer", _t_stdin_reads == 0);
+    check("AUTO mode still audits the launch", _t_count_nl(rpath2) == 2);
+
+    # A non-zero child status is passed through, not swallowed, and lands in the
+    # audit record as `failed` with the child's own code.
+    xunlink(rpath2);
+    var rr_false = sh_run_program("/bin/false", Mode.AI_AUTONOMOUS);
+    check("a failing child's status is returned", rr_false == 1);
+    check("a failing child is audited as failed", _t_file_has(rpath2, "\"result\":\"failed\"") == 1);
+    check("a failing child's own exit code is recorded", _t_file_has(rpath2, "\"exit_code\":1") == 1);
+
+    # A launch that cannot happen at all is an `error`, distinct from a child
+    # that ran and failed — an operator reading the log must be able to tell
+    # "never started" from "started and returned non-zero".
+    xunlink(rpath2);
+    var rr_missing = sh_run_program("/nonexistent/agnsh/selftest/binary", Mode.AI_AUTONOMOUS);
+    check("a missing binary reports failure", rr_missing == 1);
+    check("a failed launch is audited as error", _t_file_has(rpath2, "\"result\":\"error\"") == 1);
+    check("a failed launch is distinct from a failed child",
+      _t_file_has(rpath2, "\"result\":\"failed\"") == 0);
+    # ...and it must not claim a launch that never happened.
+    check("a failed launch writes no launched record",
+      _t_file_has(rpath2, "\"result\":\"launched\"") == 0);
+    check("a failed launch is one record, not a pair", _t_count_nl(rpath2) == 1);
+
+    xunlink(rpath2);
+    audit_path_override_set(0);
+    audit_set_context(0, 0);
+    _t_stdin_set(0);
 
     return report();
 }

@@ -4,18 +4,18 @@
 [`CHANGELOG.md`](../../CHANGELOG.md) — that is the source of truth for what has landed.
 Items leave this file when they ship; they are not marked done and kept.
 
-> **The v1.9.x arc's remaining slices are version-pinned** (1.9.10 – 1.9.13). The three buckets
+> **The v1.9.x arc's remaining slices are version-pinned** (1.9.11 – 1.9.12). The three buckets
 > below it are named by content and get a version at cut time — the arc is a finite, ordered piece
 > of work; the buckets are not.
 > References name **functions and files, not line numbers** — line numbers drift
 > with every edit and were already stale five refs out of seven by 1.9.9.
-> Verified against `src/` on 2026-08-30 (tree at 1.9.9).
+> Verified against `src/` on 2026-08-29 (tree at 1.9.10).
 
 ---
 
 ## v1.9.x hardening arc — remaining slices
 
-The numbered slices **1.9.1 – 1.9.9 have shipped** (see `CHANGELOG.md`); they are gone from this
+The numbered slices **1.9.1 – 1.9.10 have shipped** (see `CHANGELOG.md`); they are gone from this
 file per the forward-only rule. What the arc still owes is below, **pinned to versions** rather
 than left as undated carry-overs. Full context for every item:
 [`docs/audit/2026-08-29-pminus1.md`](../audit/2026-08-29-pminus1.md).
@@ -26,42 +26,7 @@ and `prompt.cyr`'s git parent-walk moved to Bucket 2 (UX). The buffer-scope rule
 the hard way now lives in `CONTRIBUTING.md` § Code Standards, where a contributor will actually
 meet it.
 
-### 1.9.10 — make the config real, and answer the memory question
-
-Two small, self-contained items. Both are one change each with a clear test.
-
-- **The history cap is hardcoded and disagrees with the config.** The interactive loop constructs
-  its history with a literal **1000**, while `ShellConfig_default` declares **10000**. `config.cyr`
-  is not in the binary's include graph, so the 10000 is dead and 1000 is the real limit — but the
-  two disagree, and the live one is not the configurable one. Decide which is right, make it the
-  single source, and either wire the config value in or delete the dead field.
-- **No MEMORY_INFO intent.** `show memory usage` no longer emits `df -h` (1.9.5 stopped it
-  answering a memory question with a disk report), but it routes to SYSTEM_INFO → `uname -a`, which
-  does not report memory either. One IntentTag, one parser arm, one `free -h` translator. Add
-  end-to-end anchors for `show memory usage` / `show free memory` alongside the existing
-  `show disk usage` ones so the two cannot re-cross.
-
-### 1.9.11 — test seams for the last 20 functions
-
-The corrected coverage gate (1.9.7) names 20 host-reachable functions with no assertion on every
-run, so the gap is visible rather than excluded. They are awkward, not merely skipped, and each
-class wants a **seam** rather than a cleverer test:
-
-- **Write to the real audit log** — `audit_one_shot`, `audit_exec`, `audit_exec_ctx`,
-  `audit_set_context`, `audit_exec_bg_done`. A unit test today would write to the developer's
-  `$HOME`. Wants an injectable path so the target is a temp file — which would also let a test
-  assert the record **content**, not just its shape via smoke.
-- **Read stdin** — `ApprovalManager_request`, `verb_read_yes`. Wants an input seam, or a
-  pty-driven smoke case.
-- **Execute programs** — `sh_run_program`. Covered end-to-end by smoke (which asserts the audit
-  records it produces); no unit assertion.
-- **Exercised only indirectly** — `_cmd_eq` (via the permission tables) and `_hist_read_tail` (via
-  the oversized-history smoke case) have no direct assertion.
-
-`audit_format_table` came off this list in 1.9.8: its cstring/Str defect was fixed and it is now
-tested.
-
-### 1.9.12 — agnos iron verification *(gated on hardware, not on effort)*
+### 1.9.11 — agnos iron verification *(gated on hardware, not on effort)*
 
 ⚠ **The standing debt of the whole arc.** The exec audit surface (1.9.2) and the exec-path error
 handling (1.9.3) both landed with their host-reachable halves executed and asserted — the `run`
@@ -88,7 +53,7 @@ audit log. What is missing is a target to run it on.
 Since 1.9.7 the debt is also visible in CI output: `scripts/check-coverage.sh` reports the
 agnos-only function count (**18**) separately from the gated host-reachable figure.
 
-### 1.9.13 — the dispatch-ordering decision *(a decision, then possibly a slice)*
+### 1.9.12 — the dispatch-ordering decision *(a decision, then possibly a slice)*
 
 **Two symptoms, one question, asked twice.**
 

@@ -117,6 +117,18 @@ describes something that never ran).
   `needs_exec`, `rejected_safety`
 - exec-time (1.9.2): `launched`, `executed`, `failed`, `error`, `denied`
 
+⚠ **`error` vs `failed` is the distinction worth knowing**: `error` means the
+launch never happened (missing binary, exec refused) and carries no useful exit
+code; `failed` means the child ran to completion and returned non-zero. Until
+1.9.10 the **host** build blurred them — a missing binary went through
+fork/exec, so the fork succeeded and the shell logged `launched` followed by
+`failed` with `exit_code: 127` for a program that never started. It now logs a
+single `error`. agnos was never affected.
+
+⚠ **A file that exists but is not executable is still reported as `failed`**
+(with the child's `126`), because the fork/exec path gets no feedback from the
+failed exec. Stated so a script reading these labels knows the edge it has.
+
 Downstream:
 
 ```sh

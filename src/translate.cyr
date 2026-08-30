@@ -198,6 +198,17 @@ fn translate_system_info(intent) {
       "uname displays system identification"
       );
 }
+fn translate_memory_info(intent) {
+    var args = vec_new();
+    vec_push(args, "-h");
+    return Translation_new(
+      "free",
+      args,
+      "Show memory usage",
+      PermissionLevel.READ_ONLY,
+      "free reports used and available physical memory and swap"
+      );
+}
 fn translate_network_info(intent) {
     var args = vec_new();
     vec_push(args, "addr");

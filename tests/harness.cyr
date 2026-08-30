@@ -50,5 +50,36 @@ fn report() {
 # not drive interactive input, so no-ops are correct and keep them deterministic.
 fn ui_show_error(m) { return 0; }
 fn ui_show_warning(m) { return 0; }
-fn read_line(buf, maxlen) { return 0; }
+# ⛔ NOT A NO-OP ANY MORE. This returned a constant 0 (EOF) until 1.9.10, which
+# made `verb_read_yes` and `verb_confirm` look reachable while pinning them to a
+# single answer: no test could ever observe a "yes". Since verb_confirm is the
+# HUMAN/STRICT gate in front of every program launch, the one branch that
+# actually starts a child was the branch no test could reach.
+#
+# It is now a scripted stdin. Call `_t_stdin_set("y")` and the NEXT read_line
+# serves that line; every read after it reports EOF, so a function that reads
+# twice cannot accidentally see the same answer again. Default state (nothing
+# set) is EOF — identical to the old stub, so existing tests are unaffected.
+#
+# The CONTRACT matches src/agnsh.cyr's real read_line: returns the byte count,
+# NUL-terminates the buffer, returns <= 0 at EOF.
+var _t_stdin_line = 0;
+var _t_stdin_reads = 0;
+
+fn _t_stdin_set(cstr) {
+    _t_stdin_line = cstr;
+    _t_stdin_reads = 0;
+    return 0;
+}
+
+fn read_line(buf, maxlen) {
+    if (_t_stdin_line == 0) { return 0; }
+    var n = strlen(_t_stdin_line);
+    if (n > maxlen - 1) { n = maxlen - 1; }
+    memcpy(buf, _t_stdin_line, n);
+    store8(buf + n, 0);
+    _t_stdin_line = 0;
+    _t_stdin_reads = _t_stdin_reads + 1;
+    return n;
+}
 fn chrono_now_rfc3339() { return str_from("2026-01-01T00:00:00Z"); }

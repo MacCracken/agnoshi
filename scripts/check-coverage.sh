@@ -63,6 +63,14 @@ FN_TABLE=$(awk '
 
 EXCLUDE_RE='^(main|_entry|_agnos_entry|print_usage|print_version|print_intent_result|interactive_loop|read_line|ui_show_error|ui_show_warning|chrono_now_rfc3339)$'
 
+# ⛔ A MENTION IN A COMMENT IS NOT A TEST. The scan below used to grep the raw
+# test files, so writing "# verb_read_yes routes through read_line" in a comment
+# marked verb_read_yes covered — the gate rewarded describing a function instead
+# of asserting it, and it happened for real while writing the 1.9.10 seams.
+# Strip comment-only lines and trailing comments before searching.
+TEST_CODE=$(cat tests/test_core.tcyr tests/test_security.tcyr 2>/dev/null \
+    | sed 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//')
+
 TOTAL=0
 TESTED=0
 UNTESTED=""
@@ -80,13 +88,13 @@ for row in $(echo "$FN_TABLE" | sort -u -k2,2 | awk '{print $2 ":" $3}'); do
     echo "$fn" | grep -qE "$EXCLUDE_RE" && continue
     if [ "$scope" = "agnos" ]; then
         AGNOS_TOTAL=$((AGNOS_TOTAL + 1))
-        if ! grep -qwE "$fn" tests/test_core.tcyr tests/test_security.tcyr 2>/dev/null; then
+        if ! echo "$TEST_CODE" | grep -qwE "$fn"; then
             AGNOS_UNTESTED="$AGNOS_UNTESTED $fn"
         fi
         continue
     fi
     TOTAL=$((TOTAL + 1))
-    if grep -qwE "$fn" tests/test_core.tcyr tests/test_security.tcyr 2>/dev/null; then
+    if echo "$TEST_CODE" | grep -qwE "$fn"; then
         TESTED=$((TESTED + 1))
     else
         UNTESTED="$UNTESTED $fn"

@@ -537,10 +537,27 @@ fn parse_state_queries(trimmed) {
       || input_has_word(trimmed, "kernel version") == 1
       || input_has_word(trimmed, "system info") == 1
       || input_has_word(trimmed, "system information") == 1
-      || input_has_word(trimmed, "free memory") == 1
-      || input_has_word(trimmed, "memory usage") == 1
       || input_has_word(trimmed, "hostname") == 1) {
         return Intent_new(IntentTag.SYSTEM_INFO);
+    }
+    # Memory questions get a memory answer. These two keywords sat in the
+    # SYSTEM_INFO arm above and translated to `uname -a`, which reports the
+    # kernel and says nothing about memory. (Before 1.9.5 they were caught even
+    # earlier by the disk arm and answered with `df -h` — a disk report for a
+    # memory question.) The disk parser now explicitly bails on memory-shaped
+    # input and hands it here, so this arm is the one that must catch it.
+    # ⚠ TWO CHECKS, NOT SIX. The obvious spelling of this arm lists the phrases
+    # ("memory usage", "free memory", "ram usage", "how much memory") — but every
+    # one of them contains "memory" or "ram" as a standalone word, so the two
+    # word checks subsume all four and the phrase scans are dead weight on the
+    # FALL-THROUGH path, which every unrecognised line pays for. The six-check
+    # spelling measured +3.9% on parse/shell_cmd; this one is free, because the
+    # SYSTEM_INFO arm above gave up the same two checks it used to carry.
+    # (1.9.5 learned this the expensive way: two unconditional keyword guards
+    # cost +31% on parse/list_files before being gated behind a shorter needle.)
+    if (input_has_exact_word(trimmed, "memory") == 1
+      || input_has_exact_word(trimmed, "ram") == 1) {
+        return Intent_new(IntentTag.MEMORY_INFO);
     }
     if (input_has_word(trimmed, "disk space") == 1
       || input_has_word(trimmed, "free space") == 1
@@ -675,6 +692,7 @@ fn translate_extended(tag, intent) {
         39 => { return translate_firewall_disable(intent); }
         40 => { return translate_firewall_delete(intent); }
         42 => { return translate_question(intent); }
+        44 => { return translate_memory_info(intent); }
         _ => { return 0; }
     }
     return 0;
@@ -685,7 +703,10 @@ fn Interpreter_translate(self, intent) {
         var r = translate_core(tag, intent);
         if (r != 0) { return r; }
     }
-    if (tag >= 19 && tag <= 42) {
+    # ⚠ THE UPPER BOUND MUST COVER EVERY EXTENDED TAG. A tag added above this
+    # range parses fine and then silently translates to `echo`, because the
+    # dispatch never reaches its arm. Widened 42 -> 44 for MEMORY_INFO (1.9.10).
+    if (tag >= 19 && tag <= 44) {
         var r = translate_extended(tag, intent);
         if (r != 0) { return r; }
     }

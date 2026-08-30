@@ -204,6 +204,31 @@ scan "str_data() into a path-taking syscall — use str_cstr() (Category G)" \
 scan "str_data() into a path-taking syscall — use str_cstr() (Category G)" \
      'syscall\([[:space:]]*(SYS_CHDIR|SYS_OPEN|SYS_STAT|SYS_UNLINK|SYS_MKDIR|SYS_RMDIR|SYS_CHMOD)[[:space:]]*,[[:space:]]*str_data\('
 
+# Category H — the audit-log path override must stay a TEST SEAM.
+#
+# `audit_path_override_set` (src/statepaths.cyr) redirects where the security
+# log is written. It exists so tests can assert what an audit record actually
+# SAYS — before 1.9.10 nothing could, because audit_one_shot/audit_exec resolve
+# the path internally and a test had no file to read back.
+#
+# The whole safety argument for that global is "nothing in the shell calls the
+# setter, so it is unreachable from any input-driven path". That argument is
+# only true for as long as it stays true, and a future edit wiring it up would
+# silently turn an inert test hook into a runtime redirect of the audit trail.
+# This check is what keeps the argument honest: the definition site is the only
+# permitted mention anywhere under src/.
+OVERRIDE_HITS=$(grep -n 'audit_path_override_set' $SRC_DIRS/*.cyr 2>/dev/null \
+    | grep -v '^[^:]*statepaths\.cyr:' \
+    | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' || true)
+if [ -n "$OVERRIDE_HITS" ]; then
+    HITS="$HITS
+audit_path_override_set called outside its definition site — it is a TEST SEAM,
+not a runtime knob; redirecting the audit log from shell code defeats the trail
+(Category H):
+$OVERRIDE_HITS"
+    FAIL=1
+fi
+
 if [ $FAIL -eq 0 ]; then
     echo "lint-cstr-str: clean (no Str/cstring antipatterns in $SRC_DIRS/)"
     exit 0

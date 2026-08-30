@@ -21,6 +21,21 @@ You'll hit the dispatch-split point (ADR-004) before the enum limit.
 
 ## 2. Add a parse rule
 
+⚠ **Parse arms are ordered, and the first match wins.** Before adding a keyword,
+check what already claims it — a broad earlier arm silently shadows a specific
+later one. Four such shadowing bugs shipped before 1.9.5 found them, and the
+memory/disk cross (a memory question answered with `df -h`) survived two
+releases because each fix only moved it to the next wrong arm. Adding an
+end-to-end anchor for the *neighbouring* intents, not just yours, is what stops
+a re-cross: 1.9.10 pins memory, disk and system together for exactly this reason.
+
+⚠ **Prefer the narrowest check that covers your phrases.** Every arm in a
+fall-through parser is paid for by every unrecognised line. If your phrases all
+contain the same distinctive word, key on the word — `MEMORY_INFO`'s four
+phrases collapse to two `input_has_exact_word` checks, and the six-check
+spelling measured **+3.9% on `parse/shell_cmd`**. Benchmark before and after;
+`parse/shell_cmd` is the one that falls through everything.
+
 Edit `src/interpreter.cyr`. Find the appropriate parse function —
 for uptime, `parse_system_ops`:
 
@@ -97,6 +112,30 @@ does not fail loudly — it reads the fat-pointer header.
 `translate_core`, higher tags to `translate_extended`. Add your arm to the right
 one — a tag added to the wrong half is simply never reached, and the symptom is
 an intent that parses correctly and then translates to `echo`.
+
+⛔ **Both halves are BOUNDED RANGES, and the upper bound is the one that bites.**
+The dispatch reads:
+
+```cyrius
+if (tag <= 18) { ... translate_core(tag, intent) ... }
+if (tag >= 19 && tag <= 44) { ... translate_extended(tag, intent) ... }
+```
+
+A new tag is by definition the **highest** number in the enum, so it lands
+*above* the extended range and `translate_extended` is never called for it. Your
+arm is present, correct, and unreachable — same `echo` symptom as putting it in
+the wrong half, with nothing in the code looking wrong. **Widen the upper bound
+in `Interpreter_translate` in the same edit that adds the arm.** This is not
+hypothetical: `MEMORY_INFO` (1.9.10) hit it, and the bound had to go 42 → 44.
+
+Guard it with a test that goes **through `Interpreter_translate`**, not one that
+calls your translator directly — a direct call passes whether or not the
+dispatch can reach it:
+
+```cyrius
+check("MY_TAG is reachable through the dispatch",
+  streq(load64(Interpreter_translate(Interpreter_new(), Intent_new(IntentTag.MY_TAG))), "mycmd") == 1);
+```
 
 Edit `src/interpreter.cyr` — add the tag to `translate_extended` (or
 `translate_core` if your tag is <= 18):

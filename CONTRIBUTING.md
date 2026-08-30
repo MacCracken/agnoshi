@@ -41,7 +41,7 @@ cyrius capacity --check src/agnsh.cyr  # fn-table / code-size headroom (must be 
 cyrius vet src/agnsh.cyr               # include-graph audit
 cyrius fmt --check <file>              # fmt-drift gate (non-mutating; bare `cyrius fmt <file>` REWRITES IN PLACE)
 cyrius lint <file>                     # warn-as-error
-sh scripts/lint-cstr-str.sh src        # Str/cstring antipatterns (categories A-G)
+sh scripts/lint-cstr-str.sh src        # Str/cstring antipatterns (A-G) + test-seam containment (H)
 sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reachable)
 ```
 
@@ -49,6 +49,23 @@ sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reac
 **literal** argument, so a cstring carried in a variable is invisible to it. A
 clean run is not proof — it was green through both the dead SHELL_COMMAND
 classifier (1.9.1) and the `audit_format_table` defect (1.9.8).
+
+⛔ **Category H — the audit-path test seam stays a test seam.**
+`audit_path_override_set` (`src/statepaths.cyr`) redirects where the security log
+is written. It exists so tests can assert what an audit record *says*: the audit
+writers resolve their own destination, so before 1.9.10 a test had no file to
+read back and the six functions writing the security log had no assertion at all.
+The safety argument for that mutable global is *"nothing in the shell calls the
+setter, so it is unreachable from any input-driven path"* — Category H is what
+keeps the argument true. Its definition site is the only permitted mention under
+`src/`; anywhere else fails the build.
+
+⚠ **A mention is not a test.** `check-coverage.sh` grepped raw test files until
+1.9.10, so naming a function in a *comment* marked it covered — it happened while
+writing the 1.9.10 seams and hid five functions that had never been asserted.
+Comments are stripped now. The general lesson, which cost a release to learn
+twice: **when you add a gate, make it fail on purpose before you trust it.**
+Both gates added in 1.9.10 were verified that way.
 
 For the format / lint loop, the CI walks `src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr` and fails on any drift or `warn` line — auto-discover so new modules pick up the gate.
 

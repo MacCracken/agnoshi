@@ -43,6 +43,11 @@ enum IntentTag {
     PIPELINE = 41;
     QUESTION = 42;
     UNKNOWN = 43;
+    # Added 1.9.10. `show memory usage` used to answer a MEMORY question with a
+    # DISK report (`df -h`); 1.9.5 stopped that but left it on SYSTEM_INFO ->
+    # `uname -a`, which does not report memory either. Appended rather than
+    # inserted so UNKNOWN keeps its value — nothing renumbers.
+    MEMORY_INFO = 44;
 }
 
 struct Intent { tag; field1; field2; field3; field4; int1; int2; vec1; }

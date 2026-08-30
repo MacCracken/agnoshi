@@ -95,7 +95,40 @@ fn history_path() {
     store8(buf + hlen + slen, 0);
     return buf;
 }
+# ---- The audit-log path seam ----
+#
+# ⛔ THIS IS A TEST SEAM AND NOTHING ELSE. NOTHING IN THE SHELL MAY CALL THE
+# SETTER — `scripts/lint-cstr-str.sh` Category H fails the build if any file in
+# src/ other than this one references it.
+#
+# Why it has to exist: `audit_one_shot` and `audit_exec` resolve their
+# destination by calling `audit_log_path()` internally, and the comment in
+# audit.cyr explains why they must — threading a path parameter would mean
+# editing five launchers inside `#ifdef CYRIUS_TARGET_AGNOS` that a host test
+# cannot exercise. The consequence was that the six functions which WRITE THE
+# SECURITY LOG had no assertion of any kind: a test could not name a file to
+# read back, so nothing ever checked what a record actually says. The audit
+# trail was the least-tested code in the tree and the most security-relevant.
+#
+# Why a mutable global is acceptable here, stated rather than assumed: the
+# setter is not reachable from any input-driven path. Cyrius has no dynamic
+# dispatch, no reflection and no call-by-name, so a function nothing calls is
+# inert — an attacker cannot reach it from a command line, and the lint gate
+# stops a future edit from wiring it up by accident. The override is checked
+# BEFORE the $HOME resolution so a test never depends on the ambient
+# environment, and it is per-process, so it cannot leak between runs.
+var g_audit_path_override = 0;
+
+# Point the audit log at `path` (a cstring) for the rest of this process, or
+# pass 0 to restore the real resolution. Tests only — see the banner above.
+fn audit_path_override_set(path) {
+    g_audit_path_override = path;
+    return 0;
+}
+
 fn audit_log_path() {
+    # Test seam first, so an override never depends on the ambient $HOME.
+    if (g_audit_path_override != 0) { return g_audit_path_override; }
     # `$HOME/.agnsh_audit.log` is the v1.0 convention (per docs/agnsh.1).
     # Returns a NULL-TERMINATED cstring (not a Str) because AuditLogger_log
     # passes the path to syscall(SYS_OPEN) directly, and str_cat allocates
