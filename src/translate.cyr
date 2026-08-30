@@ -6,7 +6,9 @@ fn translate_list_files(intent) {
     if (list_options_human(opts) == 1) { vec_push(args, "-h"); }
     if (list_options_time(opts) == 1) { vec_push(args, "-t"); }
     if (list_options_recursive(opts) == 1) { vec_push(args, "-R"); }
-    if (load64(intent + 8) != 0) {
+    # Empty means "no argument", not "unsafe" — see the note on the arg-guarded
+    # translators. safe_path_in_str also rejects a zero-length path.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -20,6 +22,7 @@ fn translate_list_files(intent) {
 }
 fn translate_show_file(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
+    if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
@@ -40,7 +43,14 @@ fn translate_find_files(intent) {
         vec_push(args, ".");
     }
     vec_push(args, "-name");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     } else {
@@ -57,7 +67,14 @@ fn translate_find_files(intent) {
 fn translate_search_content(intent) {
     var args = vec_new();
     vec_push(args, "-r");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -75,6 +92,7 @@ fn translate_search_content(intent) {
 }
 fn translate_change_dir(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
+    if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));
@@ -88,6 +106,7 @@ fn translate_change_dir(intent) {
 }
 fn translate_create_dir(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
+    if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, "-p");
@@ -132,6 +151,7 @@ fn translate_move(intent) {
 }
 fn translate_remove(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
+    if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     if (load64(intent + 40) == 1) { vec_push(args, "-r"); }
@@ -193,7 +213,9 @@ fn translate_network_info(intent) {
 fn translate_disk_usage(intent) {
     var args = vec_new();
     vec_push(args, "-h");
-    if (load64(intent + 8) != 0) {
+    # Empty means "no argument", not "unsafe" — see the note on the arg-guarded
+    # translators. safe_path_in_str also rejects a zero-length path.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -268,7 +290,14 @@ fn translate_git_branch(intent) {
     var args = vec_new();
     vec_push(args, "branch");
     if (load64(intent + 40) == 1) { vec_push(args, "-d"); }
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -307,7 +336,14 @@ fn translate_git_log(intent) {
 fn translate_git_push(intent) {
     var args = vec_new();
     vec_push(args, "push");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -333,7 +369,14 @@ fn translate_git_pull(intent) {
 fn translate_git_checkout(intent) {
     var args = vec_new();
     vec_push(args, "checkout");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -348,7 +391,14 @@ fn translate_git_checkout(intent) {
 fn translate_git_merge(intent) {
     var args = vec_new();
     vec_push(args, "merge");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -363,7 +413,14 @@ fn translate_git_merge(intent) {
 fn translate_git_stash(intent) {
     var args = vec_new();
     vec_push(args, "stash");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -378,7 +435,14 @@ fn translate_git_stash(intent) {
 fn translate_firewall_allow(intent) {
     var args = vec_new();
     vec_push(args, "allow");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -393,7 +457,14 @@ fn translate_firewall_allow(intent) {
 fn translate_firewall_deny(intent) {
     var args = vec_new();
     vec_push(args, "deny");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -453,7 +524,14 @@ fn translate_firewall_disable(intent) {
 fn translate_firewall_delete(intent) {
     var args = vec_new();
     vec_push(args, "delete");
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -467,7 +545,14 @@ fn translate_firewall_delete(intent) {
 }
 fn translate_user_add(intent) {
     var args = vec_new();
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -481,7 +566,14 @@ fn translate_user_add(intent) {
 }
 fn translate_user_delete(intent) {
     var args = vec_new();
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -495,7 +587,14 @@ fn translate_user_delete(intent) {
 }
 fn translate_passwd(intent) {
     var args = vec_new();
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -509,7 +608,14 @@ fn translate_passwd(intent) {
 }
 fn translate_group_add(intent) {
     var args = vec_new();
-    if (load64(intent + 8) != 0) {
+    # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
+    # can leave a non-null but zero-length Str here (e.g. `git stash`,
+    # `start service nginx`), and safe_arg_in_str rejects empty BY DESIGN — an
+    # empty argument is meaningless. Guarding on the field alone therefore made
+    # 1.9.5 refuse the whole translation and emit `echo`, turning valid commands
+    # into "translator safety check rejected this input". Skip an absent
+    # argument; validate only one that is actually present.
+    if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, load64(intent + 8));
     }
@@ -557,6 +663,11 @@ fn translate_agent_info(intent) {
 }
 fn translate_service_control(intent) {
     if (load64(intent + 8) == 0) { return translate_unknown(intent); }
+    # Empty is "no argument", not "unsafe" — but this translator REQUIRES its
+    # argument (there is no `systemctl` with no unit), so an empty field is a
+    # genuine parse failure and translate_unknown is the right answer. The guard
+    # below then only sees a non-empty value.
+    if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, load64(intent + 8));

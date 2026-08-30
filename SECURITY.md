@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.x   | Yes       |
-| < 1.0   | No        |
+| 1.9.x   | Yes       |
+| < 1.9   | No        |
 
 ## Reporting a Vulnerability
 
@@ -32,10 +32,26 @@ Every command is classified before execution:
 Classification uses **basename extraction** so `/usr/bin/dd`, `./rm`,
 `../bin/chmod` cannot bypass the blocklist.
 
-### Approval workflow
-Risky commands trigger the `ApprovalManager` — a human must approve before
-execution. Terminal escape sequences are stripped from the displayed command
-(H5 mitigation) so a crafted input cannot spoof the approval prompt.
+### Approval workflow — ⚠ NOT IN THE SHIPPED BINARY YET
+
+**What ships today**: every translated command is classified into a permission
+tier and its risk is reported. A HIGH-risk command prints
+`Approval required (interactive prompt in shell mode)` and a BLOCKED one prints
+`WARNING: BLOCKED`. **Neither prompts, and neither blocks execution** — the
+natural-language path does not execute at all yet (see *Execution*, below).
+
+**What does not ship**: `ApprovalManager_request` and the escape-stripped
+approval display (`print_str_safe`, the H5 mitigation) live in
+`src/approval.cyr` / `src/sanitize.cyr` but their only caller is
+`src/session.cyr`, which is **not in `src/agnsh.cyr`'s include graph**. Wiring
+them in is Bucket 1 Slice 6 on the roadmap.
+
+### Execution — what can actually run
+
+Only `run /abs/path` executes on a Linux host; on AGNOS, bareword `/bin/<name>`
+launches, two-stage pipelines, `>` redirection and `prog &` also execute. The
+**natural-language path does not execute anything** — it classifies, reports and
+audits. Every launch and every refusal is recorded in the audit log (see below).
 
 ### Input sanitization
 All user-controlled strings flowing to syscalls must pass validation:
@@ -46,24 +62,40 @@ All user-controlled strings flowing to syscalls must pass validation:
 - `is_safe_branch_name` — only `[a-zA-Z0-9_/.-]`
 - `is_safe_commit_message` — rejects leading `-` (flag injection)
 
-### Checkpoint/undo
-Destructive operations (`rm`, `mv`) back up targets to
-`$HOME/.agnoshi/checkpoints/` (mode 0700) before execution. `undo` restores
-the last operation. Auto-prune keeps the 100 most recent entries.
+### Checkpoint/undo — ⚠ NOT IN THE SHIPPED BINARY YET
+
+`src/checkpoint.cyr` implements backup-before-destructive-op and `undo`, but it
+is **not in the binary's include graph** and there is no `undo` builtin. Do not
+rely on any rollback guarantee. (Its wire-up is blocked on seven stdlib symbols
+that no longer exist — Bucket 1 Slice 4 on the roadmap.)
 
 ### Audit log
 Every action is logged as a JSON line to `~/.agnsh_audit.log`. All fields
 are JSON-escaped (C4 mitigation) so crafted input cannot forge entries.
 
-### Privilege escalation
-- `euid == 0` detection forces restricted mode (even for setuid binaries)
-- Clean environment whitelist for child processes (no `LD_PRELOAD` inheritance)
-- Sudo path and root-ownership re-verified at escalation time, not just init
+### Privilege escalation — ⚠ NOT IN THE SHIPPED BINARY YET
+
+There is **no privilege-escalation path in the binary at all**: nothing invokes
+`sudo`. The `euid == 0` restricted-mode check, the sudo path/root-ownership
+re-verification (`verify_sudo_path`) and the environment whitelist
+(`build_safe_env`) exist in `src/security.cyr` / `src/sanitize.cyr` but have no
+caller in the include graph — `build_safe_env` has no caller anywhere.
+
+⚠ **Children inherit agnsh's environment on AGNOS, by design** — the opposite of
+a whitelist (`sh_build_env_blob`, `src/run_agnos.cyr`). Any `LD_PRELOAD`-style
+protection is a future property, not a current one.
 
 ### File permissions
-- History file: mode 0600 (owner read/write only)
-- Checkpoint directory: mode 0700 (owner only, in `$HOME` not `/tmp`)
-- Audit log: mode 0600
+
+- History file: mode **0600 at open** (not chmod'd afterwards — that sequence
+  was itself a race), opened `O_NOFOLLOW`
+- Audit log: mode 0600, opened `O_NOFOLLOW`, and its mode is **re-asserted on
+  every open** so a file restored from a backup cannot stay world-readable
+- Checkpoint directory: mode 0700 — *in the unwired module; see above*
+
+⚠ When `$HOME` is unset both fall back to `/tmp/<name>.<uid>`. The uid qualifier
+prevents collision between users, but `/tmp` remains world-writable: treat that
+fallback as degraded operation, not a supported configuration.
 
 ## Security Audit
 
@@ -75,6 +107,14 @@ finding and must continue to pass.
 
 ## OWASP Alignment
 
-- **ASI01 (Prompt Injection)**: external content sanitized before LLM prompts; role-override patterns stripped
-- **ASI02 (Unauthorized Actions)**: approval workflows; permission tiers; basename classification prevents path bypass
-- **ASI03 (Insecure Integration)**: sandbox (when available) protects dotfiles as read-only
+⚠ Alignment is stated against the CURRENT binary; items resting on unwired
+modules are marked.
+
+- **ASI01 (Prompt Injection)**: ⚠ **not applicable yet** — there is no LLM
+  integration in the binary (no `src/llm.cyr`, no network stack compiled in), so
+  nothing is sent to a model and nothing is sanitized for one.
+- **ASI02 (Unauthorized Actions)**: permission tiers and basename classification
+  ship and work (`/usr/bin/dd` → `dd` → BLOCKED). ⚠ Approval *workflows* do not
+  — see above. What ships is classification, reporting and auditing.
+- **ASI03 (Insecure Integration)**: ⚠ **not implemented** — there is no sandbox
+  and no dotfile protection in the binary.

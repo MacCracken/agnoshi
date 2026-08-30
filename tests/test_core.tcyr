@@ -1506,6 +1506,31 @@ fn main() {
     check("audit table renders the approved column", str_contains(att, str_from("yes")) == 1);
     check("audit table renders the denied column", str_contains(att, str_from("NO")) == 1);
 
+    # ---- SERVICE_CONTROL / GIT_STASH were entirely dead ----
+    # ⛔ The parser stored bare cstring LITERALS into `intent + 8`
+    # (`store64(intent + 8, "start")`), a field every consumer reads as a Str.
+    # The field read back as garbage, every translator refused it, and two whole
+    # intent categories emitted `echo` for the shell's entire history. Same bug
+    # class as the 1.9.1 SHELL_COMMAND classifier, on the PRODUCING side.
+    # Found by verifying the documented examples in docs/examples/ against the
+    # binary — 5 of 46 rows did not match.
+    var sv = Interpreter_new();
+    var sv1 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("start service nginx")));
+    check("service control -> systemctl", streq(load64(sv1), "systemctl") == 1);
+    check("service control action survives",
+      streq(str_cstr(vec_get(load64(sv1 + 8), 0)), "start") == 1);
+    var sv2 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("restart service sshd")));
+    check("service restart -> systemctl", streq(load64(sv2), "systemctl") == 1);
+    var gs1 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("git stash")));
+    check("git stash -> git", streq(load64(gs1), "git") == 1);
+    var gs2 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("git stash pop")));
+    check("git stash pop -> git", streq(load64(gs2), "git") == 1);
+    check("git stash pop keeps its subcommand",
+      streq(str_cstr(vec_get(load64(gs2 + 8), 1)), "pop") == 1);
+    # The stored field must be a real Str, not a cstring address.
+    var svp = Interpreter_parse(sv, str_from("start service nginx"));
+    check("intent field is a usable Str", str_len(load64(svp + 8)) == 5);
+
     # ---- 1.9.6 optimization: behaviour pinned across the rewrites ----
     # is_safe_path was four passes (two predicates, each with its own strlen and
     # scan) and is now one fused pass. The dot logic is the subtle part: a

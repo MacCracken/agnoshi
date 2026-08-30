@@ -4,6 +4,114 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.9] - 2026-08-30 — the docs claimed security properties the binary does not have
+
+A full documentation audit against the 1.9.8 tree — 14 agents across every doc, adversarially
+verified, 124 findings surviving. Checking the docs against the code then found **a bug in the
+code**, which is the part worth reading.
+
+### Fixed — SERVICE_CONTROL and GIT_STASH were entirely dead, since v1.0
+
+⛔ The parser stored bare **cstring literals** into `intent + 8`
+(`store64(intent + 8, "start")`, `store64(intent + 8, "pop")`) — a field every consumer reads as a
+**Str**. The field read back as garbage, every translator refused it, and two whole intent
+categories emitted `echo` for the shell's entire history:
+
+| input | was | now |
+|---|---|---|
+| `start service nginx` | `echo` | `systemctl start nginx` |
+| `stop service apache2` | `echo` | `systemctl` |
+| `restart service sshd` | `echo` | `systemctl` |
+| `git stash` | `echo` | `git stash` |
+| `git stash pop` | `echo` | `git stash push/pop` |
+
+Same bug class as the 1.9.1 SHELL_COMMAND classifier, on the **producing** side this time. Eleven
+literals wrapped in `str_from`.
+
+⚠ **How it was found matters more than the fix.** No audit reported it. It surfaced from mechanically
+running every row of `docs/examples/common-commands.md` against the binary: **5 of 46 documented
+examples did not match**, and the cause turned out to be code, not documentation. Verified against
+the original pre-arc commit to confirm it was long-standing rather than a regression from this arc.
+
+### Fixed — an empty argument was treated as an unsafe one
+
+⚠ **A robustness defect in 1.9.5's translator guards.** The parser can leave a non-null but
+zero-length `Str` in a field, and `safe_arg_in_str` rejects empty *by design* — so guarding on the
+field alone turned "no argument supplied" into "refuse the whole translation". Now an absent
+argument is skipped and only a present one is validated; translators that genuinely require their
+argument reject an empty one explicitly.
+
+### Documentation — the dominant defect was not stale numbers
+
+⛔ **`README.md`, `SECURITY.md`, `docs/guides/security-model.md` and
+`docs/examples/server-hardening.md` all asserted, as current fact, security properties the shipped
+binary does not have**: interactive approval workflows, checkpoint/undo rollback, sudo
+re-verification at escalation time, and a child-process environment whitelist.
+
+None exist at runtime. They live in `src/approval.cyr`, `src/checkpoint.cyr`, `src/security.cyr` and
+`src/session.cyr` — **none of which is in the binary's include graph** — and `build_safe_env` has no
+caller anywhere. Verified by running the binary: a HIGH-risk command prints `Approval required` and
+returns to the prompt without asking anything.
+
+⛔ **`server-hardening.md` was the sharpest case.** It instructed operators to deploy agnsh as a
+**login shell** with `agnsh --strict`, on the stated basis that every command would require
+approval. `--strict` **is not a flag** — it prints usage and exits **0**, silently ignored. It also
+told them to write `/etc/agnoshi/agnsh.conf`; agnsh reads no configuration file at all. It now opens
+with a do-not-deploy banner tabulating its five false claims against reality, kept as a design
+target rather than deleted.
+
+⇒ **The rule this established, now in the ledger**: a doc may describe a module that exists, but it
+must never describe a *behaviour* the binary lacks without marking it.
+
+⚠ **One correction the audit surfaced that the docs had inverted**: the guides claimed a whitelisted
+child environment. The truth is neither — on a Linux host the child gets an **empty** environment
+(`_exec3` passes a NULL `envp`, *stronger* than a whitelist), and on AGNOS it **inherits agnsh's
+entire environment** by design (the 1.7.0 feature), which is the opposite.
+
+⚠ **And one real gap the docs had hidden**: `security-model.md` credited the approval UI with
+stripping terminal escapes. That code is unwired — but the confirmation that *does* ship
+(`verb_confirm`) does **not** strip control characters, so a path containing ESC can style the
+confirmation text. Now recorded as an open gap rather than a solved one.
+
+### Documentation — corrected across the tree
+
+- **README** — module tree rewritten to split **COMPILED** from **PRESENT BUT NOT IN THE BINARY**.
+  That split is the root cause of the whole class, so it is now stated where a reader meets it first.
+- **`agnsh.1`** — `undo` builtin and the checkpoints `FILES` entry removed (neither exists);
+  `--mode`, `run`, and the power builtins documented; MODES rewritten to describe launch
+  confirmation rather than per-command approval. Renders warning-free under `groff -man`.
+- **`overview.md`** — the data-flow diagram showed approval → checkpoint → `execute_command` as the
+  shipped path. None of it happens. Redrawn: the NL path stops at report-and-audit, with execution
+  as a separate branch.
+- **`getting-started.md`** — modes table described approval tiers that do not exist; audit-log
+  section now documents both label sets and `exit_code`; "Undo (v1.4.0)" replaced with the truth.
+- **ADR-006** — *"The bug class is shut"* softened to *"the catalogued variants are shut."* It was
+  not shut: three more instances shipped after that sentence was written, including the one fixed
+  above. ADR-003's premise ("Cyrius has no regex library") no longer holds and now rests on its
+  actual reasons.
+- **`CONTRIBUTING.md` / `writing-intents.md`** — the lint shield's **literal-only blind spot** is
+  now documented in both. A clean run is not proof; it was green through all three defects.
+- **`doc-health.md`** — rewritten. The previous ledger claimed "Fresh" for files describing a
+  v1.3-era binary.
+- **`roadmap.md`** — remaining v1.9.x work **version-pinned** (1.9.10–1.9.13). Completed items
+  stripped from Bucket 1 slices; two items relocated out of the arc; **all file:line citations
+  replaced with function names** — five of seven had already drifted.
+
+### Tests
+
+**523 → 530 unit**, 26 security, 88 smoke. New anchors cover both revived intents end-to-end
+(command, preserved sub-argument, and that the stored field is a usable `Str`). The
+`common-commands.md` table is now machine-checkable against the binary — re-run it when the parser
+changes, because nothing else caught this.
+
+### Notes
+
+- All three targets warning-free; all gates green; coverage 89%; benchmarks unchanged.
+- ⚠ `writing-intents.md` is marked **partially fresh**: its lint and dispatch sections are corrected,
+  but it has not been re-read end-to-end against the 1.9.5 parser-ordering changes. Recorded rather
+  than claimed.
+
+
 ## [1.9.8] - 2026-08-29 — two of the "latent" defects were live, and one of them was mine
 
 Final numbered slice of the v1.9.x hardening arc

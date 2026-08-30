@@ -58,10 +58,18 @@ if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent)
 Rejected characters: `; | & $ ( ) < > ` ` \n`
 
 For paths, `is_safe_path` / `safe_path_in_str` additionally rejects `..`
-(traversal). v1.3.1's CI lint shield (`scripts/lint-cstr-str.sh`)
-enforces the cstring-vs-Str dispatch at lint time — calling
-`is_safe_path(Str)` would have silently routed every NL filesystem op
-to `translate_unknown` since v1.0; v1.3.0 slice 3 caught it.
+(traversal). Both were fused into a single pass in 1.9.6 — the verdict is
+unchanged, they are just no longer four traversals of the same string.
+
+⚠ **The lint shield does not "enforce the cstring-vs-Str dispatch"** — it cannot.
+`scripts/lint-cstr-str.sh` matches seven specific textual antipatterns (A–G):
+literal arguments to Str-typed helpers, cross-arch-broken raw syscalls,
+static-buffer escape, unchecked `sys_chmod`, `strlen` inside an `_in_str` body,
+and `str_data()` handed to a path-taking syscall. Its known blind spot is a
+cstring carried in a **variable**, which is invisible to the literal-matching
+categories — that is precisely how the dead SHELL_COMMAND classifier (1.9.1)
+and the `audit_format_table` defect (1.9.8) both passed a clean lint run. **A
+green shield is not proof.**
 
 ### 3. rm Flag Parsing
 
@@ -72,12 +80,20 @@ when combined or reordered:
 - Short form: per-character scan for `r`, `f`, `R` in any `-` prefixed arg
 - `--` (end-of-flags marker): always flagged as dangerous
 
-### 4. Approval UI Hardening
+### 4. Approval UI Hardening — ⚠ NOT IN THE SHIPPED BINARY
 
-The approval prompt displays the command via `print_str_safe`, which strips
-control characters (< 0x20 except space, and 0x7F). A malicious command
-cannot inject ANSI escape sequences to clear the screen, fake approval, or
-hide the real command.
+`print_str_safe` (which does strip control characters) is called only from
+`ApprovalManager_request` in `src/approval.cyr`, whose only caller is
+`src/session.cyr` — **not in the binary's include graph**. There is no approval
+prompt at runtime.
+
+⚠ **The confirmation that DOES ship is not hardened.** In `human` / `strict`
+mode a program launch is confirmed by `verb_confirm` (`src/sanitize.cyr`), which
+writes the action string straight to the terminal with no stripping. A path
+containing an ESC byte can therefore style or reposition the confirmation text.
+The path itself has already passed `is_safe_path`, which rejects shell
+metacharacters and traversal but **not** control bytes — so this is a real, if
+narrow, gap. Tracked for the approval wire-up (Bucket 1 Slice 6).
 
 ### 5. Audit Log Integrity
 
@@ -86,34 +102,66 @@ string field. Quotes, backslashes, newlines, tabs, and control chars are
 all escaped. Crafted input cannot terminate a string early and inject
 fake fields.
 
-### 6. Checkpoint / Undo
+⚠ **Escaping alone was not enough.** Until 1.9.1 bytes ≥ 0x80 were copied through
+unvalidated, so a single high byte made the record invalid UTF-8 and therefore
+invalid JSON — and on a whole-file parse one poisoned line takes the entire log
+down with it, which an actor whose own entry would read `rejected_safety` could
+trigger deliberately. UTF-8 is now **validated**: well-formed sequences pass
+byte-exact (so `café` stays `café` rather than becoming mojibake), invalid bytes
+become U+FFFD, and overlongs and surrogates are rejected.
 
-Destructive operations are backed up to `$HOME/.agnoshi/checkpoints/`
-(mode 0700, NOT `/tmp`) before execution:
+**What is recorded.** Two disjoint label sets, so one `select` separates them:
 
-- `rm file.txt` → `cp file.txt ~/.agnoshi/checkpoints/N_file.txt` before unlink
-- `mv a b` → records source/dest mapping
+- *parse-time* (the shell's decision): `proposed`, `needs_approval`, `blocked`,
+  `rejected_safety`, `needs_llm`, `needs_exec`
+- *exec-time* (what it actually did, 1.9.2): `launched`, `executed`, `failed`,
+  `error`, `denied`, each with an `exit_code` field (JSON `null` when none applies)
 
-`undo` pops the last checkpoint and restores. Auto-prune keeps 100 most
-recent entries.
+A `launched` record is written **before** the child starts, so a program that
+hangs, kills the shell, or reboots the machine still leaves a trace — a
+`launched` with no matching outcome *is* the signal. Refusals are recorded too,
+with `"approved":0`. `>` refuses to truncate the audit log or the history file.
 
-### 7. Privilege Escalation
+### 6. Checkpoint / Undo — ⚠ NOT IN THE SHIPPED BINARY
 
-The `SecurityContext`:
+`src/checkpoint.cyr` implements backup-before-destructive-op, `undo` and a
+100-entry auto-prune, but it is **not in the binary's include graph**, there is
+no `undo` builtin, and no `~/.agnoshi/checkpoints/` directory is ever created.
+**Do not rely on any rollback guarantee.** Its wire-up is blocked on seven
+stdlib symbols that no longer exist (roadmap Bucket 1 Slice 4).
 
-- Checks **effective UID** (catches setuid binaries where `uid != 0` but
-  `euid == 0`)
-- Sudo presence and **root ownership** re-verified at escalation time, not
-  just at shell init (catches post-init tampering)
-- Child processes inherit a **whitelist environment** (PATH, HOME, LANG,
-  TERM only) — no `LD_PRELOAD`, `LD_LIBRARY_PATH`, `SUDO_*`
+### 7. Privilege Escalation — ⚠ NOT IN THE SHIPPED BINARY
+
+**agnsh never escalates privileges.** Nothing in the binary invokes `sudo`. The
+`SecurityContext` euid check and the sudo path/root-ownership re-verification
+live in `src/security.cyr`, which is not in the include graph.
+
+### 7b. Child environment — what actually happens
+
+Neither target uses the documented whitelist (`build_safe_env` exists in
+`src/sanitize.cyr` and has **no caller anywhere**). The two real behaviours:
+
+- **Host** (`run /abs/path`): the child gets an **empty environment** —
+  `lib/process.cyr`'s `_exec3` passes a NULL `envp`. Stronger than a whitelist
+  for `LD_PRELOAD` purposes, since nothing is inherited at all.
+- **AGNOS**: the child **inherits agnsh's entire environment**, deliberately —
+  `sh_build_env_blob` walks agnsh's own envp and passes it on, clamped to
+  ≤1024 B / ≤16 entries. This is the 1.7.0 env-inheritance feature. Today that
+  environment is the kernel seed (`HOME=/`, `PWD=/`), so there is little to
+  inherit — but it is inheritance, not filtering.
 
 ### 8. Terminal Input Paths
 
-- Git branch name from `.git/HEAD` passes through `is_safe_branch_name`
-  and `strip_control_chars` before prompt display
-- Commit messages checked for leading `-` (flag injection)
-- Usernames from `/etc/passwd` pass `is_safe_username` regex
+- Commit messages checked for leading `-` (flag injection). ✅ **Active** — and
+  note this guard was *inert* until 1.9.1: it was cstring-typed while the parser
+  handed it a `Str`, so `git commit -m -oh-no-a-flag` was accepted. It now uses
+  the ADR-006 `_in_str` twin.
+- ⚠ Git branch name from `.git/HEAD` — the guard exists
+  (`safe_branch_name_in_str`, itself fixed in 1.9.8 for the same Str/cstring
+  reason) but its only caller is `src/prompt.cyr`, which is **not compiled**.
+  The live prompt renders no branch at all.
+- ⚠ Usernames from `/etc/passwd` — `is_safe_username`'s only caller is
+  `src/security.cyr`, **not compiled**.
 
 ## File Permissions
 
@@ -136,23 +184,30 @@ owns your audit trail. **It does not make `/tmp` a safe home for an audit log**:
 a same-uid process is unaffected, and the directory is still world-writable. Treat
 the fallback as degraded operation for a broken environment, not a supported
 configuration.
-| `~/.agnoshi/checkpoints/` | 0700 | Contains backed-up file contents from `rm` |
+| `~/.agnoshi/checkpoints/` | *(n/a)* | ⚠ Never created — `checkpoint.cyr` is not compiled |
 | `/usr/local/bin/agnsh` | 0755 | Binary — exec, not writable by users |
 
 ## What Can Still Go Wrong
 
 **Things agnsh cannot prevent:**
 
-- User explicitly choosing `mode human` and running `rm -rf /` directly
-  (agnsh steps out of the way)
-- User installing a malicious alias that expands to dangerous commands
-  (mitigated by rejecting aliases with metacharacters, but still: caveat
-  user)
+- ⚠ **A caveat about `mode human`**: it does **not** hand the user a raw shell
+  and does not disable classification. What it changes is that program launches
+  gain a confirmation prompt (`mode_needs_confirm` covers `human` and `strict`).
+  Every mode still classifies, still reports risk, and still audits.
+- Alias expansion — ⚠ `src/aliases.cyr` is **not compiled**, so neither the risk
+  nor the metacharacter mitigation described in earlier revisions of this guide
+  exists today.
+- **The natural-language path does not execute**, so its classification is
+  advisory. A user who types a raw `run /abs/path`, or an AGNOS bareword, is
+  gated by `is_safe_path` and the mode confirmation — not by the permission
+  tier. Closing that is roadmap Bucket 1 slices 5 and 6.
 - Race conditions between permission check and execution (TOCTOU) if the
   filesystem is mutated by another process. Full TOCTOU protection would
   require inode-locking at the kernel layer.
 
-**Known LOW-severity hardening deferred to v1.4.0** (per `docs/audit/2026-05-11-pminus1.md`):
+**Hardening items from the 2026-05-11 audit — current status** (that audit
+deferred them "to v1.4.0"; both were in fact closed in the 1.9.x arc):
 
 - **Symlink races on state-file open** — ✅ **CLOSED in 1.9.1.**
   `~/.agnsh_audit.log` and `~/.agnsh_history` are now opened with
@@ -173,16 +228,25 @@ configuration.
   one. On agnos the bit is dropped rather than miscompiled (`file_open`
   masks only the `AO_*` bits it knows), so the agnos side still needs a
   kernel `AO_NOFOLLOW` — tracked in the roadmap.
-- **chmod-failure logging**. v1.3.1 added a stderr warning when
-  `sys_chmod` returns non-zero on the history / checkpoint paths. If
-  chmod silently fails the file stays at the umask default (typically
-  0644), leaking history to other users on a multi-user system. The
-  warning is the operator-visible signal.
+- **chmod-failure logging** — ✅ **superseded in 1.9.4.** The chmod is no longer
+  the primary protection: a new history file is created **0600 at open**, and the
+  audit log's mode is re-asserted on every open. A failed chmod now only matters
+  for a file that already existed with looser permissions, and it still emits an
+  operator-visible stderr warning in both cases.
 
 ## Forward Shield (v1.3.1)
 
-The v1.3.1 P(-1) audit added `scripts/lint-cstr-str.sh` — a 14-pattern
-CI gate covering five bug categories: Str-typed fns with cstring arg
+The v1.3.1 P(-1) audit added `scripts/lint-cstr-str.sh`. It now covers **seven**
+bug categories (A–G) — Category F (`strlen` inside an `_in_str` body) landed in
+v1.3.3 and Category G (`str_data()` handed to a path-taking syscall) in 1.9.1.
+The next free letter is **H**.
+
+⚠ **Read the blind spot before trusting a green run**: categories A/B match only
+a **literal** argument, so a cstring carried in a *variable* is invisible. That
+is exactly how the dead SHELL_COMMAND classifier (1.9.1) and the
+`audit_format_table` defect (1.9.8) both survived a clean lint.
+
+The original five categories: Str-typed fns with cstring arg
 (1st position × 5 + 2nd position × 3), cross-arch-broken raw syscalls
 (SYS_OPEN / CHMOD / STAT × 3), static-buffer escape via `str_from(&buf)`
 (× 2), unchecked `sys_chmod` return (× 1). Together they catch the

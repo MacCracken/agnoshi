@@ -6,24 +6,30 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.9.8 · Cyrius 6.5.36 · 23 modules · ~5 K src lines · 316 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 523 unit + 26 security + 88 smoke tests**
+**1.9.9 · Cyrius 6.5.36 · 23 modules · ~5 K src lines · 316 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 530 unit + 26 security + 88 smoke tests**
 
 ## Features
 
 - **Natural language interpretation** — keyword-based intent parser, 44 intent types
 - **30+ domain translators** — filesystem, process, network, packages, git, firewall, user/group, services
-- **Security-first** — every command classified (SAFE / READ_ONLY / USER_WRITE / SYSTEM_WRITE / ADMIN / BLOCKED)
-- **Approval workflows** — risky operations require explicit human approval
-- **Checkpoint/undo** — destructive ops (rm, mv) backed up before execution
-- **Audit logging** — structured JSON log of every action with timestamp, user, mode, result
+- **Security-first** — every command classified (SAFE / READ_ONLY / USER_WRITE / SYSTEM_WRITE / ADMIN / BLOCKED), with basename extraction so `/usr/bin/dd` cannot bypass the blocklist
+- **Audit logging** — structured JSON log of every action *and every refusal*, with timestamp, user, mode, result and exit code
 - **Four modes** — human, assist, auto, strict
 - **Single static binary** — `agnsh`, no dynamic dependencies
+
+⚠ **Not shipped yet, though the modules exist in `src/`**: interactive approval
+prompts, checkpoint/`undo`, and privilege escalation. `src/approval.cyr`,
+`src/checkpoint.cyr` and `src/security.cyr` are **not in the binary's include
+graph** — a HIGH-risk command reports `Approval required` but is not prompted or
+blocked, there is no `undo` builtin, and nothing invokes `sudo`. See
+`docs/development/roadmap.md` (Bucket 1) for the wire-up slices, and
+`SECURITY.md` for exactly what does and does not hold today.
 
 ## Install
 
 ```bash
 # Resolve the version-pinned stdlib snapshot into ./lib/ (gitignored).
-# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.0.56").
+# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.5.36").
 cyrius deps
 
 # Build from source
@@ -45,28 +51,39 @@ agnsh --help                    # show usage
 ## Architecture
 
 ```
-src/
+src/                                COMPILED INTO THE BINARY (src/agnsh.cyr's include graph)
 ├── agnsh.cyr         — binary entry point (CLI flags, interactive loop)
-├── sanitize.cyr      — input validation, JSON escape, env whitelist
+├── sanitize.cyr      — input validation, safety predicates, JSON escape
+├── statepaths.cyr    — where the state files live ($HOME, or uid-qualified /tmp)
 ├── mode.cyr          — operating mode (human/assist/auto/strict)
 ├── permissions.cyr   — command classification, permission levels
 ├── intent.cyr        — Intent + Translation types, 44 intent tags
-├── interpreter.cyr   — NL parse + translate pipeline
-├── translate.cyr     — 40+ per-intent translators
 ├── commands.cyr      — command-line parsing, builtin detection
-├── approval.cyr      — risk assessment, human approval UI
+├── translate.cyr     — 40+ per-intent translators
+├── interpreter.cyr   — NL parse + translate pipeline
+├── approval.cyr      — risk assessment (the approval UI itself is NOT wired)
+├── audit.cyr         — JSON audit log + audit-record construction
+├── history.cyr       — command history (persistent, 0600 at open)
+└── run_agnos.cyr     — AGNOS launch path: exec, pipelines, redirect, bg jobs
+                        (agnos-only; its pure parsers are host-testable)
+
+src/                                PRESENT BUT NOT IN THE BINARY
 ├── security.cyr      — SecurityContext, privilege escalation
-├── session.cyr       — shell session lifecycle
-├── checkpoint.cyr    — destructive op rollback
-├── audit.cyr         — JSON audit log
-├── history.cyr       — command history (persistent, 0600 perms)
-├── aliases.cyr       — user-defined aliases
+├── session.cyr       — shell session lifecycle, cd/undo builtins
+├── checkpoint.cyr    — destructive-op rollback (blocked: 7 missing stdlib symbols)
 ├── completion.cyr    — tab completion engine
+├── prompt.cyr        — prompt rendering with git branch
 ├── config.cyr        — shell configuration
+├── aliases.cyr       — user-defined aliases
 ├── output.cyr        — output formatting (auto/json/table)
-├── prompt.cyr        — prompt rendering
-└── ui.cyr            — terminal UI helpers
+├── ui.cyr            — terminal UI helpers
+└── main.cyr          — legacy pre-port entry, never linked
 ```
+
+⚠ **The split matters.** Anything in the second group is not in the shipped
+binary, so features it implements — approval prompts, `undo`, sudo escalation,
+tab completion, the git-branch prompt — do not exist at runtime today. Wire-up
+slices are in `docs/development/roadmap.md` (Bucket 1).
 
 ## Documentation
 
@@ -91,13 +108,18 @@ src/
 
 See `docs/guides/security-model.md` for the deep dive. v1.0.0 closed 21 audit findings (5 critical, 7 high, 9 medium). v1.3.1 P(-1) added a 14-pattern CI lint shield (see `scripts/lint-cstr-str.sh` + ADR-006) that retroactively catches all seven Cyrius 4.5 → 5.10 stdlib-drift bug variants that surfaced over v1.2.0/v1.3.0.
 
-**Key protections:**
-- Command basename extraction (prevents `/usr/bin/dd` bypass of blocked list)
-- Path traversal blocked (`../` rejected)
-- Terminal escape sanitization (approval UI, git branch display)
-- Environment whitelist for privileged subprocesses (no LD_PRELOAD inheritance)
-- JSON-escaped audit log (no injection)
-- Sudo re-verified at escalation time (path + root ownership check)
+**Key protections that ship today:**
+- Command basename extraction (prevents `/usr/bin/dd` bypass of the blocked list)
+- Path traversal and shell metacharacters rejected before any launch
+- Argument validation on every ADMIN-level translator (`useradd`, `passwd`, `firewall_*`, git)
+- Audit log JSON-escaped **and UTF-8 validated**, so one crafted byte cannot make the log unparseable
+- State files opened `O_NOFOLLOW`, created 0600, audit-log mode re-asserted every open
+- `>` refuses to truncate the shell's own audit log or history
+
+⚠ **Documented elsewhere but NOT active in the binary** — the modules exist and
+are unwired: terminal-escape stripping in the approval UI and git-branch prompt,
+the child-process environment whitelist, and sudo re-verification at escalation
+time. `SECURITY.md` marks each one.
 
 ## Benchmarks
 

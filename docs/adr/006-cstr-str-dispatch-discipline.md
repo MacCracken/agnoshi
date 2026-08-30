@@ -40,7 +40,7 @@ Example from v1.3.0 slice 3:
 ```cyrius
 // sanitize.cyr — cstring-typed module
 fn is_safe_path(path)        { /* cstring path */ }
-fn safe_path_in_str(s)        { /* Str path; uses str_byte_at + strlen */ }
+fn safe_path_in_str(s)        { /* Str path; uses str_byte_at + str_len */ }
 fn is_safe_arg(s)             { /* cstring arg */ }
 fn safe_arg_in_str(s)         { /* Str arg */ }
 ```
@@ -56,7 +56,12 @@ Every syscall site goes through the `lib/syscalls_{x86_64,aarch64}_linux.cyr` wr
 Direct `syscall(SYS_*, ...)` is allowed only for syscalls that exist *and have the same calling convention* on both arches:
 
 - ✓ `syscall(SYS_READ, ...)` / `SYS_WRITE` / `SYS_CLOSE` / `SYS_EXIT` — both arches.
-- ✓ `syscall(SYS_GETUID|GETGID|GETEUID, ...)` — both arches.
+- ✓ `syscall(SYS_GETUID, ...)` — same number on both Linux arches.
+- ✗ `SYS_GETGID` / `SYS_GETEUID` — use the `sys_getuid` / `sys_geteuid`
+  wrappers instead: agnos folds euid onto uid and has no getgid at all, so a
+  bare syscall is undefined there. (Same trap as `SYS_CHDIR`/`SYS_GETCWD`,
+  which are undefined for the agnos target — a *compile* error, not a runtime
+  stub. 1.9.8.)
 - ✗ `SYS_OPEN` — x86-only, aarch64 has only `openat`. Use `sys_open` wrapper.
 - ✗ `SYS_CHMOD` — x86-only, aarch64 has only `fchmodat`. Use `sys_chmod` wrapper.
 - ✗ `SYS_STAT` — different struct layout per arch (`st_uid` at offset 28 on x86, 24 on aarch64). Use `sys_stat` wrapper; `#ifdef CYRIUS_ARCH_X86 / AARCH64` for field offsets.
@@ -95,7 +100,7 @@ Escape hatch: trailing `# lint:cstr-ok` comment on a specific line marks an inte
 
 ### Positive
 
-- **The bug class is shut.** Seven variants found over v1.2.0/v1.3.0 → zero new instances pass CI as of v1.3.1. The linter retroactively flags every historical surface.
+- **The catalogued variants are shut; the CLASS is not.** Seven variants found over v1.2.0/v1.3.0 → zero new instances pass CI as of v1.3.1. The linter retroactively flags every historical surface.
 - **Onboarding cost drops.** A new contributor seeing `safe_path_in_str` knows the function takes Str; seeing `safe_path` knows it takes cstring. No type ambiguity at the call site.
 - **aarch64 portability is mechanical, not aspirational.** Wrappers, not bare syscalls. Build-time enforcement.
 - **Static-buf semantics are explicit.** `str_clone` discipline is greppable and reviewable.

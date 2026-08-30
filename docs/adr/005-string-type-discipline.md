@@ -40,7 +40,8 @@ boundaries using `str_from(cstring) -> Str`.
 | Tests / benches | cstring literals → `str_from()` at call site | Convert at boundary |
 
 Two parallel helper sets live in `sanitize.cyr` when needed:
-- `has_path_traversal` (Str) and `has_path_traversal_cstr` (cstring)
+- `path_traversal_in_str` (Str — renamed under ADR-006 Rule 1) and
+  `has_path_traversal_cstr` (cstring)
 - `has_shell_metachars` (Str) and `has_shell_metachars_cstr` (cstring)
 - `cstr_starts_with` (cstring version of `str_starts_with`)
 

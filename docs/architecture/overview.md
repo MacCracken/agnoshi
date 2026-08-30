@@ -25,18 +25,28 @@ agnoshi
 │   ├── config.cyr          -- shell configuration
 │   ├── output.cyr          -- output formatting (auto/json/table)
 │   ├── prompt.cyr          -- prompt rendering
-│   └── ui.cyr              -- terminal UI helpers
+│   ├── ui.cyr              -- terminal UI helpers
+│   ├── statepaths.cyr      -- state-file paths ($HOME, or uid-qualified /tmp)
+│   ├── run_agnos.cyr       -- AGNOS launch path: exec, pipelines, redirect, bg jobs
+│   └── main.cyr            -- legacy pre-port entry, never linked
+│
+│   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, mode,
+│     permissions, intent, commands, translate, interpreter, approval, audit,
+│     history, run_agnos — plus agnsh.cyr itself.
+│     NOT COMPILED: security, session, checkpoint, completion, prompt, config,
+│     aliases, output, ui, main. Features they implement (approval prompts,
+│     undo, sudo, tab completion, git-branch prompt) do NOT exist at runtime.
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 506 unit tests
+│   ├── test_core.tcyr      -- 530 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
 │   ├── bench_core.bcyr     -- 11 criterion-style benchmarks
 │   └── test.sh             -- run all test suites
 ├── scripts/
 │   ├── install.sh          -- install to /usr/local/bin
 │   ├── uninstall.sh        -- clean removal
-│   ├── smoke-test.sh       -- 59 end-to-end binary tests
+│   ├── smoke-test.sh       -- 88 end-to-end binary tests
 │   └── bench-history.sh    -- benchmark CSV tracker
 └── docs/
     ├── agnsh.1             -- man page
@@ -52,7 +62,7 @@ agnoshi
 User Input (stdin)
     |
     v
-[Interpreter_parse]  --> Intent struct (tag + 8 fields)
+[Interpreter_parse]  --> Intent struct (64 bytes: tag + 7 fields)
     |                      |
     |                      v
     |                  [Interpreter_translate] --> Translation (cmd, args, perm, explanation)
@@ -60,21 +70,32 @@ User Input (stdin)
     |                                                 v
     |                                         [analyze_command_permission]
     |                                                 |
-    |                  Risky? ---> [ApprovalManager_request] --> user approves/denies
+    |                                                 v
+    |                                         [print_intent_result]
+    |                                           prints Intent / Command / Risk,
+    |                                           and "Approval required" or
+    |                                           "WARNING: BLOCKED" as a REPORT
     |                                                 |
     |                                                 v
-    |                                         [CheckpointManager_checkpoint]  (for rm/mv)
-    |                                                 |
-    |                                                 v
-    |                                         [execute_command] (fork+exec)
-    |                                                 |
-    |                                                 v
-    |                                         stdout/stderr
-    |                                                 |
-    |                                                 v
-    |                                         [AuditLogger_log] (JSON line)
+    |                                         [audit_one_shot] -> JSON line
+    |                                           result: proposed / needs_approval
+    |                                                   / blocked / rejected_safety
     |
-    +--> History.add() --> ~/.agnsh_history (mode 0600)
+    |   ⛔ THE NL PATH STOPS HERE. It does not execute. The approval loop
+    |      (ApprovalManager_request) and checkpointing (CheckpointManager) live
+    |      in src/session.cyr + src/checkpoint.cyr, NEITHER of which is in the
+    |      binary's include graph. Wiring exec in is roadmap Bucket 1 Slice 5.
+    |
+    +--> EXECUTION, a separate path entirely:
+    |      run /abs/path  -> [sh_run_program] -> host fork/exec, or AGNOS #37/#43
+    |      AGNOS only:    bareword /bin/<name>, cmd1 | cmd2, cmd > file, prog &
+    |                                                 |
+    |                                                 v
+    |                       [audit_exec] -> "launched" BEFORE the child starts,
+    |                       then executed / failed / error (with exit_code);
+    |                       a refusal logs "denied" with approved:0
+    |
+    +--> History.add() --> ~/.agnsh_history (0600 at open, O_NOFOLLOW)
 ```
 
 ## Type System
@@ -126,7 +147,7 @@ Every command is classified into one of six levels:
 - Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step. (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
 
 **Runtime:**
-- None (statically linked ELF, ~308 KB x86_64 / ~532 KB aarch64 on Cyrius 6.5.36; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
+- None (statically linked ELF, ~316 KB x86_64 / ~532 KB aarch64 on Cyrius 6.5.36; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 

@@ -8,9 +8,11 @@ Agnsh is primarily interactive but supports one-shot mode via `-c` for scripting
 agnsh -c "show running processes"
 ```
 
-Output goes to stdout. Exit code is 0 on successful parse (even if the
-classified command would fail to execute — classification and execution
-are separate concerns).
+The translation report goes to **stdout**; diagnostics and errors go to
+**stderr** (since 1.9.4), so `agnsh -c "..." 2>/dev/null | ...` gives you a clean
+stream. Exit code is 0 on a successful parse — including for a BLOCKED command,
+since classification and execution are separate concerns and nothing is executed
+on this path.
 
 ## Piping Input
 
@@ -37,6 +39,13 @@ jq -c 'select(.result == "blocked")' ~/.agnsh_audit.log
 
 # Timeline for a specific user
 jq -c 'select(.user == "alice")' ~/.agnsh_audit.log
+
+# Everything that actually RAN, with its exit status
+jq -c 'select(.result == "executed" or .result == "failed")
+       | {timestamp, action, exit_code}' ~/.agnsh_audit.log
+
+# A launch with no matching outcome = a program that hung or took the box down
+jq -rc 'select(.result == "launched") | .input' ~/.agnsh_audit.log
 ```
 
 ## Shell Integration
@@ -98,8 +107,17 @@ Intent: <tag>  Command: <cmd>
 
 For structured output, parse `~/.agnsh_audit.log` — every `-c` invocation
 appends one JSON line with `timestamp`, `user`, `mode`, `input`, `action`,
-`approved` (0/1), and `result` (one of `proposed`, `needs_approval`,
-`blocked`, `needs_llm`, `needs_exec`, `rejected_safety`). Downstream:
+`approved` (0/1), `result`, and `exit_code` (JSON `null` when the record
+describes something that never ran).
+
+`result` comes from one of two **disjoint** sets, so a single `select` separates
+"what the shell decided" from "what it did":
+
+- parse-time: `proposed`, `needs_approval`, `blocked`, `needs_llm`,
+  `needs_exec`, `rejected_safety`
+- exec-time (1.9.2): `launched`, `executed`, `failed`, `error`, `denied`
+
+Downstream:
 
 ```sh
 # Find all parser-rejected inputs in this session

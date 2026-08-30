@@ -71,12 +71,32 @@ fn translate_remove(intent) {
 }
 ```
 
-The CI lint shield (`scripts/lint-cstr-str.sh`) catches the bug class
-that surfaced 7 times over v1.2.0/v1.3.0 — including `is_safe_path(Str)`
-mismatches, `str_cat(cstring, *)` errors, and aarch64-broken raw syscalls.
-Run it locally before pushing: `sh scripts/lint-cstr-str.sh`.
+The CI lint shield (`scripts/lint-cstr-str.sh`) catches seven catalogued
+variants (categories A–G) of the Str/cstring bug class — `str_cat(cstring, *)`
+errors, cross-arch-broken raw syscalls, static-buffer escape, unchecked
+`sys_chmod`, `strlen` inside an `_in_str` body, and `str_data()` handed to a
+path-taking syscall. Run it before pushing: `sh scripts/lint-cstr-str.sh src`.
+
+⛔ **Do not treat a clean run as proof.** Categories A/B match only a *literal*
+argument, so a cstring carried in a **variable** is invisible to it. That blind
+spot let three separate defects ship green: the entire SHELL_COMMAND risk
+classifier (dead until 1.9.1), `audit_format_table` (1.9.8), and the parser
+storing cstring literals into Str-typed intent fields — which left
+`SERVICE_CONTROL` and `GIT_STASH` producing nothing but `echo` from v1.0 until
+it was caught by checking the documented examples against the binary.
+
+**The rule that actually protects you**: a value that came from the parser is a
+`Str`. Guard it with the `_in_str` twin (`safe_arg_in_str`, `safe_path_in_str`,
+`safe_commit_message_in_str`, `safe_branch_name_in_str`), and store it with
+`str_from(...)` if it is a literal. Passing a `Str` to a cstring-typed guard
+does not fail loudly — it reads the fat-pointer header.
 
 ## 4. Wire up dispatch
+
+⚠ **`Interpreter_translate` splits on tag value**: `tag <= 18` goes to
+`translate_core`, higher tags to `translate_extended`. Add your arm to the right
+one — a tag added to the wrong half is simply never reached, and the symptom is
+an intent that parses correctly and then translates to `echo`.
 
 Edit `src/interpreter.cyr` — add the tag to `translate_extended` (or
 `translate_core` if your tag is <= 18):
@@ -141,6 +161,11 @@ Should show:
 | Admin ops (apt, systemctl, kill, iptables) | `ADMIN` | Yes |
 | Destructive (rm -rf, dd, mkfs, chmod) | `BLOCKED` | Human only |
 
-Be conservative — if a command *could* cause state change, err toward
-higher permission. Users can always explicitly mode-switch to `human` for
-raw shell execution.
+Be conservative — if a command *could* cause state change, err toward higher
+permission.
+
+⚠ **There is no raw-shell escape hatch to fall back on.** `mode human` does not
+hand the user a shell; it adds a confirmation prompt before a program launch. A
+user who wants to run something directly uses `run /abs/path` (confirmed under
+`human`/`strict`), or, on AGNOS, a bareword `/bin/<name>`. So a too-strict
+classification is not softened by a mode — it just refuses.

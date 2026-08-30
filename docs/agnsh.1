@@ -1,4 +1,4 @@
-.TH AGNSH 1 "August 2026" "agnoshi 1.9.0" "User Commands"
+.TH AGNSH 1 "August 2026" "agnoshi 1.9.9" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -30,19 +30,35 @@ Show version and exit.
 .TP
 .B -h, --help
 Show usage and exit.
+.TP
+.B --mode \fINAME\fR
+Run under mode \fINAME\fR (auto, assist, human, strict). An unrecognised
+name is an error and agnsh exits non-zero \(em it is never silently
+downgraded to a more permissive mode.
 .SH MODES
+Every mode parses, classifies, reports risk and writes an audit record.
+What the mode changes is whether a program launch is confirmed first.
 .TP
 .B human
-Direct shell execution, no AI assistance.
+Confirms every program launch with a y/n prompt. It does not hand you a
+raw shell and does not disable classification.
 .TP
 .B assist
-AI parses intent, shows proposed command, requires approval for risky ops.
+Default. Parses and reports the proposed command and its risk. Program
+launches proceed without a confirmation prompt.
 .TP
 .B auto
-AI executes safe commands autonomously; escalated ops fall back to assist.
+As assist, without the assist framing. Program launches proceed without a
+confirmation prompt.
 .TP
 .B strict
-Every command requires explicit human approval.
+Most conservative: every program launch requires a y/n confirmation.
+.PP
+.B NOTE:
+a high-risk natural-language translation reports
+.I "Approval required"
+but is never executed \(em the natural-language path does not execute at
+all yet, so no approval prompt appears for it in any mode.
 .SH BUILTINS
 .TP
 .B help
@@ -60,8 +76,18 @@ Show command history.
 .B mode [NAME]
 Show or change operating mode (human, assist, auto, strict).
 .TP
-.B undo
-Undo last destructive operation (via checkpoint).
+.B run \fIPATH\fR
+Run a program from an absolute path. The only execution path on a Linux
+host; on AGNOS, bareword \fB/bin/\fIname\fR, two-stage pipelines
+.RB ( "cmd1 | cmd2" ),
+output redirection
+.RB ( "cmd > file" )
+and background jobs
+.RB ( "prog &" )
+also execute.
+.TP
+.B reboot, poweroff, halt
+Platform power control (AGNOS).
 .SH PERMISSIONS
 Every command is classified into one of six levels:
 .TP
@@ -88,12 +114,21 @@ Never allowed for AI (rm -rf, dd, mkfs, chmod, chown).
 Command history (mode 0600).
 .TP
 .I ~/.agnsh_audit.log
-Structured JSON audit log. Each line carries timestamp, user, mode,
-input, action, approved (0/1), and result (proposed / needs_approval /
-blocked / needs_llm / needs_exec / rejected_safety).
-.TP
-.I ~/.agnoshi/checkpoints/
-Backup files for undo (mode 0700).
+Structured JSON audit log, mode 0600, opened O_NOFOLLOW. Each line carries
+timestamp, user, mode, input, action, approved (0/1), result, and
+exit_code (JSON null when the record describes something that never ran).
+.I result
+comes from one of two disjoint sets \(em parse-time (proposed,
+needs_approval, blocked, needs_llm, needs_exec, rejected_safety) or
+exec-time (launched, executed, failed, error, denied).
+.PP
+When
+.B $HOME
+is unset, this and the history file fall back to
+.IR /tmp/agnsh_audit.log. "" uid
+and
+.IR /tmp/agnsh_history. "" uid
+\(em degraded operation, not a supported configuration.
 .SH AUTHOR
 Written for the AGNOS project.
 .SH SEE ALSO

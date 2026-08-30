@@ -10,8 +10,13 @@ and `LazyLock<HashMap>`) to classify natural language input. This consumed:
 - ~30 us per command parse
 - A `regex` crate dependency (~350 KB of machine code)
 
-Cyrius has no regex library. The stdlib provides `lib/regex.cyr` for
-**glob matching only** (not full regex).
+At v1.0 Cyrius had no regex engine — `lib/regex.cyr` was glob matching only.
+
+⚠ **That premise no longer holds**: the stdlib has since gained a real engine.
+This decision therefore stands on the reasons below — predictability,
+auditability, and no backtracking on untrusted input — **not** on the absence of
+a library. Re-open it on those merits if ever, not because a regex engine
+appeared.
 
 ## Decision
 

@@ -19,7 +19,7 @@ The install script places:
 ### Verify
 
 ```bash
-agnsh --version    # "agnoshi 1.3.1"
+agnsh --version    # "agnoshi 1.9.9"
 agnsh --help       # usage summary
 man agnsh          # full reference
 ```
@@ -31,9 +31,10 @@ current mode (default is `[ASSIST]`):
 
 ```
 $ agnsh
-agnoshi 1.3.1
+agnoshi 1.9.9
 AI-native shell -- type a natural-language command, or 'exit' to quit.
-Built-ins: help, version, mode, history, clear, exit
+Built-ins: help, version, mode, history, clear, exit, reboot, poweroff, halt
+Run: run /abs/path   (bareword / pipeline / redirect launching is AGNOS-only)
 
 [ASSIST] > show me all files in /tmp
 Intent: 0  Command: ls
@@ -74,14 +75,23 @@ The output carries `Intent: <tag>  Command: <cmd>` plus a `Risk: [LOW|MED|HIGH|C
 
 Agnsh has four modes:
 
-| Mode | Description | Approval |
-|------|-------------|----------|
-| `human` | Direct shell, no AI | Never (you just run commands) |
-| `assist` (default) | AI parses and suggests; risky ops ask | For SYSTEM_WRITE, ADMIN, BLOCKED |
-| `auto` | AI runs safe commands; escalates elevated ops | Only for elevated ops |
-| `strict` | Every command requires approval | Always |
+| Mode | Description | Confirms a program launch? |
+|------|-------------|----------------------------|
+| `human` | You drive; agnsh still classifies and audits | **Yes** |
+| `assist` (default) | Parses and reports the translation | No |
+| `auto` | Same, without the assist framing | No |
+| `strict` | Most conservative posture | **Yes** |
 
-Change mode interactively with `mode <name>`.
+Change mode interactively with `mode <name>`, or start with `--mode <name>`
+(an unrecognised name is an error — it will not silently fall back).
+
+⚠ **What the mode does NOT change today.** No mode hands you a raw shell, and no
+mode disables classification — every mode classifies, reports risk and writes an
+audit record. What `human` / `strict` add is a **confirmation prompt before a
+program launch** (`run`, or an AGNOS bareword). There is no interactive approval
+prompt for permission tiers yet: a SYSTEM_WRITE or ADMIN command prints
+`Approval required` and is not executed, because **the natural-language path
+does not execute at all** (see below).
 
 ## Permission Levels
 
@@ -102,21 +112,54 @@ BLOCKED — you can't hide dangerous commands behind absolute paths.
 Every action is recorded as a JSON line in `~/.agnsh_audit.log`:
 
 ```json
-{"timestamp":"2026-05-11T18:00:00Z","user":"user","mode":"AI-ASSIST","input":"show files","action":"ls","approved":1,"result":"proposed"}
+{"timestamp":"2026-08-30T00:05:41Z","user":"user","mode":"AI-ASSIST","input":"show me all files in /tmp","action":"ls","approved":1,"result":"proposed","exit_code":null}
 ```
 
-The `result` field is one of six labels — `proposed` (auto-runnable), `needs_approval` (HIGH-risk; SYSTEM_WRITE / ADMIN), `blocked` (BLOCKED-perm), `needs_llm` (question; LLM not yet wired), `needs_exec` (pipeline; exec not yet wired), `rejected_safety` (translator caught path traversal / shell metachars / leading-dash arg / invalid pid). Downstream filters can `jq 'select(.result == "rejected_safety")'` to find inputs that need rephrasing.
+`result` comes from one of **two disjoint sets**, so a single `jq select` can
+separate what the shell *decided* from what it *did*:
 
-All fields are JSON-escaped — crafted input cannot forge entries.
+**Parse-time** (nothing ran): `proposed` · `needs_approval` (HIGH-risk) ·
+`blocked` · `needs_llm` (question; no LLM wired) · `needs_exec` ·
+`rejected_safety` (a translator refused path traversal, shell metacharacters, a
+leading-dash argument, …).
 
-## Undo (v1.4.0)
+**Exec-time** (something ran, or was refused before running): `launched` ·
+`executed` · `failed` · `error` · `denied`. These carry `exit_code`; the
+parse-time ones carry `exit_code: null`.
 
-Destructive operations (`rm`, `mv`) are designed to be checkpointed to
-`~/.agnoshi/checkpoints/` before execution, with an `undo` builtin to
-restore the most recent operation. The `src/checkpoint.cyr` module is in
-place but the wire-up to actual exec lands in v1.4.0 — today's `-c` and
-interactive modes *propose* translations without executing them. The
-audit log shows `result:proposed` for runnable inputs to reflect that.
+A `launched` line is written **before** the child starts, so a program that hangs
+or takes the machine down still leaves a trace — a `launched` with no matching
+outcome is the signal.
+
+```bash
+jq 'select(.result == "executed" or .result == "failed")' ~/.agnsh_audit.log   # what ran
+jq 'select(.result == "rejected_safety")'                ~/.agnsh_audit.log   # what to rephrase
+```
+
+All fields are JSON-escaped and UTF-8 validated — crafted input cannot forge
+entries, nor make the log unparseable.
+
+## What actually executes
+
+⚠ **The natural-language path does not execute anything.** Typing
+`show me all files` prints the translation, its risk, and writes an audit
+record — it does not run `ls`. That is why runnable inputs log
+`result: proposed`.
+
+What *does* execute:
+
+- **Any host or AGNOS**: `run /abs/path` — validated, mode-gated, audited.
+- **AGNOS only**: bareword `/bin/<name> [args]`, two-stage pipelines
+  `cmd1 | cmd2`, output redirection `cmd > file`, and background jobs `prog &`.
+
+Wiring execution into the NL path is roadmap Bucket 1 Slice 5.
+
+## Undo — not available yet
+
+`src/checkpoint.cyr` implements checkpoint-before-destructive-op and an `undo`
+builtin, but it is **not compiled into the binary**: there is no `undo` command
+and no `~/.agnoshi/checkpoints/` directory. Do not rely on rollback. (Its wire-up
+is blocked on seven stdlib symbols that no longer exist.)
 
 ## Next Steps
 

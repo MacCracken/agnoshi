@@ -1,8 +1,28 @@
 # Server Hardening with agnsh
 
+> # ⛔ DO NOT DEPLOY THIS AS WRITTEN — IT DESCRIBES A SHELL THAT DOES NOT EXIST YET
+>
+> This guide was written against an intended design, not the shipped binary.
+> Verified against **1.9.9**, the following load-bearing claims below are FALSE:
+>
+> | The guide says | Reality |
+> |---|---|
+> | `agnsh --strict` as a login shell | **`--strict` is not a flag.** It prints usage and exits **0** — silently ignored. The flag is `--mode strict`. |
+> | strict mode = every command needs approval | **Nothing prompts and nothing is blocked.** A HIGH-risk command prints `Approval required` and continues. `ApprovalManager` is not in the binary. |
+> | `/etc/agnoshi/agnsh.conf` configures it | **No config file is read at all** — no path, no parser, nothing in `src/`. |
+> | Checkpoint makes destructive ops reversible | **No checkpointing, no `undo`.** `checkpoint.cyr` is not compiled. |
+> | Restricted mode blocks privilege escalation | **There is no privilege escalation to block** — nothing invokes `sudo`. |
+>
+> **What IS true and useful today**: permission classification with basename
+> extraction, argument/path sanitization, and a complete audit trail — every
+> classification, every launch, and every refusal, JSON-escaped and UTF-8
+> validated. That is a real auditing posture. It is **not** an enforcement one.
+>
+> Treat this document as a design target for the roadmap's Bucket 1 exec +
+> approval slices, not as deployment instructions.
+
 This guide demonstrates using agnsh as the default shell on a hardened
-Linux server. The combination of AI-assisted classification + forced
-approval workflow + full audit logging is well-suited to server ops.
+Linux server.
 
 ## Deployment Model
 
@@ -13,7 +33,8 @@ approval workflow + full audit logging is well-suited to server ops.
 /usr/local/bin/agnsh --strict   (set as login shell)
      |
      v
-Every command -> Intent classified -> Approval required -> Audit logged
+Every command -> Intent classified -> risk REPORTED -> Audit logged
+                                      (approval is not enforced; see the banner)
 ```
 
 ## Install as Login Shell
@@ -36,9 +57,12 @@ echo /usr/local/bin/agnsh | sudo tee -a /etc/shells
 sudo chsh -s /usr/local/bin/agnsh opsuser
 ```
 
-### 4. Configure strict mode by default
+### 4. Configure strict mode by default — ⛔ NOT IMPLEMENTED
 
-Create `/etc/agnoshi/agnsh.conf`:
+agnsh reads **no configuration file**. There is no `/etc/agnoshi/`, no parser,
+and no path lookup anywhere in `src/`. Mode is selected per-invocation with
+`--mode <name>` or interactively with `mode <name>`. The block below is a design
+sketch for a future `.agnshrc`-style config (roadmap, Bucket 2):
 
 ```toml
 default_mode = "strict"
@@ -70,9 +94,12 @@ cat > /etc/logrotate.d/agnoshi <<EOF
 EOF
 ```
 
-## Hardened Approval Workflow
+## Hardened Approval Workflow — ⚠ ASPIRATIONAL, NOT CURRENT
 
-In `strict` mode, **every** command requires explicit approval:
+⛔ The transcript below is a design sketch. In 1.9.8 `strict` mode adds a y/n
+confirmation **only before a program launch** (`run`, or an AGNOS bareword). A
+natural-language translation is reported and audited, never prompted, because
+the NL path does not execute. The intended behaviour:
 
 ```
 $ ssh opsuser@prod-server
@@ -123,7 +150,8 @@ sudo chmod 755 /usr/local/bin/agnsh-restricted
 sudo chsh -s /usr/local/bin/agnsh-restricted contractor
 ```
 
-Restricted mode:
+⚠ Restricted mode is **not implemented** — `SecurityContext` lives in
+`src/security.cyr`, which is not in the binary's include graph. Intended:
 - Forces `restricted = 1` in `SecurityContext`
 - Blocks all sudo/privilege escalation
 - Runs same classification, but ADMIN-level ops always deny
@@ -145,10 +173,10 @@ Correlate agnsh's JSON log with auditd's records for full forensic view.
 | Layer | Protection |
 |-------|-----------|
 | SSH | Key-based auth, fail2ban, port forward restrictions |
-| Login shell | agnsh in strict mode = every command needs approval |
-| Command classification | BLOCKED commands never execute, ADMIN requires approval |
+| Login shell | ⛔ **Not an enforcement boundary today** — risk is reported, not enforced |
+| Command classification | ✅ Accurate and useful: basename extraction, six tiers. BLOCKED is *reported*; the NL path executes nothing either way |
 | Input sanitization | No shell injection via crafted NL input |
-| Checkpoint | Destructive ops reversible for 100 operations |
+| ~~Checkpoint~~ | ⛔ **Not shipped** — no checkpointing, no `undo`, no rollback |
 | Audit | JSON log of every action, integrity-safe escaping |
 | auditd | Kernel-level double-audit |
 | Log shipping | Centralize to SIEM for offline review |

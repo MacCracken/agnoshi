@@ -41,9 +41,16 @@ cyrius capacity --check src/agnsh.cyr  # fn-table / code-size headroom (must be 
 cyrius vet src/agnsh.cyr               # include-graph audit
 cyrius fmt --check <file>              # fmt-drift gate (non-mutating; bare `cyrius fmt <file>` REWRITES IN PLACE)
 cyrius lint <file>                     # warn-as-error
+sh scripts/lint-cstr-str.sh src        # Str/cstring antipatterns (categories A-G)
+sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reachable)
 ```
 
-For the format / lint loop, the CI walks `src/*.cyr tests/*.tcyr tests/*.bcyr` and fails on any drift or `warn` line — auto-discover so new modules pick up the gate.
+⚠ `lint-cstr-str.sh` has a known blind spot: categories A/B match only a
+**literal** argument, so a cstring carried in a variable is invisible to it. A
+clean run is not proof — it was green through both the dead SHELL_COMMAND
+classifier (1.9.1) and the `audit_format_table` defect (1.9.8).
+
+For the format / lint loop, the CI walks `src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr` and fails on any drift or `warn` line — auto-discover so new modules pick up the gate.
 
 ## Code Standards
 
@@ -64,8 +71,20 @@ For the format / lint loop, the CI walks `src/*.cyr tests/*.tcyr tests/*.bcyr` a
   `str_len`, `str_trim`, `str_sub`. Don't mix.
 - **String literals** default to cstring; convert with `str_from()` if you
   need Str semantics.
+- ⛔ **Buffer sizing differs by scope — this has caused real overflows in both
+  directions.** Verified by direct probe against cyrius 6.5.36:
+  - **module-scope** `var X[N]` allocates **8N bytes** (N u64 slots)
+  - **function-scope** `var X[N]` allocates **N bytes**
+
+  Both spellings are load-bearing in this tree. Reading `var buf[256]` as
+  "256 slots" hid a 134-byte `uname` overflow in `prompt.cyr` (a `struct utsname`
+  is 390 bytes) and a 7-byte uid overflow in `statepaths.cyr`. Reading it the
+  other way makes `sh_env_blob[128]`, `rl_buf[512]`, `job_pid[8]` and
+  `job_cmd[128]` all *look* like overflows when every one of them is correct.
+  **Check the scope, and sweep the whole class rather than trusting a comment
+  next to one declaration.**
 - **Match statements**: always include a `_ =>` default case.
-- **Trailing commas**: Cyrius 5.10.x `cyrius build` rejects a trailing comma
+- **Trailing commas**: `cyrius build` (verified through 6.5.36) rejects a trailing comma
   after the last argument in a call (even though `cyrius fmt` preserves it on
   multi-line calls). Wrap long calls without a trailing comma after the last
   argument.
@@ -74,12 +93,20 @@ For the format / lint loop, the CI walks `src/*.cyr tests/*.tcyr tests/*.bcyr` a
 
 ### Security
 
-- Every user-controlled string that reaches a syscall must pass `is_safe_arg`
-  or `is_safe_path` from `sanitize.cyr`.
+- Every user-controlled string that reaches a syscall must pass a `sanitize.cyr`
+  validator **matching its type**. cstrings use `is_safe_arg` / `is_safe_path`;
+  values that came from the parser are `Str` and must use the `_in_str` twins
+  (`safe_arg_in_str`, `safe_path_in_str`, `safe_commit_message_in_str`,
+  `safe_branch_name_in_str`). Passing a `Str` to a cstring-typed guard does not
+  fail loudly — it reads the 16-byte fat-pointer header and silently passes or
+  fails at random. That exact mistake made the whole SHELL_COMMAND risk
+  classifier dead until 1.9.1.
 - Every new Intent needs a translator arm in `translate.cyr` and a handler
   in `Interpreter_translate`.
-- Every destructive operation (rm/mv) must go through `CheckpointManager`
-  before execution.
+- ⚠ Forward-looking, not current: destructive operations will route through
+  `CheckpointManager` once `src/checkpoint.cyr` is in the binary's include graph.
+  It is not today, so there is no rollback — do not write code or docs that
+  assume there is.
 - Every new command type must be classified in `permissions.cyr`.
 
 ### Documentation

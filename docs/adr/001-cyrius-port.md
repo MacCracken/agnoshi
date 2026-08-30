@@ -33,9 +33,10 @@ Port the entire core shell to Cyrius. Keep the Rust implementation in
   keyword parsing, synchronous I/O, manual JSON.
 - **Language maturity**: Cyrius v4.3 is newer than Rust; some features
   (generics, operator overloading, full async) not yet available.
-- **Consumer app translators** (17 domains) deferred — tagged in the Intent
-  enum but not implemented. Will be added when those downstream packages
-  are also ported.
+- **Consumer app translators** (17 domains) deferred. ⚠ Correction: the tags
+  were pruned OUT of the Intent enum at v1.0.0 (211 → 44 entries), so nothing is
+  stubbed in-tree — each is a full implementation, not a wire-up. Will be added
+  when those downstream packages land a public surface.
 
 ### Neutral
 - **String types**: Cyrius has two string conventions (cstring via
@@ -55,5 +56,6 @@ Port the entire core shell to Cyrius. Keep the Rust implementation in
 
 ## References
 - `benchmarks-rust-v-cyrius.md` — head-to-head performance
-- `rust-old/` — preserved Rust implementation
+- `rust-old/` — preserved Rust implementation, **removed at v1.3.2** once the
+  port closed; recoverable from git history
 - `docs/audit/2026-04-13.md` — security audit of the ported code

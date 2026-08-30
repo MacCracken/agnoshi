@@ -80,13 +80,21 @@ split and stored in `intent.vec1`.
 
 ## Questions
 
-`what is the cwd` classifies as QUESTION (tag 42) — handed off to the LLM
-if configured, otherwise shows a message.
+`what is the cwd` classifies as QUESTION (tag 42). ⚠ **There is no LLM
+integration in the binary** — no `src/llm.cyr`, and no network stack compiled in
+— so this always prints a placeholder and logs `result: needs_llm`. Nothing is
+"handed off"; there is nothing to hand it to.
 
 ## Fallthrough
 
-Anything not matched falls to SHELL_COMMAND (tag 15) — runs as a raw shell
-command with classification via `analyze_command_permission`.
+Anything not matched falls to SHELL_COMMAND (tag 15) and is classified by
+`analyze_command_permission` — which extracts the basename first, so
+`/usr/bin/dd` is still BLOCKED.
+
+⚠ **It is classified, not run.** The natural-language path does not execute
+anything: it reports the translation and its risk, and writes an audit record.
+The only execution paths are `run /abs/path` (any target) and, on AGNOS,
+bareword `/bin/<name>`, `cmd1 | cmd2`, `cmd > file` and `prog &`.
 
 ## Try It
 

@@ -35,7 +35,8 @@ agnoshi (AI natural language shell, Cyrius)
 1. `cyrius deps` to repopulate `./lib/` from the pinned stdlib snapshot
 2. Test + benchmark sweep of existing code
 3. Cleanliness gates (match CI):
-   - `cyrius check src/*.cyr` (syntax)
+   - `cyrius check src/agnsh.cyr` (syntax — walk from the ENTRY; modules do not
+     declare their own includes, so a per-file check trips on cross-module refs)
    - `cyrius fmt --check <file>` (fmt-drift gate — non-mutating; bare `cyrius fmt <file>` rewrites in place)
    - `cyrius lint <file>` — warn-as-error
    - `cyrius vet src/agnsh.cyr` (include-graph audit)
@@ -61,7 +62,7 @@ agnoshi (AI natural language shell, Cyrius)
 8. Run benchmarks again — prove the wins
 9. If audit heavy → return to step 5
 10. Documentation — update CHANGELOG, roadmap, doc-health, ADRs for design decisions, guides for new API surface, verify recipe version in zugot
-11. Version sync — `VERSION` is the only file that gets edited; `cyrius.cyml` pulls it via `${file:VERSION}`; the zugot recipe is bumped separately
+11. Version sync — bump with `sh scripts/version-bump.sh <new>`, which edits `VERSION` **and** syncs the `var VERSION_STR = "agnoshi X.Y.Z"` literal in `src/agnsh.cyr` that the running binary prints. `cyrius.cyml` pulls the version via `${file:VERSION}`; the zugot recipe is bumped separately. CI fails if the three disagree.
 12. Return to step 1
 
 ### Task Sizing
@@ -86,7 +87,7 @@ agnoshi (AI natural language shell, Cyrius)
 - **Single source of truth for version** — `VERSION` file; `cyrius.cyml` pulls via `${file:VERSION}`.
 - **Pin the toolchain in `cyrius.cyml`** — CI reads `cyrius = "..."` from the manifest.
 - **`./lib/` is gitignored** — `cyrius deps` repopulates from the pinned snapshot; never check stdlib stubs into the tree.
-- **Security first** — all commands go through approval workflows and sandbox execution.
+- **Security first** — every command is classified, sanitized and audited. ⚠ Note what does NOT exist yet: there is no sandbox, no privilege escalation, and no interactive approval prompt (`approval.cyr`, `security.cyr` and `session.cyr` are not in the binary's include graph). Do not describe those as shipped.
 
 ## DO NOT
 

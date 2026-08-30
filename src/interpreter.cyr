@@ -309,11 +309,18 @@ fn parse_system_ops(trimmed) {
     }
     if (input_has_word(trimmed, "service") == 1 || input_has_word(trimmed, "systemctl") == 1) {
         var intent = Intent_new(IntentTag.SERVICE_CONTROL);
-        if (input_has_word(trimmed, "start") == 1) { store64(intent + 8, "start"); }
-        elif (input_has_word(trimmed, "stop") == 1) { store64(intent + 8, "stop"); }
-        elif (input_has_word(trimmed, "restart") == 1) { store64(intent + 8, "restart"); }
-        elif (input_has_word(trimmed, "status") == 1) { store64(intent + 8, "status"); }
-        else { store64(intent + 8, "list"); }
+        # ⛔ str_from, NOT a bare literal. `intent + 8` is read as a Str by every
+        # consumer (safe_arg_in_str, str_len, the translators). Storing a raw
+        # cstring here made SERVICE_CONTROL and GIT_STASH **entirely dead**: the
+        # field read back as garbage/empty, every translator refused it, and
+        # `start service nginx` / `git stash` emitted `echo` for the shell's whole
+        # history. Same bug class as the 1.9.1 SHELL_COMMAND classifier, on the
+        # producing side this time.
+        if (input_has_word(trimmed, "start") == 1) { store64(intent + 8, str_from("start")); }
+        elif (input_has_word(trimmed, "stop") == 1) { store64(intent + 8, str_from("stop")); }
+        elif (input_has_word(trimmed, "restart") == 1) { store64(intent + 8, str_from("restart")); }
+        elif (input_has_word(trimmed, "status") == 1) { store64(intent + 8, str_from("status")); }
+        else { store64(intent + 8, str_from("list")); }
         store64(intent + 16, extract_last_arg(trimmed));
         return intent;
     }
@@ -361,10 +368,10 @@ fn parse_git_ops(trimmed) {
     }
     if (input_has_word(trimmed, "stash") == 1) {
         var intent = Intent_new(IntentTag.GIT_STASH);
-        if (input_has_word(trimmed, "pop") == 1) { store64(intent + 8, "pop"); }
-        elif (input_has_word(trimmed, "list") == 1) { store64(intent + 8, "list"); }
-        elif (input_has_word(trimmed, "apply") == 1) { store64(intent + 8, "apply"); }
-        else { store64(intent + 8, "push"); }
+        if (input_has_word(trimmed, "pop") == 1) { store64(intent + 8, str_from("pop")); }
+        elif (input_has_word(trimmed, "list") == 1) { store64(intent + 8, str_from("list")); }
+        elif (input_has_word(trimmed, "apply") == 1) { store64(intent + 8, str_from("apply")); }
+        else { store64(intent + 8, str_from("push")); }
         return intent;
     }
     return 0;
@@ -498,7 +505,7 @@ fn parse_service_query(trimmed) {
         }
         if (name != 0) {
             var intent = Intent_new(IntentTag.SERVICE_CONTROL);
-            store64(intent + 8, "status");
+            store64(intent + 8, str_from("status"));
             store64(intent + 16, name);
             return intent;
         }
@@ -510,7 +517,7 @@ fn parse_service_query(trimmed) {
         var name = extract_after(trimmed, "status of ");
         if (name != 0) {
             var intent = Intent_new(IntentTag.SERVICE_CONTROL);
-            store64(intent + 8, "status");
+            store64(intent + 8, str_from("status"));
             store64(intent + 16, name);
             return intent;
         }
