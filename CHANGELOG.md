@@ -4,7 +4,59 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.9.10] - 2026-08-29 — the config, the memory answer, and the seams that made the audit log testable
+## [1.9.11] - 2026-09-08 — the power builtins get an audit trail, an arch guard, and a way to be tested
+
+Closes all six items of agnos issue `2026-09-03-agnoshi-power-builtins-history-audit-archguard`.
+No behaviour change on AGNOS beyond the records; the host build changes from silently-inert to an
+explicit refusal.
+
+### Fixed
+
+- **The three power builtins discarded the session's command history.** Each arm called
+  `syscall(13, ...)` then `continue`, and the only reachable `CommandHistory_save` is *after* the
+  interactive loop — and the syscall does not return on success. Every command typed in a session
+  ended by `reboot`/`poweroff`/`halt` was lost. Now saved before the call.
+- **They wrote no audit record at all** — the three verbs that take the machine down were the only
+  ones leaving no trail, while `run_agnos.cyr` already emits a `launched` record precisely because a
+  call that cannot report its own outcome needs one. Now `audit_exec_ctx(verb, "launched", …)`
+  **before** the history save: the audit line is a single append, the history save rewrites a file.
+- ⛔ **The three raw `syscall(13, ...)` sites were NOT arch-guarded**, so a host build emitted raw
+  Linux syscall 13 — `rt_sigaction` — with the return discarded. Inert **by accident**, not design.
+  Now `#ifdef CYRIUS_TARGET_AGNOS`, with the host arm printing `power control is AGNOS-only`.
+  **Verified: the host binary now carries zero of those three call sites; the agnos target keeps all
+  three.**
+- **The verbs were advertised on the host build too** — both the startup banner and `help` listed
+  `reboot, poweroff, halt` outside any guard, telling a host user to type something that did nothing.
+  Same fix the kriya barewords already had.
+- ⛔ **Corrected a stale comment that pointed at a genuine hazard.** It said "a cyrius issue is filed
+  to widen the wrapper; until it lands this is the correct call shape". The wrapper landed at cyrius
+  **6.4.68** — but the migration it invites is **dangerous**: `sys_reboot` has *different arity per
+  target*. `lib/syscalls_linux_common.cyr` is `sys_reboot(cmd)`, hardcoding the REAL
+  `LINUX_REBOOT_MAGIC1/2`; the agnos peer is `sys_reboot(magic1, magic2, cmd, arg)`. A 4-arg call
+  cannot compile on host, and "fixing" that by adopting the 1-arg form would fire genuine
+  `0xFEE1DEAD` at Linux `SYS_REBOOT` and **actually reboot a developer's workstation** under
+  `CAP_SYS_BOOT`. The tidier-looking migration is the dangerous one; the comment now says so.
+
+### Added
+
+- ⭐ **`agnsh -c "poweroff"` (and `reboot` / `halt`) now work.** The power verbs existed only in
+  `interactive_loop` and were absent from the `-c` one-shot path, so a scripted invocation fell
+  through to `print_intent_result` and was not a power operation. This is also why no smoke could
+  ever drive the agnsh half of the shutdown path — there was no non-interactive way to reach it.
+  ⚠ No history save on this path (a one-shot has no session); the audit record still happens.
+
+### Not changed — needs an operator ruling
+
+- **Whether a literally-typed power verb should require a mode confirm** the way `run /bin/foo` does.
+  The builtins are matched by exact `streq` *before* any classification, so a typed `poweroff` never
+  reaches `is_admin_command` — only the NL/approval paths classify it. Both readings are defensible
+  and this is policy, not a defect. ⛔ Note the agnos-side issue text originally called
+  `is_privileged_command` "dead code" and implied deleting it — **that symbol never existed**; the
+  real classifier is `is_admin_command` and it is fully live. Deleting its power entries would have
+  been a genuine safety regression. Corrected upstream.
+
+## [1.9.10] - 2026-08-29
+ — the config, the memory answer, and the seams that made the audit log testable
 
 Three roadmap slices in one cut (1.9.10 + 1.9.11). The seams were the point: making six
 security-log writers assertable immediately found **two real defects that no existing test could

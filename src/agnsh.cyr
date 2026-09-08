@@ -45,7 +45,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.9.10";
+var VERSION_STR = "agnoshi 1.9.11";
 
 fn print_version() {
     println(VERSION_STR);
@@ -291,11 +291,40 @@ fn read_line(buf, maxlen) {
     return i;
 }
 
+#ifdef CYRIUS_TARGET_AGNOS
+# Platform power control — ONE helper so the three verbs cannot drift apart.
+#
+# ⛔ THE AUDIT RECORD AND THE HISTORY SAVE MUST HAPPEN BEFORE THE SYSCALL, because the syscall does
+# NOT RETURN on success. Until 1.9.11 neither happened: each arm called syscall(13,...) then
+# `continue`, and the only reachable CommandHistory_save is after the loop — so every command typed
+# in a session ended by a power verb was LOST, and the three verbs that take the machine down were
+# the only ones that left no audit trail at all. run_agnos.cyr already writes the "launched" record
+# for exactly this reason, and says so: an unmatched "launched" IS the signal for a call that cannot
+# report its own outcome.
+# ⚠ AUDIT FIRST, THEN HISTORY: the audit line is one open/write/close append and is the more
+# important record; the history save rewrites a whole file and is likelier to be the one that loses
+# a race with the platform going down.
+fn sh_power_verb(history, typed_cstr, cmd) {
+    audit_exec_ctx(typed_cstr, "launched", AUDIT_NO_EXIT);
+    CommandHistory_add(history, typed_cstr);
+    CommandHistory_save(history);
+    syscall(13, 0x50575231, 0x50575232, cmd, 0);
+    return 0;
+}
+#endif
+
 fn interactive_loop() {
     var rl_failed = 0;
     println(VERSION_STR);
     println("AI-native shell -- type a natural-language command, or 'exit' to quit.");
+    # 1.9.11 — the power verbs are AGNOS-only (see the guard in the loop), so do not advertise
+    # them on a host build. Same fix the kriya barewords already got one screen below.
+    #ifdef CYRIUS_TARGET_AGNOS
     println("Built-ins: help, version, mode, history, clear, exit, reboot, poweroff, halt");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    println("Built-ins: help, version, mode, history, clear, exit");
+    #endif
     #ifdef CYRIUS_TARGET_AGNOS
     println("Files: cp mv rm ls mkdir rmdir touch echo wc find grep (kriya) - owl FILE (cat)   Run: run");
     #endif
@@ -337,29 +366,46 @@ fn interactive_loop() {
 
         if (streq(&buf, "exit") == 1) { break; }
         if (streq(&buf, "quit") == 1) { break; }
-        # Platform power control. Calls agnos syscall #13 by RAW NUMBER rather than
-        # cyrius's sys_reboot(): that wrapper is nullary, and #13 now takes
-        # (magic1, magic2, cmd, arg). The magic pair is the kernel's arming token —
-        # it exists precisely so the stale nullary callers, which deliver garbage in
-        # the argument registers, fail closed instead of resetting the machine. A
-        # cyrius issue is filed to widen the wrapper; until it lands this is the
-        # correct call shape. 0x50575231/0x50575232 = "PWR1"/"PWR2"; cmd 3 = reboot,
-        # 2 = power off, 1 = halt. None of these returns when it succeeds.
+        # Platform power control. Calls agnos syscall #13 by RAW NUMBER. 0x50575231/0x50575232 =
+        # "PWR1"/"PWR2" — the kernel's arming token, which exists so stale nullary callers that
+        # deliver garbage in the argument registers fail closed instead of resetting the machine.
+        # cmd 3 = reboot, 2 = power off, 1 = halt. None of these returns when it succeeds.
+        #
+        # ⛔⛔ 1.9.11 — ARCH-GUARDED. These three were OUTSIDE any #ifdef, so a HOST build emitted a
+        # raw Linux syscall 13, which is rt_sigaction. The return was discarded, so it failed
+        # silently — inert BY ACCIDENT, not by design. Decision O5 in agnos's userland-ABI doc names
+        # this exact shape.
+        # ⛔ AND DO NOT "TIDY" THIS INTO cyrius's sys_reboot(). Its ARITY DIFFERS PER TARGET:
+        # lib/syscalls_linux_common.cyr is `sys_reboot(cmd)` (1 arg, hardcoding the REAL
+        # LINUX_REBOOT_MAGIC1/2), while lib/syscalls_x86_64_agnos.cyr is
+        # `sys_reboot(magic1, magic2, cmd, arg)`. A 4-arg call cannot compile on host; "fixing" that
+        # by adopting the host's 1-arg form would carry genuine 0xFEE1DEAD against Linux SYS_REBOOT
+        # and ACTUALLY REBOOT A DEVELOPER'S WORKSTATION under CAP_SYS_BOOT. The tidier-looking
+        # migration is the dangerous one. (The old comment here said a cyrius issue was filed to
+        # widen the wrapper "until it lands" — it landed at 6.4.68; that is not the blocker.)
+        #ifdef CYRIUS_TARGET_AGNOS
         if (streq(&buf, "reboot") == 1) {
-            syscall(13, 0x50575231, 0x50575232, 3, 0);
+            sh_power_verb(history, &buf, 3);
             println("reboot: platform did not reset");
             continue;
         }
         if (streq(&buf, "poweroff") == 1) {
-            syscall(13, 0x50575231, 0x50575232, 2, 0);
+            sh_power_verb(history, &buf, 2);
             println("poweroff: platform did not power off");
             continue;
         }
         if (streq(&buf, "halt") == 1) {
-            syscall(13, 0x50575231, 0x50575232, 1, 0);
+            sh_power_verb(history, &buf, 1);
             println("halt: platform did not halt");
             continue;
         }
+        #endif
+        #ifndef CYRIUS_TARGET_AGNOS
+        if (streq(&buf, "reboot") == 1 || streq(&buf, "poweroff") == 1 || streq(&buf, "halt") == 1) {
+            println("power control is AGNOS-only");
+            continue;
+        }
+        #endif
         if (streq(&buf, "history") == 1) {
             var recent = CommandHistory_get_recent(history, 20);
             var rcount = vec_len(recent);
@@ -385,7 +431,9 @@ fn interactive_loop() {
             println("  history                              show last 20 commands");
             println("  clear                                clear screen");
             println("  exit, quit                           leave shell (saves history)");
+            #ifdef CYRIUS_TARGET_AGNOS
             println("  reboot, poweroff, halt               platform power control");
+            #endif
             # The kriya/owl bareword launchers live in run_agnos.cyr, which is
             # entirely #ifdef CYRIUS_TARGET_AGNOS. Advertising them on the host
             # build told the user to type `ls -la` and then silently did nothing
@@ -580,6 +628,39 @@ fn main() {
         }
         var c_cmd = argv(c_idx + 1);
         audit_set_context(c_cmd, mode_display(c_mode));
+        # ⭐ 1.9.11 — THE POWER VERBS ARE NOW SCRIPTABLE. They existed ONLY in interactive_loop, so
+        # `agnsh -c "poweroff"` fell through to print_intent_result and was not a power operation at
+        # all. That is also why no smoke could ever drive the agnsh half of the shutdown path: there
+        # was no non-interactive way to reach it.
+        # ⚠ NO HISTORY SAVE HERE, deliberately: -c is a single command with no session to preserve.
+        # The audit record still happens, and for a call that cannot report its own outcome that is
+        # the half that matters.
+        #ifdef CYRIUS_TARGET_AGNOS
+        if (streq(c_cmd, "reboot") == 1) {
+            audit_exec_ctx(c_cmd, "launched", AUDIT_NO_EXIT);
+            syscall(13, 0x50575231, 0x50575232, 3, 0);
+            eprintln_cstr("reboot: platform did not reset");
+            return 1;
+        }
+        if (streq(c_cmd, "poweroff") == 1) {
+            audit_exec_ctx(c_cmd, "launched", AUDIT_NO_EXIT);
+            syscall(13, 0x50575231, 0x50575232, 2, 0);
+            eprintln_cstr("poweroff: platform did not power off");
+            return 1;
+        }
+        if (streq(c_cmd, "halt") == 1) {
+            audit_exec_ctx(c_cmd, "launched", AUDIT_NO_EXIT);
+            syscall(13, 0x50575231, 0x50575232, 1, 0);
+            eprintln_cstr("halt: platform did not halt");
+            return 1;
+        }
+        #endif
+        #ifndef CYRIUS_TARGET_AGNOS
+        if (streq(c_cmd, "reboot") == 1 || streq(c_cmd, "poweroff") == 1 || streq(c_cmd, "halt") == 1) {
+            eprintln_cstr("power control is AGNOS-only");
+            return 1;
+        }
+        #endif
         # File verbs are delegated to /bin/kriya via the bareword launcher below
         # (1.5.0); `cat` -> owl nudge (no /bin/cat; owl is AGNOS's cat).
         if (sh_cat_owl_warning(c_cmd) == 1) { return 0; }
