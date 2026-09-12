@@ -237,9 +237,11 @@ fn sh_run_program(path, mode) {
     #endif
     # host: the lib fork/exec path (PATH-resolved run()), unchanged.
     #ifndef CYRIUS_TARGET_AGNOS
-    var r = run(path, 0, 0);
-    if (is_ok(r) == 1) {
-        var code = result_unwrap(r);
+    # Result is a VALUE FORM pair (tag, payload) since cyrius 6.6.0 — bind BOTH
+    # halves. `var r = run(...)` binds the tag alone and drops the exit code.
+    var rtag, rval = run(path, 0, 0);
+    if (is_ok(rtag) == 1) {
+        var code = result_unwrap(rtag, rval);
         if (code != 0) {
             eprint_str(str_from("run: exit "));
             eprint_line(str_from_int(code));

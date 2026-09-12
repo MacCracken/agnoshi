@@ -1453,6 +1453,15 @@ channel prints its `[ASSIST] >` prompt, takes a command typed into the host's en
 
 ## [Unreleased]
 
+## [1.9.12] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.5.36` → `6.6.2`.** Migrated to the `Result` value form:
+  1 first-party file(s) changed. Every surface re-verified — build, tests, and any
+  bench/fuzz/distlib target the repo ships.
+
+
 ## [1.8.6] — 2026-08-02 — a foreground program no longer freezes the scheduler
 
 ### Fixed — ⛔ `execwait #37` MADE EVERY FOREGROUND PROGRAM EXCLUSIVE, WHICH BROKE THE DESKTOP
