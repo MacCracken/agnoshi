@@ -13,6 +13,23 @@ Items leave this file when they ship; they are not marked done and kept.
 
 ---
 
+## Moving the cyrius pin to 6.6.5
+
+Nothing breaks at this bump. cyrius 6.6.5 is not tagged yet, and nothing below can land against the
+pin until it is. The pin is 6.6.2 today, and this section lists only what 6.6.5 itself changes.
+
+- [ ] `scripts/check-fmt.sh` can be deleted. It exists because `cyrius fmt` ignored every file after
+      the first; from 6.6.5 `fmt` takes 1..N files and checks each one. Replace the *Format check*
+      step in `.github/workflows/ci.yml` (it runs the script, and its comment explains why) with
+      `cyrius fmt --check src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr`, the script's own globs.
+      The script's `--selftest` already prints a NOTE when the multi-file form starts reporting
+      drift. See the cyrius CHANGELOG [6.6.5] entry "The whole CLI took flags as file names, dropped
+      flags written after the operand, and dropped extra operands".
+- [ ] At the bump, re-run `cyrius deps` — the aarch64 syscall peer moved SYS_UNLINKAT 35 → 263, so
+      an un-re-vendored peer's sys_unlink would run nanosleep.
+
+---
+
 ## v1.9.x hardening arc — remaining slices
 
 The numbered slices **1.9.1 – 1.9.10 have shipped** (see `CHANGELOG.md`); they are gone from this
@@ -483,3 +500,44 @@ No scoped work yet. Candidates that would justify a major cut:
 
 **Re-evaluate when Bucket 1 closes.** This re-evaluation is itself outstanding work — it has been
 owed since the trigger it originally named fired back in May 2026.
+
+## Moving the cyrius pin to 6.6.6
+
+Current pin: `cyrius = "6.6.2"` (`cyrius.cyml`).
+
+agnoshi appends to two logs — the command history at `src/history.cyr:240` and the audit trail
+at `src/audit.cyr:102`, both through `file_open` with the named `OPEN_WRONLY | OPEN_CREAT |
+OPEN_APPEND` constants that `src/sanitize.cyr` splits per target. That is precisely the shape
+6.6.6 fixes on Windows, where a PE build's `O_APPEND` overwrote from offset 0 instead of
+appending. **agnoshi has no PE target**, so it was never exposed: `src/` declares
+`CYRIUS_TARGET_AGNOS` and `CYRIUS_TARGET_MACOS` only, CI is `ubuntu-latest` throughout, and
+`release.yml` ships x86_64 + aarch64 with no `windows-*` runner. If a Windows target is ever
+added, 6.6.6 is the floor and these two logs are the first thing to re-verify.
+
+Worth noting alongside: `src/sanitize.cyr:22-26` already records the *macOS* version of this
+same class of bug — the hardcoded `1089` that decodes on Darwin as
+`O_WRONLY|O_ASYNC|O_TRUNC`, truncating the audit log on every open. That was fixed here by
+splitting the constants per target. The Windows bug 6.6.6 fixes is the same failure one layer
+down, in the compiler rather than in the caller, which is why no source change is needed for
+it: agnoshi was already passing the right flags, and the PE backend was ignoring them.
+
+Otherwise this is a plain pin bump. What was checked, and found empty:
+
+- No other `O_APPEND` / `O_TRUNC` sites outside the vendored `lib/`; `src/history.cyr:234-239`
+  is prose, and the remaining opens are read-only (`src/history.cyr:44`, `:62`,
+  `src/run_agnos.cyr:558`, `:790`).
+- None of item 3's new compile errors have sites: no `async fn`, no `operator` fn, no
+  `ret2`/`rethi`, no SIMD intrinsics, and no struct- or vector-typed parameter or `var`
+  declaration anywhere in `src/`. The 19 structs (`CommandHistory`, `Session`, `Intent`,
+  `AuditEntry`, `AuditLogger`, …) are accessor-style over heap offsets and are never passed or
+  assigned by value, so item 5's by-value-struct-param deep copy is a no-op too.
+- No top-level bare `{` blocks (item 4), no duplicated global declarations (item 6), no
+  `regression_*` call sites of its own (item 8 — the two `include` hits are
+  `lib/regression.cyr` pulling `lib/regression_agnos.cyr`), and no own `vec_*` function
+  colliding with the 14 names `lib/vec.cyr` exports, so the new transitive
+  `lib/assert.cyr` → `lib/vec.cyr` include is inert (item 9).
+- 16 `file_exists` / `file_read_all` call sites gain nothing here — that change is PE-side.
+
+After bumping, verify: the full `.tcyr` suite passes per-file, and run the shell long enough
+to write several history and audit records across two sessions, confirming both files
+accumulate rather than restart.
