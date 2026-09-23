@@ -84,7 +84,7 @@ User Input (stdin)
     |   ⛔ THE NL PATH STOPS HERE. It does not execute. The approval loop
     |      (ApprovalManager_request) and checkpointing (CheckpointManager) live
     |      in src/session.cyr + src/checkpoint.cyr, NEITHER of which is in the
-    |      binary's include graph. Wiring exec in is roadmap Bucket 1 Slice 5.
+    |      binary's include graph. Wiring exec in is roadmap 1.10.x — NL exec.
     |
     +--> EXECUTION, a separate path entirely:
     |      run /abs/path  -> [sh_run_program] -> host fork/exec, or AGNOS #37/#43
@@ -143,11 +143,11 @@ Every command is classified into one of six levels:
 ## Dependencies
 
 **Build-time:**
-- Cyrius 6.5.36 (pinned in `cyrius.cyml`: `cyrius = "6.5.36"`)
-- Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step. (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
+- Cyrius 6.6.6 (pinned in `cyrius.cyml`: `cyrius = "6.6.6"`)
+- Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step (38 files at 6.6.6 on a clean checkout; it does not delete files an earlier pin vendored, so clear `./lib/` first after a pin bump). (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
 
 **Runtime:**
-- None (statically linked ELF, ~316 KB x86_64 / ~532 KB aarch64 on Cyrius 6.5.36; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (approval, audit, history, security modules wired in), not from new agnoshi-side bloat)
+- None (statically linked ELF, ~197 KB x86_64 (DCE) / ~661 KB aarch64 on Cyrius 6.6.6; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so ~347 KB of the aarch64 figure is unreachable code)
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 

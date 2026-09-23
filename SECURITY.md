@@ -44,7 +44,7 @@ natural-language path does not execute at all yet (see *Execution*, below).
 approval display (`print_str_safe`, the H5 mitigation) live in
 `src/approval.cyr` / `src/sanitize.cyr` but their only caller is
 `src/session.cyr`, which is **not in `src/agnsh.cyr`'s include graph**. Wiring
-them in is Bucket 1 Slice 6 on the roadmap.
+them in is roadmap 1.10.x — approval-gated exec.
 
 ### Execution — what can actually run
 
@@ -66,8 +66,8 @@ All user-controlled strings flowing to syscalls must pass validation:
 
 `src/checkpoint.cyr` implements backup-before-destructive-op and `undo`, but it
 is **not in the binary's include graph** and there is no `undo` builtin. Do not
-rely on any rollback guarantee. (Its wire-up is blocked on seven stdlib symbols
-that no longer exist — Bucket 1 Slice 4 on the roadmap.)
+rely on any rollback guarantee. (It calls seven stdlib helpers that no longer
+exist, so its wire-up is a re-implementation — roadmap 1.10.x — checkpointing.)
 
 ### Audit log
 Every action is logged as a JSON line to `~/.agnsh_audit.log`. All fields

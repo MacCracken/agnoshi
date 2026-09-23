@@ -93,7 +93,7 @@ writes the action string straight to the terminal with no stripping. A path
 containing an ESC byte can therefore style or reposition the confirmation text.
 The path itself has already passed `is_safe_path`, which rejects shell
 metacharacters and traversal but **not** control bytes — so this is a real, if
-narrow, gap. Tracked for the approval wire-up (Bucket 1 Slice 6).
+narrow, gap. Tracked for the approval wire-up (roadmap 1.10.x — approval-gated exec).
 
 ### 5. Audit Log Integrity
 
@@ -127,8 +127,8 @@ with `"approved":0`. `>` refuses to truncate the audit log or the history file.
 `src/checkpoint.cyr` implements backup-before-destructive-op, `undo` and a
 100-entry auto-prune, but it is **not in the binary's include graph**, there is
 no `undo` builtin, and no `~/.agnoshi/checkpoints/` directory is ever created.
-**Do not rely on any rollback guarantee.** Its wire-up is blocked on seven
-stdlib symbols that no longer exist (roadmap Bucket 1 Slice 4).
+**Do not rely on any rollback guarantee.** It calls seven stdlib helpers that
+no longer exist, so its wire-up is a re-implementation (roadmap 1.10.x — checkpointing).
 
 ### 7. Privilege Escalation — ⚠ NOT IN THE SHIPPED BINARY
 
@@ -216,7 +216,7 @@ configuration.
 - **The natural-language path does not execute**, so its classification is
   advisory. A user who types a raw `run /abs/path`, or an AGNOS bareword, is
   gated by `is_safe_path` and the mode confirmation — not by the permission
-  tier. Closing that is roadmap Bucket 1 slices 5 and 6.
+  tier. Closing that is roadmap 1.10.x (NL exec, then approval-gated exec).
 - Race conditions between permission check and execution (TOCTOU) if the
   filesystem is mutated by another process. Full TOCTOU protection would
   require inode-locking at the kernel layer.
@@ -224,25 +224,33 @@ configuration.
 **Hardening items from the 2026-05-11 audit — current status** (that audit
 deferred them "to v1.4.0"; both were in fact closed in the 1.9.x arc):
 
-- **Symlink races on state-file open** — ✅ **CLOSED in 1.9.1.**
-  `~/.agnsh_audit.log` and `~/.agnsh_history` are now opened with
+- **Symlink races on state-file open** — ✅ **CLOSED on x86_64 in 1.9.1;
+  on aarch64 and agnos only in 1.9.13.**
+  `~/.agnsh_audit.log` and `~/.agnsh_history` are opened with
   `O_NOFOLLOW`, and the history file is created 0600 **at open** rather
   than being chmod'd afterwards (the old create-then-chmod sequence was
   itself a race). Exploit before the fix was worse than originally
   described: `sys_chmod` followed the symlink too, so a pre-placed link
-  meant a *write plus re-permission* of an arbitrary user-owned file.
-  ⚠ **Correction to the value published here before 1.9.1.** This guide
-  said `O_NOFOLLOW` "differs per arch — `0o400000` on x86_64,
-  `0o100000` on aarch64-generic". That is wrong. `asm-generic/fcntl.h`
-  defines `O_NOFOLLOW` as `(1 << 17)` = **131072**, and neither x86_64
-  nor aarch64 overrides it (32-bit **arm** does — the likely source of
-  the confusion). `0o100000` = 32768 is **`O_LARGEFILE`**: an
-  implementer following the old text would have opened the audit log
-  with `O_LARGEFILE` on the aarch64 release artifact and left the race
-  fully intact there. There is **no per-arch split**; do not reintroduce
-  one. On agnos the bit is dropped rather than miscompiled (`file_open`
-  masks only the `AO_*` bits it knows), so the agnos side still needs a
-  kernel `AO_NOFOLLOW` — tracked in the roadmap.
+  meant a *write plus re-permission* of an arbitrary user-owned file —
+  and for the history file, which opens `O_TRUNC`, a lossy **rewrite** of it.
+  ⛔ **The 1.9.1 "correction" that stood here was itself wrong, and it
+  shipped.** Before 1.9.1 this guide said `O_NOFOLLOW` "differs per arch —
+  `0o400000` on x86_64, `0o100000` on aarch64". That was right: x86_64 uses
+  the `asm-generic/fcntl.h` set, and arm64 overrides four flags in
+  `arch/arm64/include/uapi/asm/fcntl.h`, where `O_NOFOLLOW` is `0o100000`
+  (32768) and `0o400000` (131072) is `O_LARGEFILE`. 1.9.1 replaced that
+  with "neither x86_64 nor aarch64 overrides it", pinned 131072 for both,
+  and said not to reintroduce a per-arch split — so every aarch64 release
+  from 1.9.1 to 1.9.12 opened both state files with `O_LARGEFILE` and **no**
+  `O_NOFOLLOW`, and the race stayed fully open there. Reproduced under
+  `qemu-aarch64` in 1.9.13 (a planted symlink was appended to, truncated
+  and chmod'd 0600) and fixed by taking the stdlib's per-target
+  `O_NOFOLLOW` (cyrius ≥ 6.6.4). CI now runs both test suites on aarch64
+  under qemu-user, including a planted-symlink test. On **agnos**,
+  `file_open` maps the bit to `AO_NOFOLLOW` since cyrius 6.6.4, which the
+  kernel honours from agnos 1.56.53; before that it was dropped. The one
+  write path still without it is the `>` redirect target's raw `0x301`
+  open in `run_agnos.cyr` — tracked in the roadmap.
 - **chmod-failure logging** — ✅ **superseded in 1.9.4.** The chmod is no longer
   the primary protection: a new history file is created **0600 at open**, and the
   audit log's mode is re-asserted on every open. A failed chmod now only matters

@@ -1363,17 +1363,27 @@ fn main() {
       streq(str_cat3_cstr("", "x", ""), "x") == 1);
 
     # ---- 1.9.4 portable open flags ----
-    # Pinned because a WRONG constant here fails SILENTLY and dangerously: 1.9.1
-    # found the published aarch64 O_NOFOLLOW value was actually O_LARGEFILE,
-    # which would have left the symlink race open on half the release binaries
-    # while the CHANGELOG said it was closed. These are the Linux/agnos values
-    # (the Darwin branch is compiled out here).
+    # Pinned because a WRONG constant here fails SILENTLY and dangerously. These
+    # are the Linux values (the Darwin branch is compiled out here).
+    # ⛔ UNTIL 1.9.13 THIS BLOCK PINNED THE BUG IT WAS WRITTEN TO PREVENT. It
+    # asserted OPEN_NOFOLLOW == 131072 and != 32768 on every arch — right for
+    # x86_64, exactly backwards for aarch64, where arm64's uapi fcntl.h makes
+    # 32768 O_NOFOLLOW and 131072 O_LARGEFILE. CI only runs the x86_64 build, so
+    # the pin passed for twelve releases while the aarch64 binary followed
+    # symlinks. The literals are now per-arch, and the 1.9.13 block at the end of
+    # main plants a real symlink — a constant pin alone cannot catch this class.
     check("OPEN_WRONLY", OPEN_WRONLY == 1);
     check("OPEN_CREAT", OPEN_CREAT == 64);
     check("OPEN_APPEND", OPEN_APPEND == 1024);
     check("OPEN_TRUNC", OPEN_TRUNC == 512);
-    check("OPEN_NOFOLLOW is 1<<17, not O_LARGEFILE", OPEN_NOFOLLOW == 131072);
-    check("OPEN_NOFOLLOW is not O_LARGEFILE", OPEN_NOFOLLOW != 32768);
+    check("OPEN_NOFOLLOW is this target's O_NOFOLLOW", OPEN_NOFOLLOW == O_NOFOLLOW);
+    check("OPEN_NOFOLLOW is not this target's O_LARGEFILE", OPEN_NOFOLLOW != O_LARGEFILE);
+    #ifdef CYRIUS_ARCH_X86
+    check("x86_64 O_NOFOLLOW is 0400000", OPEN_NOFOLLOW == 131072);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    check("aarch64 O_NOFOLLOW is 0100000", OPEN_NOFOLLOW == 32768);
+    #endif
     check("STATE_FILE_MODE is 0600", STATE_FILE_MODE == 384);
     # The audit log opens append+create, NEVER truncate — the Darwin decoding of
     # the old hardcoded 1089 included O_TRUNC, which would have emptied the log
@@ -2367,6 +2377,53 @@ fn main() {
     audit_path_override_set(0);
     audit_set_context(0, 0);
     _t_stdin_set(0);
+
+    # ================================================================
+    # 1.9.13 — the state files refuse a planted symlink, on every arch
+    # ================================================================
+    # ⛔ The open-flag pins passed for twelve releases while the aarch64 build
+    # followed symlinks (see the 1.9.4 block). This drives the REAL writers
+    # through a REAL symlink, so it fails on any arch whose OPEN_NOFOLLOW is
+    # wrong — proven when written: the aarch64 build of this file, run under
+    # qemu-aarch64 with the 1.9.12 constant restored, fails the write-through
+    # and re-permission checks below.
+    var sl_target = tmp_state_path("agnsh_selftest_symlink_target");
+    var sl_link = tmp_state_path("agnsh_selftest_symlink");
+    xunlink(sl_link);
+    xunlink(sl_target);
+    _t_write_cstr(sl_target, "not a state file\n");
+    sys_chmod(sl_target, 420);   # 0644, so a re-permission to 0600 is visible
+    check("the test can plant a symlink", sys_symlink(sl_target, sl_link) == 0);
+
+    # The audit writer APPENDS, then re-asserts 0600 by path.
+    audit_path_override_set(sl_link);
+    audit_one_shot("planted", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    audit_path_override_set(0);
+    check("the audit writer does not write through a symlinked log",
+      _t_file_has(sl_target, "planted") == 0);
+    check("the audit writer leaves the symlink target's length alone",
+      _t_count_nl(sl_target) == 1);
+
+    # The history save TRUNCATES: through a symlink it rewrites the target, capped
+    # at the history size — the destructive half of the bug. Its refusal goes to
+    # stderr; capture it so the warning is asserted rather than just printed.
+    var slh = CommandHistory_new(sl_link, 3);
+    CommandHistory_add(slh, "planted");
+    _t_capture_begin(2, 9, cappath);
+    CommandHistory_save(slh);
+    _t_capture_end(2, 9);
+    check("the history save does not write through a symlinked file",
+      _t_file_has(sl_target, "planted") == 0);
+    check("the symlink target keeps its content",
+      _t_file_has(sl_target, "not a state file") == 1);
+    check("a refused history save says so on stderr",
+      _t_file_has(cappath, "could not open history file") == 1);
+
+    var slst[144];
+    check("the symlink target is not re-permissioned to 0600",
+      xstat(sl_target, &slst) == 0 && (load32(&slst + STAT_MODE) % 512) == 420);
+    xunlink(sl_link);
+    xunlink(sl_target);
 
     return report();
 }

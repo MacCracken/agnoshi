@@ -4,6 +4,163 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [1.9.13] - 2026-09-23 — cyrius 6.6.6, and the aarch64 build stops following symlinks
+
+A toolchain and dependency release that found a security defect on the way through. The tree
+needed **no source change for 6.6.6**; the one `src/` fix below is a bug that has shipped in every
+aarch64 release since 1.9.1, found while reading the 6.6.3–6.6.6 changelog for this bump.
+
+### Security — ⛔ the aarch64 binary followed a symlink planted at either state file (1.9.1 – 1.9.12)
+
+`OPEN_NOFOLLOW` was `131072` on every Linux arch. That is x86_64's `O_NOFOLLOW`; arm64 overrides
+four open flags in `arch/arm64/include/uapi/asm/fcntl.h` and the pairs swap — its `O_NOFOLLOW` is
+`0o100000` (32768) and **131072 is `O_LARGEFILE`**. So on aarch64 both state files were opened with
+`O_LARGEFILE` and no `O_NOFOLLOW`. Reproduced under `qemu-aarch64` with the 1.9.12 constant (the
+pre-fix tree), with a symlink planted at each path:
+
+| aarch64, 1.9.12 constant | what happened to the symlink's target |
+|---|---|
+| `~/.agnsh_audit.log` → a 0644 file | audit record appended to it, then `fchmodat` re-permissioned it **0600** (`openat(.., O_WRONLY\|O_APPEND\|O_CREAT\|O_LARGEFILE, 0600) = 3`) |
+| `~/.agnsh_history` → a 1,504-line file | **truncated and rewritten** as history after one session: 1,000 lines left, its first 505 lines lost (the blank ones with them), mode 0600 |
+
+1.9.1 closed this race on x86_64, and x86_64 has been protected since. ⛔ **On aarch64 it was never
+closed, because of a correction.** Before 1.9.1, `security-model.md` gave the per-arch values
+correctly; 1.9.1 "fixed" them to one value on the premise that "neither x86_64 nor aarch64 overrides
+it", wrote *do not restore a per-arch #ifdef* into `src/sanitize.cyr`, and pinned 131072 in
+`test_core.tcyr` with an explicit `!= 32768` — a unit test locking in the bug it was written to
+prevent, green for twelve releases because CI only ever **ran** the x86_64 build.
+
+- **Fix**: `OPEN_NOFOLLOW` now takes the stdlib's per-target `O_NOFOLLOW` (cyrius 6.6.4 added it to
+  the `OpenFlag` enum after patra hit the same swap and had a WAL truncated through a symlink).
+  agnos keeps the x86-shaped bit, which `file_open` maps to `AO_NOFOLLOW` itself. Verified under
+  qemu: the fixed aarch64 binary refuses both planted symlinks (targets untouched, still 0644) and
+  still writes both state files normally at 0600.
+- **Tests that can fail on the arch that matters**: the pins are now per-arch literals plus
+  equality with the stdlib constant and inequality with `O_LARGEFILE`, and a new block plants a
+  real symlink and drives the real audit writer and history save through it. Watched fail: the
+  aarch64 `test_core` build with the 1.9.12 constant restored fails 8 checks under qemu; fixed,
+  686/686 on both arches.
+- **CI now runs the aarch64 build.** New step *Tests on aarch64 (qemu-user)* builds both `.tcyr`
+  suites with `--aarch64` and runs them under `qemu-aarch64`. ⚠ Verified locally, not yet on a
+  GitHub runner.
+- **agnos gains the same guard in this release**: cyrius 6.6.4's `file_open` maps the bit to
+  `AO_NOFOLLOW`, honoured from agnos kernel 1.56.53; under 6.6.2 it was dropped.
+- `docs/guides/security-model.md`'s wrong "correction" is replaced with the actual history.
+
+### Changed — toolchain `6.6.2` → `6.6.6`
+
+- **No source change needed.** Verified twice: on a clean `git archive` of 1.9.12 with only the pin
+  moved (CI's own starting state), then on the working tree — all 16 CI gates green both times,
+  including the aarch64 cross-build and the agnos-target build. None of 6.6.3–6.6.6's new compile
+  errors has a site here.
+- **Inherited from the stdlib — host `run` children now die with the shell.** From 6.6.5,
+  `lib/process.cyr`'s `run()` sets `PR_SET_PDEATHSIG(SIGKILL)` in the child on Linux, so a program
+  launched with `run /abs/path` on the host is killed if agnsh dies rather than orphaned. The agnos
+  launch paths do not use `run()` and are unchanged.
+- **The append path, verified end to end** — the check the roadmap asked for at this bump, since
+  6.6.6's headline fix is a PE `O_APPEND` that overwrote from offset 0 (agnoshi has no PE target):
+  two interactive sessions and a `-c` one-shot against a scratch `$HOME` took history 3 → 5 lines
+  and the audit log 3 → 4 → 6 records, mode 0600, nothing restarted.
+- **aarch64 `SYS_UNLINKAT` (6.6.5, 35 → 263) does not reach agnsh.** `sys_unlink`, `sys_unlinkat`,
+  `sys_rmdir` and `xunlink` are all unreachable in the aarch64 binary (`CYRIUS_DCE_VERBOSE`), so the
+  1.9.12 aarch64 release was not exposed to a stale peer running `nanosleep` instead.
+- **Binary sizes**: x86_64 (DCE) 196,928 → 201,648 B (+2.4%); agnos 335,648 → 344,304 B (+2.6%);
+  aarch64 544,960 → 676,600 B (+24%) — on that backend DCE NOPs unreachable functions in place
+  (now 355 KB of the file), and 6.6.5's syscall-translation table is emitted inline at every
+  aarch64 syscall site (44 → 58 rows, +224 B per site, per the cyrius 6.6.5 entry). The 6.6.2 aarch64
+  build's one compiler warning (raw syscall 32 in `lib/io.cyr`'s `file_flock`, never called here)
+  is gone.
+
+### Changed — `./lib/` re-vendored from a clean slate
+
+The local `./lib/` had grown to **114 files**: `cyrius deps` never deletes what an earlier pin
+vendored, so modules from May–June snapshots (`json.cyr`, `toml.cyr`, `agnosys.cyr`, …) sat beside
+current ones, some matching no snapshot at all. CI's clean checkout gets **38**. Nothing in the
+include graph read a stale file — the in-graph set matched 6.6.2 byte for byte — but a new `include`
+of a leftover would have built locally and failed in CI. Re-vendored with `rm -rf lib && cyrius
+deps`: 38 files, byte-identical to the 6.6.6 snapshot. `CLAUDE.md` step 1 now says to do this at
+every pin bump. (`./lib/` is gitignored; noted because it changes what a local build proves.)
+
+### Changed — the format gate is one command again
+
+`scripts/check-fmt.sh` is **retired**. It existed because `cyrius fmt` ignored every file after the
+first; 6.6.5 made the CLI take 1..N operands. Before deleting it: its own `--selftest` reported the
+multi-file form now catches drift, and the exact CI command was run with drift planted in the first
+file, a middle file and the last file — exit 1 each time, exit 0 clean, and an unmatched glob fails
+(`cannot read file`) instead of passing. The rewrite form fixes every operand too. CI, `CLAUDE.md` and
+`CONTRIBUTING.md` now use `cyrius fmt --check src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr`.
+
+### Changed — CI actions to current majors
+
+`actions/checkout` v4 → v7, `actions/upload-artifact` v4 → v7, `actions/download-artifact` v4 → v8,
+`softprops/action-gh-release` v2 → v3. Each intervening breaking change was checked against this
+repo's usage: the Node 24 runtime (GitHub-hosted runners only here); download-artifact v5's by-ID path
+change (the release job downloads by name); v8's digest mismatch now failing the run (the secure
+default); upload-artifact v7's `archive` input, which defaults to the old zip behaviour. kriya
+already runs checkout@v7 and action-gh-release@v3. ⚠ Unverified until the first push.
+
+### Changed — `scripts/bench-history.sh` labels rows from an uncommitted tree `<hash>-dirty`
+
+A run on an uncommitted tree measures HEAD *plus the edits*, and rows are routinely recorded before
+the change is committed — so the label credited new code's numbers to the old commit. Such rows are
+now `<hash>-dirty` (the `git describe --dirty` convention); appending to the history file itself does
+not count as dirty.
+
+### Changed — roadmap reorganised into version-pinned release arcs
+
+`docs/development/roadmap.md` is rewritten forward-only around four pinned arcs (1.9.x close-out,
+1.10.x NL execution, 1.11.x interactive shell, 1.12.x hoosh/LLM), a *Gated* section naming each
+external trigger, and a standing pin-bump checklist that replaces the per-version "Moving the cyrius
+pin to …" sections. Every upstream gate was re-verified at this pin, and three had quietly opened:
+agnos verification no longer needs iron (agnos's QEMU harnesses already boot and drive agnsh),
+agnos has `AO_NOFOLLOW` (1.56.53), and the host LLM client is unblocked (hoosh 2.6.10's
+OpenAI-compatible API, plus sandhi's POST and SSE streaming). Two stale claims were retired: `undo`
+is no longer advertised by `commands.cyr`, and the "pipeline auto-exec arrives with the exec
+wire-up" hint was already gone. Docs citing `Bucket 1 Slice N` now cite the arc slot.
+
+### Fixed — the 1.9.12 entry was filed between 1.8.7 and 1.8.6
+
+The 6.6.2 migration tool inserted its entry under the first `## [Unreleased]` it found, a stray
+heading left mid-file on 2026-08-07, so 1.9.12 sat 1,400 lines down. Moved to its place verbatim, and
+`## [Unreleased]` restored at the top, where the next tool will look.
+
+### Fixed — docs
+
+- `README.md`, `CLAUDE.md`: `src/approval.cyr` was described as outside the include graph. It has
+  been in it since May; only its risk classifier is used, and `ApprovalManager_request`, the prompt
+  itself, has no caller. The behavioural claim (nothing prompts) was right; the structural one was
+  not.
+- Toolchain pin, binary sizes and test counts refreshed in `README.md`, `CONTRIBUTING.md` and
+  `docs/architecture/overview.md` (they still cited 6.5.36).
+
+### Found, not fixed in this release — agnos audit records overwrite each other
+
+Static reading, **not yet run**: agnos's kernel ignores `AO_APPEND` (`ext2_open` starts every file at
+position 0 and stores no flags), and the 6.6.6 stdlib's own `file_append_locked` seeks to the end on
+agnos for exactly that reason. `AuditLogger_log` does not, so on agnos each record is likely written
+at offset 0 over the previous one. It is agnos-only and cannot be run from this repo, so it is the
+first finding pinned to the roadmap's 1.9.x agnos-verification slot, where it gets fixed together
+with the QEMU run that proves it.
+
+### Performance — neutral
+
+Five alternating runs of each toolchain's bench binary: 9 of 11 benchmarks within ±4% of the 6.6.2
+median; `parse/list_files` −6.6% (1,311 → 1,224 ns, ranges do not overlap); `sanitize/basename` +7%
+(42 → 45 ns, ranges overlap). `bench-history.csv` row `a63ffb3` is the 6.6.2 baseline. A single
+row is noisy — that row's `history/add_at_cap` read 433 ns against a 290 ns five-run median — which
+is why this rests on the five-run comparison. A 6.6.6 row taken while other work held the host at a
+load average of ~15 read uniformly 2× slow on all 11 benchmarks and was discarded, not recorded.
+
+## [1.9.12] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.5.36` → `6.6.2`.** Migrated to the `Result` value form:
+  1 first-party file(s) changed. Every surface re-verified — build, tests, and any
+  bench/fuzz/distlib target the repo ships.
+
 ## [1.9.11] - 2026-09-08 — the power builtins get an audit trail, an arch guard, and a way to be tested
 
 Closes all six items of agnos issue `2026-09-03-agnoshi-power-builtins-history-audit-archguard`.
@@ -1450,17 +1607,6 @@ failure class is compile-visible on that arm.
 Proven on agnos 1.56.40 via `agnos/scripts/harness/pty-host-test.py`: agnsh spawned onto an endowed
 channel prints its `[ASSIST] >` prompt, takes a command typed into the host's endpoint, and answers —
 21 records over the channel. Both targets build.
-
-## [Unreleased]
-
-## [1.9.12] - 2026-09-11
-
-### Changed
-
-- **Toolchain `6.5.36` → `6.6.2`.** Migrated to the `Result` value form:
-  1 first-party file(s) changed. Every surface re-verified — build, tests, and any
-  bench/fuzz/distlib target the repo ships.
-
 
 ## [1.8.6] — 2026-08-02 — a foreground program no longer freezes the scheduler
 

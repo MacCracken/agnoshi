@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.9.10 · Cyrius 6.5.36 · 23 modules · ~5 K src lines · 316 KB static binary (DCE, x86_64) · 532 KB aarch64 · 0 runtime deps · 678 unit + 26 security + 92 smoke tests · 100% host-reachable fn coverage**
+**1.9.13 · Cyrius 6.6.6 · 23 modules · ~5 K src lines · 197 KB static binary (DCE, x86_64) · 661 KB aarch64 · 0 runtime deps · 686 unit + 26 security + 92 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
@@ -18,18 +18,20 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 - **Single static binary** — `agnsh`, no dynamic dependencies
 
 ⚠ **Not shipped yet, though the modules exist in `src/`**: interactive approval
-prompts, checkpoint/`undo`, and privilege escalation. `src/approval.cyr`,
-`src/checkpoint.cyr` and `src/security.cyr` are **not in the binary's include
-graph** — a HIGH-risk command reports `Approval required` but is not prompted or
-blocked, there is no `undo` builtin, and nothing invokes `sudo`. See
-`docs/development/roadmap.md` (Bucket 1) for the wire-up slices, and
-`SECURITY.md` for exactly what does and does not hold today.
+prompts, checkpoint/`undo`, and privilege escalation. `src/checkpoint.cyr` and
+`src/security.cyr` are **not in the binary's include graph**, and
+`src/approval.cyr` is compiled in only for its risk classifier —
+`ApprovalManager_request`, the prompt itself, has no caller. A HIGH-risk command
+reports `Approval required` but is not prompted or blocked, there is no `undo`
+builtin, and nothing invokes `sudo`. See `docs/development/roadmap.md` (the
+1.10.x arc) for the wire-up slices, and `SECURITY.md` for exactly what does and
+does not hold today.
 
 ## Install
 
 ```bash
 # Resolve the version-pinned stdlib snapshot into ./lib/ (gitignored).
-# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.5.36").
+# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.6.6").
 cyrius deps
 
 # Build from source
@@ -83,7 +85,7 @@ src/                                PRESENT BUT NOT IN THE BINARY
 ⚠ **The split matters.** Anything in the second group is not in the shipped
 binary, so features it implements — approval prompts, `undo`, sudo escalation,
 tab completion, the git-branch prompt — do not exist at runtime today. Wire-up
-slices are in `docs/development/roadmap.md` (Bucket 1).
+slices are in `docs/development/roadmap.md` (the 1.10.x and 1.11.x arcs).
 
 ## Documentation
 
@@ -133,7 +135,7 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.5.36 is 308 KB (x86_64) / 532 KB (aarch64) — toolchain-side growth from richer stdlib + codegen between 4.5.0 and 6.5.x plus the v1.2.0/v1.3.0 feature additions (approval, audit, history, security wired in), not from agnoshi-side bloat. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.6.6 is 197 KB (x86_64, DCE) / 661 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 347 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 

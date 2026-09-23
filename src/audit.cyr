@@ -95,9 +95,10 @@ fn AuditLogger_log(self, entry) {
     #
     # O_NOFOLLOW closes the pre-placed-symlink hijack of the audit trail: with
     # a symlink at $HOME/.agnsh_audit.log, the old open followed it and wrote
-    # (and chmod'd 0600) an arbitrary user-owned file. file_open's agnos branch
-    # masks only bits 3|64|512|1024, so the extra bit is dropped there rather
-    # than corrupting the flags — graceful degrade until agnos gains AO_NOFOLLOW.
+    # (and chmod'd 0600) an arbitrary user-owned file. ⚠ On aarch64 it did so
+    # until 1.9.13 — OPEN_NOFOLLOW carried x86_64's value, which arm64 reads as
+    # O_LARGEFILE (see src/sanitize.cyr). On agnos, file_open maps the bit to
+    # AO_NOFOLLOW (cyrius 6.6.4; agnos ≥ 1.56.53); before that it dropped it.
     var line = AuditEntry_to_json(entry);
     var fd = file_open(load64(self),
       OPEN_WRONLY | OPEN_CREAT | OPEN_APPEND | OPEN_NOFOLLOW, STATE_FILE_MODE);
@@ -233,7 +234,7 @@ fn classify_audit_result(tag, perm, desc_cstr) {
     #                       (interactive-shell exec wire-up).
     #   proposed         -- SAFE / READ_ONLY / USER_WRITE: the shell would
     #                       allow this, but the NL path does not exec yet
-    #                       (roadmap Bucket 1 slice 5). An actual execution is
+    #                       (roadmap 1.10.x — NL exec). An actual execution is
     #                       recorded separately by the exec surface, which uses
     #                       launched/executed/failed/error/denied.
     # QUESTION and PIPELINE tags first — PIPELINE has no translator

@@ -12,6 +12,17 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 
+# A run on an uncommitted tree measures HEAD *plus the edits*, so labelling it
+# with HEAD's hash attributes the new code's numbers to the old commit — and
+# rows are routinely recorded before the change is committed. Mark those rows
+# `<hash>-dirty` (the `git describe --dirty` convention). The history file is
+# excluded from the check: appending to it is this script's own output, and
+# counting it would mark every second run on a clean tree as dirty.
+if [ "$COMMIT" != "unknown" ] &&
+   [ -n "$(git status --porcelain --untracked-files=no -- . ":(exclude)$HISTORY_FILE" 2>/dev/null)" ]; then
+    COMMIT="${COMMIT}-dirty"
+fi
+
 # Create header if file doesn't exist
 if [ ! -f "$HISTORY_FILE" ]; then
     echo "timestamp,commit,branch,benchmark,estimate_ns" > "$HISTORY_FILE"

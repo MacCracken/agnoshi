@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Agnoshi.
 
 1. Fork the repository
 2. Create a feature branch
-3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "6.5.36"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
+3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "6.6.6"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
 4. `cyrius deps` — resolves the version-pinned stdlib snapshot into `./lib/` (gitignored)
 5. Make your changes
 6. Run the cleanliness gates + `sh tests/test.sh` to verify
@@ -29,6 +29,10 @@ cyrius build tests/test_core.tcyr build/test_core && ./build/test_core
 cyrius build tests/test_security.tcyr build/test_security && ./build/test_security
 cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core
 sh scripts/smoke-test.sh build/agnsh
+
+# The same suites on aarch64, as CI runs them (needs qemu-user's qemu-aarch64).
+# Open flags differ per arch; an x86_64-only run cannot see that class (1.9.13).
+cyrius build --aarch64 tests/test_core.tcyr build/test_core_a64 && qemu-aarch64 build/test_core_a64
 ```
 
 ### Cleanliness gates
@@ -39,7 +43,7 @@ These match the CI gate set. Run them before pushing — any drift fails the bui
 cyrius check src/agnsh.cyr             # syntax (entry-walk; modules are stitched through agnsh.cyr)
 cyrius capacity --check src/agnsh.cyr  # fn-table / code-size headroom (must be <85%)
 cyrius vet src/agnsh.cyr               # include-graph audit
-sh scripts/check-fmt.sh                # fmt-drift gate, all files (--fix to repair)
+cyrius fmt --check src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr   # fmt-drift gate (drop --check to repair)
 cyrius lint <file>                     # warn-as-error
 sh scripts/lint-cstr-str.sh src        # Str/cstring antipatterns (A-G) + test-seam containment (H)
 sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reachable)
@@ -50,14 +54,12 @@ sh scripts/check-coverage.sh           # fn-level coverage gate (>=80% host-reac
 clean run is not proof — it was green through both the dead SHELL_COMMAND
 classifier (1.9.1) and the `audit_format_table` defect (1.9.8).
 
-⛔ **`cyrius fmt` ignores every file after the first — use the script.**
-Both forms do it, and the rewrite form is the more dangerous:
-`cyrius fmt --check a.cyr b.cyr` checks only `a.cyr` and exits 0 however badly
-`b.cyr` drifts, and `cyrius fmt a.cyr b.cyr` reformats only `a.cyr` while looking
-like it worked. A glob is the natural thing to type and it silently checks one
-file: that is how 1.9.10 reached CI with drift after a locally "clean" sweep.
-`sh scripts/check-fmt.sh` loops per-file, is the same code CI runs, and carries a
-`--selftest` that plants drift and asserts the gate reports it.
+ℹ **`cyrius fmt` takes a file list since cyrius 6.6.5**, in both the `--check`
+and the rewrite form, and a missing file fails with `cannot read file` rather
+than passing. Before 6.6.5 it silently ignored every file after the first, which
+is how 1.9.10 reached CI with drift after a locally "clean" sweep. The per-file
+wrapper that worked around it (`scripts/check-fmt.sh`) was retired in 1.9.13,
+once the multi-file form was verified to fail on planted drift in each position.
 
 ⛔ **Category H — the audit-path test seam stays a test seam.**
 `audit_path_override_set` (`src/statepaths.cyr`) redirects where the security log

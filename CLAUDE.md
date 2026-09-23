@@ -32,16 +32,17 @@ agnoshi (AI natural language shell, Cyrius)
 ### P(-1): Scaffold Hardening (before any new features)
 
 0. Read roadmap, CHANGELOG, and `docs/doc-health.md` — know what was intended and what's stale before auditing what was built
-1. `cyrius deps` to repopulate `./lib/` from the pinned stdlib snapshot
+1. `cyrius deps` to repopulate `./lib/` from the pinned stdlib snapshot. It does not delete
+   files an earlier pin vendored, so after a pin bump run `rm -rf lib && cyrius deps` — that is
+   what CI's clean checkout gets (38 files at 6.6.6; a long-lived local `lib/` had grown to 114)
 2. Test + benchmark sweep of existing code
 3. Cleanliness gates (match CI):
    - `cyrius check src/agnsh.cyr` (syntax — walk from the ENTRY; modules do not
      declare their own includes, so a per-file check trips on cross-module refs)
-   - `sh scripts/check-fmt.sh` (fmt-drift gate, every file; `--fix` repairs)
-     ⛔ Do NOT hand-roll this as `cyrius fmt --check <glob>` — `cyrius fmt`
-     ignores every file after the first in BOTH the `--check` and rewrite forms,
-     so a glob checks exactly one file and reports success. The script loops
-     per-file and is the same code CI runs.
+   - `cyrius fmt --check src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr` (fmt-drift
+     gate, every file — the same command CI runs; drop `--check` to repair). Needs
+     cyrius ≥ 6.6.5: before that `cyrius fmt` ignored every file after the first,
+     which is why the retired `scripts/check-fmt.sh` per-file loop existed
    - `cyrius lint <file>` — warn-as-error
    - `cyrius vet src/agnsh.cyr` (include-graph audit)
    - `cyrius capacity --check src/agnsh.cyr` (fn-table / code-size headroom)
@@ -91,7 +92,7 @@ agnoshi (AI natural language shell, Cyrius)
 - **Single source of truth for version** — `VERSION` file; `cyrius.cyml` pulls via `${file:VERSION}`.
 - **Pin the toolchain in `cyrius.cyml`** — CI reads `cyrius = "..."` from the manifest.
 - **`./lib/` is gitignored** — `cyrius deps` repopulates from the pinned snapshot; never check stdlib stubs into the tree.
-- **Security first** — every command is classified, sanitized and audited. ⚠ Note what does NOT exist yet: there is no sandbox, no privilege escalation, and no interactive approval prompt (`approval.cyr`, `security.cyr` and `session.cyr` are not in the binary's include graph). Do not describe those as shipped.
+- **Security first** — every command is classified, sanitized and audited. ⚠ Note what does NOT exist yet: there is no sandbox, no privilege escalation, and no interactive approval prompt (`security.cyr` and `session.cyr` are not in the binary's include graph; `approval.cyr` is, but only for its risk classifier — `ApprovalManager_request`, the prompt, has no caller). Do not describe those as shipped.
 
 ## DO NOT
 

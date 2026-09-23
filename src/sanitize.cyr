@@ -6,18 +6,26 @@ var _sanitize_loaded = 1;
 # as symlinks to redirect (and, via the follow-up chmod, re-permission) an
 # arbitrary user-owned file.
 #
-# ⚠ THERE IS NO PER-ARCH SPLIT, despite what the v1.3.1 audit and
-# docs/guides/security-model.md said until 1.9.1. Both are (1 << 17) = 131072:
-# asm-generic/fcntl.h defines O_NOFOLLOW as (1 << 17) and NEITHER x86_64 nor
-# aarch64 overrides it (32-bit arm does — that is where the confusion came
-# from). The previously-published aarch64 value 0o100000 = 32768 is
-# O_LARGEFILE: shipping it would have opened the audit log with O_LARGEFILE and
-# left the symlink race fully intact on the aarch64 release artifact, while the
-# CHANGELOG claimed it closed. Do not "restore" a per-arch #ifdef here.
+# ⛔ THE VALUE IS PER-ARCH, AND 1.9.1 – 1.9.12 SHIPPED THE WRONG ONE ON aarch64.
+# x86_64 uses the asm-generic/fcntl.h set: O_NOFOLLOW = 0400000 = 131072. arm64
+# OVERRIDES four flags in arch/arm64/include/uapi/asm/fcntl.h and the pairs
+# swap: O_NOFOLLOW = 0100000 = 32768, and 131072 is O_LARGEFILE. The 1.9.1 note
+# that stood here said the opposite ("neither x86_64 nor aarch64 overrides it"),
+# pinned 131072 for both and told the next reader not to restore a per-arch
+# split. Every aarch64 release from 1.9.1 to 1.9.12 therefore opened both state
+# files with O_LARGEFILE and no O_NOFOLLOW: a planted symlink was followed, the
+# target appended to (audit) or truncated and rewritten (history), and chmod'd
+# 0600. Reproduced under qemu-aarch64 in 1.9.13 with strace showing
+# `openat(.., O_WRONLY|O_APPEND|O_CREAT|O_LARGEFILE, 0600)`.
+# ⇒ Spell the symbol, never the number. cyrius 6.6.4 added a per-target
+# O_NOFOLLOW to the stdlib's OpenFlag enum after patra shipped the same swap
+# (its WAL target was truncated through a symlink); each syscall peer owns its
+# value. tests/test_core.tcyr pins the per-arch literals AND plants a real
+# symlink, because a constant pin alone is what let the wrong number pass.
 #
-# On agnos the bit is dropped, not miscompiled: file_open (lib/io.cyr:75) masks
-# only 3|64|512|1024 into the AO_* namespace, so this degrades gracefully until
-# agnos gains an AO_NOFOLLOW bit (tracked in the roadmap).
+# agnos has no OpenFlag enum: file_open takes Linux-x86-shaped flags and maps
+# bit 131072 to AO_NOFOLLOW itself (cyrius 6.6.4; honoured by agnos ≥ 1.56.53).
+# Before 6.6.4 it dropped the bit, so on agnos the guard is new in 1.9.13.
 # ⛔ THE NUMERIC OPEN FLAGS ARE NOT PORTABLE, AND agnsh HARDCODED THE LINUX ONES.
 # `1089` (O_WRONLY|O_CREAT|O_APPEND on Linux) decodes on Darwin as
 # O_WRONLY|O_ASYNC|O_TRUNC — no O_CREAT and, fatally, O_TRUNC. On a macOS host
@@ -45,9 +53,15 @@ var OPEN_WRONLY = 1;
 var OPEN_CREAT = 64;       # 0o100
 var OPEN_APPEND = 1024;    # 0o2000
 var OPEN_TRUNC = 512;      # 0o1000
-# O_NOFOLLOW is (1 << 17) on BOTH x86_64 and aarch64 Linux — there is no
-# per-arch split; see the 1.9.1 note. On agnos file_open drops the bit.
+# O_NOFOLLOW differs per arch — see the note above. Linux takes the stdlib's
+# per-target value (131072 x86_64, 32768 aarch64); agnos keeps the x86-shaped
+# bit that file_open translates to AO_NOFOLLOW.
+#ifdef CYRIUS_TARGET_AGNOS
 var OPEN_NOFOLLOW = 131072;
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+var OPEN_NOFOLLOW = O_NOFOLLOW;
+#endif
 #endif
 
 # 0600 — owner read/write only. The mode every shell state file is created with.

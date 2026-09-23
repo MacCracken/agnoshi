@@ -152,7 +152,7 @@ What *does* execute:
 - **AGNOS only**: bareword `/bin/<name> [args]`, two-stage pipelines
   `cmd1 | cmd2`, output redirection `cmd > file`, and background jobs `prog &`.
 
-Wiring execution into the NL path is roadmap Bucket 1 Slice 5.
+Wiring execution into the NL path is roadmap 1.10.x — NL exec.
 
 ## Undo — not available yet
 

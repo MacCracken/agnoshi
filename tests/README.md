@@ -67,5 +67,7 @@ compile proves nothing about buffer sizing.**
 
 Add `check("name", <condition == expected>)` to the relevant file's `main()`.
 For a whole new suite, copy the harness-based skeleton above and add the file to
-`test.sh`; CI auto-discovers `tests/test_*.tcyr` for the integration step and
-`tests/*.cyr` / `*.tcyr` / `*.bcyr` for fmt + lint.
+`test.sh`; CI auto-discovers `tests/test_*.tcyr` for the integration step — and,
+since 1.9.13, runs the same suites built `--aarch64` under qemu-user, so a test
+must not assume x86_64 constants — and `tests/*.cyr` / `*.tcyr` / `*.bcyr` for
+fmt + lint.

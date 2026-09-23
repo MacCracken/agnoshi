@@ -22,7 +22,7 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Cyrius toolchain
         # Pipe the upstream installer (mirrors patra's CI) instead of a raw
@@ -80,25 +80,19 @@ jobs:
         run: cyrius capacity --check src/agnsh.cyr
 
       - name: Format check
-        # `cyrius fmt <file>` REWRITES IN PLACE as of cyrius 6.5.x and prints
-        # nothing to stdout. The old gate diffed the committed file against
-        # `cyrius fmt`'s stdout — under 6.5.x that stdout is empty, so every
-        # file compared as drifted and the gate failed unconditionally (while
-        # also silently reformatting the checkout). `--check` is a real
-        # non-mutating check in 6.5.x (it was a no-op back in 5.9.x, which is
-        # why the diff form existed): it exits 1 and names the first differing
-        # line. `--dry` reports without touching the file too.
+        # `cyrius fmt --check` is non-mutating: it exits 1 and names the first
+        # differing line of each drifting file. (Plain `cyrius fmt <file>`
+        # REWRITES IN PLACE and prints nothing — never diff its stdout.)
         #
-        # ⛔ The per-file loop that used to be inlined here now lives in
-        # scripts/check-fmt.sh, so CI and a developer's terminal run THE SAME
-        # CODE. The loop is not optional styling: `cyrius fmt` ignores every
-        # file after the first, in both the --check and rewrite forms. A local
-        # `cyrius fmt --check src/*.cyr tests/*.tcyr` therefore checks exactly
-        # one file and reports success — which is how 1.9.10 reached CI with
-        # drift after a "clean" local sweep. CI caught it; the gap was between
-        # CI and what a developer types, and a loop inlined here could not
-        # close it — only a script both sides run can.
-        run: sh scripts/check-fmt.sh
+        # One multi-file invocation, same globs a developer types (CLAUDE.md,
+        # CONTRIBUTING.md). Before cyrius 6.6.5, `cyrius fmt` ignored every file
+        # after the first, so this gate ran a per-file loop in
+        # scripts/check-fmt.sh; 6.6.5 made the CLI take 1..N operands, and 1.9.13
+        # retired the script after planting drift in the first, a middle and the
+        # last file and watching this exact command exit 1 each time. An
+        # unmatched glob reaches cyrfmt literally and fails ("cannot read file"),
+        # so a renamed directory cannot turn this into a silent pass.
+        run: cyrius fmt --check src/*.cyr tests/*.cyr tests/*.tcyr tests/*.bcyr
 
       - name: Lint
         # Auto-discover so new modules are covered without editing CI.
@@ -141,6 +135,33 @@ jobs:
           file build/agnsh-aarch64 | grep -q "aarch64" || {
             echo "ERROR: build/agnsh-aarch64 is not an aarch64 ELF"; exit 1; }
           echo "agnsh-aarch64: $(wc -c < build/agnsh-aarch64) bytes"
+
+      - name: Tests on aarch64 (qemu-user)
+        # ⛔ CI CROSS-BUILT aarch64 FOR TWELVE RELEASES AND NEVER RAN ANY OF IT. OPEN_NOFOLLOW
+        # carried x86_64's value, which arm64 reads as O_LARGEFILE, so from 1.9.1 to 1.9.12 the
+        # aarch64 release binary followed a symlink planted at either state file: appended to or
+        # truncated its target, and chmod'd it 0600. The unit test pinned the wrong number and
+        # passed, because the only build it ever ran on was x86_64. 1.9.13 fixed the constant and
+        # added a planted-symlink test; this step is what makes that test run on the arch it
+        # guards. Verified locally before adding: both suites pass under qemu-aarch64, and the
+        # aarch64 test_core build with the 1.9.12 constant restored fails 8 checks.
+        run: |
+          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
+            echo "::warning::cycc_aarch64 not shipped with Cyrius — skipping aarch64 tests"
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user || sudo apt-get install -y -qq qemu-user-static
+          QEMU="$(command -v qemu-aarch64 || command -v qemu-aarch64-static)" || {
+            echo "::error::no qemu-aarch64 binary after install"; exit 1; }
+          for t in tests/test_*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            echo "=== $name (aarch64, $QEMU) ==="
+            CYRIUS_DCE=1 cyrius build --aarch64 "$t" "/tmp/ci_a64_$name"
+            "$QEMU" "/tmp/ci_a64_$name"
+            rm -f "/tmp/ci_a64_$name"
+          done
 
       - name: Build (agnos target)
         # ⛔ CI BUILT LINUX AND aarch64 — NEITHER OF WHICH COMPILES THE agnos ARM. Large parts of
@@ -195,7 +216,7 @@ jobs:
           ./build/bench_core | tee bench-results.txt
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agnsh-${{ github.sha }}
           path: |
@@ -206,7 +227,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scan for dangerous patterns
         # Matches code lines only — rejects patterns in # comments.
         # Note: this scan is tuned for agnoshi (userland shell), not
@@ -271,7 +292,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check required docs
         run: |
           MISSING=0
