@@ -35,7 +35,9 @@ agnoshi (AI natural language shell, Cyrius)
 1. `cyrius deps` to repopulate `./lib/` from the pinned stdlib snapshot. It does not delete
    files an earlier pin vendored, so after a pin bump run `rm -rf lib && cyrius deps` — that is
    what CI's clean checkout gets (38 files at 6.6.6; a long-lived local `lib/` had grown to 114)
-2. Test + benchmark sweep of existing code
+2. Test + benchmark sweep of existing code. CI builds the agnos target but cannot run it: for
+   anything touching an agnos path, run `python3 scripts/agnos-qemu-test.py` (boots agnsh on the
+   agnos kernel in QEMU; needs `../agnos` and `../gnoboot` built; only reads the agnos repo)
 3. Cleanliness gates (match CI):
    - `cyrius check src/agnsh.cyr` (syntax — walk from the ENTRY; modules do not
      declare their own includes, so a per-file check trips on cross-module refs)

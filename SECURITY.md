@@ -73,6 +73,12 @@ exist, so its wire-up is a re-implementation — roadmap 1.10.x — checkpointin
 Every action is logged as a JSON line to `~/.agnsh_audit.log`. All fields
 are JSON-escaped (C4 mitigation) so crafted input cannot forge entries.
 
+⛔ **On AGNOS the log only accumulates from 1.9.14.** agnos ignores `O_APPEND`, so
+before 1.9.14 each record overwrote the previous one and a session left roughly
+its last record behind (measured in QEMU; see
+`docs/guides/security-model.md` § Audit Log Integrity). Linux hosts were not
+affected.
+
 ### Privilege escalation — ⚠ NOT IN THE SHIPPED BINARY YET
 
 There is **no privilege-escalation path in the binary at all**: nothing invokes

@@ -13,7 +13,7 @@
 > **Cite a slot by arc and title** — `roadmap 1.10.x — NL exec` — never by patch number alone:
 > titles survive a renumber. References name functions and files, not line numbers.
 >
-> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 1.9.13, cyrius 6.6.6).
+> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 1.9.14, cyrius 6.6.6).
 > Every upstream gate was re-checked at this pin. Three had quietly opened and moved into arcs:
 > agnos verification (QEMU, not iron), agnos `AO_NOFOLLOW`, and the host LLM client.
 
@@ -32,7 +32,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **1.9.x** | Close-out: agnos verification, honest surfaces, the input-classification decision | **1.9.14** — agnos audit append + QEMU verification | — |
+| **1.9.x** | Close-out: honest surfaces, the input-classification decision | **1.9.15** — honest surfaces | — |
 | **1.10.x** | NL execution — the natural-language path runs what it proposes | **1.10.0** — NL exec, SAFE / READ_ONLY | ADR-007 (1.9.16) |
 | **1.11.x** | Interactive shell — `cd`, an rc file, a line editor | **1.11.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **1.12.x** | hoosh / LLM — answer questions, suggest commands | **1.12.0** — hoosh client (host) | host: none; agnos: loopback TCP |
@@ -52,45 +52,13 @@ on the other.
 
 ## 1.9.x — Close-out
 
-Three slots finish the hardening arc: the verification debt it could never pay (the gate is gone), the
-last places the binary misdescribes itself, and the decision that must precede NL execution.
-
-### 1.9.14 — agnos: the audit log appends, and the exec surface is finally run
-
-⛔ **Probable live defect on the primary target** (static reading, not yet run). agnos ignores
-`AO_APPEND` — `ext2_open` starts every file at position 0 and stores no flags — and cyrius 6.6.6's own
-`file_append_locked` seeks to the end on agnos for exactly that reason (`xlseek(fd, 0, 2)` under
-`#ifdef CYRIUS_TARGET_AGNOS`). `AuditLogger_log` does not, so on agnos each audit record is likely
-written at offset 0 over the last: the "launched + outcome" pair the 1.9.2 exec surface exists to
-record could never survive to be read.
-
-**The verification debt is no longer hardware-gated.** agnos's QEMU harnesses already boot agnsh,
-type into it and read its output (`agnsh-bg-test`, `agnsh-multijob-test`, `pipe-stream-test`,
-`sweep-test`), and everything they need, KVM included, is installed on the dev host. What none of them
-checks is the audit log — `agnsh_audit` appears nowhere in the agnos repo — and ~19 agnos-only
-functions have never been run (`scripts/check-coverage.sh` reports them): the pipeline / redirect /
-background-job records, the probe-before-validate order in `sh_try_bareword_launch`, the two sentinel
-collapses, the three `exec_redirect#62` arm-return checks, and the pre-spawn job-table cap.
-
-- Fix `AuditLogger_log` on agnos: seek to end after the open, as `file_append_locked` does. (The history
-  file is unaffected — it is rewritten whole with `O_TRUNC`.)
-- `sh_run_redirect`'s raw `sys_open(file, strlen(file), 0x301)` is the **last state-changing open
-  without `AO_NOFOLLOW`**. The kernel has honoured the bit since agnos 1.56.53, so the fix is `0x1301`.
-- Add an agnsh smoke to the agnos harness set that asserts, for `cmd1 | cmd2`, `cmd > file` and
-  `prog &`: a `launched` record followed by its matching outcome; `> /.agnsh_audit.log` refused and
-  recorded `denied`; a 9th background job refused **without** a stray child; a missing binary in a
-  pipeline stage reported once rather than retried down the NL path. Read the log back in the guest
-  with `owl -p /.agnsh_audit.log`, or with `debugfs` against the image.
-- ⚠ The harness lives in the agnos repo (`scripts/harness/`, staged via `scripts/burn/stage-agnsh.sh`,
-  whose agnsh is 1.9.11 today). agnoshi supplies the binary and the assertions; coordinate the landing.
-  agnos's `agnsh-verb-test` also verifies a `>` redirect with `cat`, which agnsh has routed to owl since
-  1.5.0 — stale on their side.
-
-**Done when** the smoke passes in QEMU with the append fix, and fails with the fix reverted.
+Two slots finish the hardening arc: the last places the binary misdescribes itself, and the decision
+that must precede NL execution.
 
 ### 1.9.15 — Honest surfaces, and the state-file tail
 
-Small and independent; can land before 1.9.14 if the harness coordination stalls.
+Small and independent. Run `scripts/agnos-qemu-test.py` for the audit-writer changes — they touch
+the agnos path.
 
 - **The binary claims a prompt that does not exist.** `print_intent_result` prints `Approval required
   (interactive prompt in shell mode)` for HIGH risk, and the interactive loop routes NL input through
@@ -98,11 +66,15 @@ Small and independent; can land before 1.9.14 if the harness coordination stalls
   what happens instead. `scripts/smoke-test.sh` matches only `Approval required`; `SECURITY.md`,
   `getting-started.md` and `scripting.md` quote the whole line and change with it.
 - **The audit trail stops without a word.** When the log cannot be opened — a refused symlink, a full
-  disk, a read-only home — `AuditLogger_log` returns -1 and nothing reports it, while the history save
-  does warn. Warn on stderr (once per process is enough).
+  disk, a read-only home — or, on agnos, the seek to its end fails (1.9.14 writes nothing rather than
+  overwrite), `AuditLogger_log` returns -1 and nothing reports it, while the history save does warn.
+  Warn on stderr (once per process is enough).
 - **Re-chmod by path follows a late swap.** Both writers re-assert 0600 with `sys_chmod(path, …)` after
   the `O_NOFOLLOW` open, and a path chmod follows a symlink swapped in between the two calls. `fchmod`
-  on the open fd closes the window — check agnos has an equivalent first.
+  on the open fd closes the window. **Linux-only**: agnos has no permission bits — its peer's
+  `sys_chmod` is a stub returning 0 — and ⛔ syscall 91, Linux x86_64's `fchmod`, is `gpu_blit_bb` on
+  agnos. Use the per-arch `SYS_FCHMOD` (91 x86_64, 52 aarch64) under `#ifndef CYRIUS_TARGET_AGNOS`,
+  never a raw number.
 - **Dead stubs.** `ui_show_error` / `ui_show_warning` in `src/agnsh.cyr` are `return 0` no-ops: their
   only callers are outside the include graph today, but the first in-graph caller would silently lose
   its message. Delete them or give them stderr bodies — before 1.11.0 wires `session.cyr`, which calls
@@ -319,7 +291,7 @@ transport. On agnos the client is § Gated on loopback TCP.
 | **NL exec contract** | 1.10.0 | (1) Which modes execute — `run` already confirms in `human`/`strict` and runs directly in `auto`/`assist` (`mode_needs_confirm`); reuse that, or say why NL differs. (2) The `-c` report is on **stdout** today and `scripting.md` documents piping it; moving it to stderr so child output stays clean is **breaking** — keep it, flag it, or make it 2.0.0. (3) Does the host execute at all, given it has only `run()`? |
 | **Power verbs and confirmation** | 1.10.3 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
 | **Metacharacter pass-through in `human` mode** | any redirection-lane work | Let `;` `\|` `&` `$()` `<` `>` through in `human` only (user-flagged 2026-07-07). `is_shell_metachar` and its four wrappers are mode-blind with no mode parameter, so this threads one. On Linux it must warn: metachar → `execve` is a real injection vector (audit C2). |
-| **Install location** | next release after 1.9.13 | `scripts/install.sh` → `/usr/local/bin`; the zugot recipe (ark) → `/usr/bin`; agnos images → `/bin/agnsh`. The first two are FHS-correct as a pair (local build vs package), so the likely ruling is "no change" — but the recipe ships no man page, which is a real gap. |
+| **Install location** | the next zugot recipe bump | `scripts/install.sh` → `/usr/local/bin`; the zugot recipe (ark) → `/usr/bin`; agnos images → `/bin/agnsh`. The first two are FHS-correct as a pair (local build vs package), so the likely ruling is "no change" — but the recipe ships no man page, which is a real gap. |
 
 ---
 
@@ -392,7 +364,9 @@ one arch, and three gates had opened without anyone noticing.
    tagged, args, chrono, process); CLI changes to fmt / lint / check / vet / capacity / build / deps;
    the bench row format (`scripts/bench-history.sh` parses ` avg ` lines); every "consumers must".
 4. All CI gates on a clean `git archive` copy first — CI's own starting state — then on the tree,
-   including the aarch64 suites under qemu-user and the agnos build.
+   including the aarch64 suites under qemu-user and the agnos build. Then
+   `python3 scripts/agnos-qemu-test.py`: CI builds the agnos target, and this is the only thing that
+   runs it.
 5. **Re-verify every gate in § Gated and every upstream claim in the arcs.** A pin bump is when a
    blocker quietly disappears.
 6. Benchmarks: five alternating runs per toolchain behind any claim; one `bench-history.csv` row each.
@@ -409,8 +383,9 @@ one arch, and three gates had opened without anyone noticing.
   `grep -rn "roadmap 1\.\|Bucket\|Slice [0-9]" src docs README.md SECURITY.md`.
 - Refresh the touched rows of `docs/doc-health.md`.
 - The zugot recipe, `~/Repos/zugot/marketplace/agnoshi.cyml`: version plus the sha256 of the
-  `agnsh-X.Y.Z-x86_64-linux` release asset. It pins **1.7.0** today — bump it to 1.9.13 once that
-  release's asset exists.
+  `agnsh-X.Y.Z-x86_64-linux` release asset (check it against the release's `SHA256SUMS`), then
+  zugot's own `scripts/validate_recipes.py` and a line in zugot's CHANGELOG. Do it every release: it
+  drifted from 1.7.0 to 1.9.13 before anyone did.
 
 ### Notes for the next agent
 
@@ -418,6 +393,10 @@ one arch, and three gates had opened without anyone noticing.
   `O_NOFOLLOW` / `O_LARGEFILE` and `O_DIRECTORY` / `O_DIRECT`. Hardcoding x86's `O_NOFOLLOW` left the
   aarch64 release following symlinks for twelve releases, behind a unit test that pinned the bug. CI
   runs both suites on aarch64 under qemu-user since 1.9.13; keep it that way.
+- **agnos paths run only in `scripts/agnos-qemu-test.py`.** Typing there is about one keystroke a
+  second, so scenarios are slow. A background-job test needs a sleeper that waits on a signal (the
+  harness creates `/stop`) — a busy-count starved the keyboard and a fixed wall time expired before
+  the ninth job was typed; both were tried. An agnos syscall clobbers `rcx, rdx, rsi, rdi, r8–r11`.
 - **Honour ADR-006** at every new Str/cstring boundary: `_in_str` suffix, per-arch syscall wrappers,
   `str_clone` for static-buffer escape, every cstring path NUL-terminated.
 - **The lint shield's next free category is I** (A–H are taken; H is the 1.9.10 audit-path seam). Its

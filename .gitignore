@@ -16,6 +16,9 @@
 # an older commit for benchmark re-runs.
 rust-old/
 
+# Python (scripts/agnos-qemu-test.py)
+__pycache__/
+
 # IDE
 .idea/
 .vscode/

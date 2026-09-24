@@ -6,6 +6,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.9.14] - 2026-09-23 — agnsh runs on agnos under test, and its audit log stops overwriting itself
+
+The first slot of the 1.9.x close-out. CI builds agnsh for agnos on every push and has never been
+able to run it, so ~19 agnos-only functions — the pipeline, redirect and background-job launchers
+and the audit records they write — had never executed anywhere a result was read back. The new
+`scripts/agnos-qemu-test.py` boots agnsh on the real agnos kernel in QEMU and checks what the shell
+did against what it recorded. Its first run found both defects below.
+
+### Fixed — ⛔ on agnos, every audit record overwrote the one before it
+
+agnos ignores `AO_APPEND`: `ext2_open` starts every file at position 0 and keeps no open flags.
+`AuditLogger_log` relied on append, so each record was written at offset 0 over the last. Measured
+on agnos 1.57.5: after three natural-language lines, `owl -p /.agnsh_audit.log` printed **one**
+record — its own launch — and after `poweroff` the disk held three lines, one of them complete:
+
+```
+{"timestamp":"…","input":"poweroff","action":"poweroff","approved":1,"result":"launched","exit_code":null}
+result":"executed","exit_code":0}
+l}
+```
+
+The last record, then the tails of longer ones it partly covered. So on agnos the launched-then-outcome
+pair that 1.9.2 built — so a launch that hangs or takes the machine down still leaves a trace — could
+never survive to be read. Now the writer seeks to the end after the open on agnos, as the stdlib's own
+`file_append_locked` does there, and writes nothing if the seek fails: a lost record is recoverable,
+a record written over the log is not. The same session now keeps every record in order — the four
+written so far when read back in the guest, all six on disk after `poweroff` — every line complete.
+Linux hosts were never affected. The history file was
+not either — it is rewritten whole with `O_TRUNC`.
+
+### Security — `>` wrote through a symlink at its target (agnos)
+
+`sh_run_redirect` opened the target with a raw `AO_WRONLY|AO_CREAT|AO_TRUNC` (`0x301`) and no
+`AO_NOFOLLOW` — the last state-changing open in agnsh without it. With `/redir-link` →
+`/redir-target.txt`, `echo pwned > /redir-link` truncated the target and wrote `pwned` into it. It
+now also passes `AO_NOFOLLOW` (honoured from agnos 1.56.53), spelled from the agnos peer's
+`AgnosOpenFlag` names rather than as a number: the redirect is refused with `run: cannot open
+redirect target`, recorded `launched` then `error`, and the target is untouched. A control step reads
+the symlink normally first — it resolves — so the refusal is `AO_NOFOLLOW`'s doing, not a kernel
+that cannot follow symlinks.
+
+### Added — `scripts/agnos-qemu-test.py`
+
+- Builds agnsh for agnos from the tree, seeds it into a **copy** of `../agnos/build/rootfs` with
+  fixtures (a planted symlink and its target, a `/bin/sleeper`), boots gnoboot + `../agnos/build/agnos`
+  in QEMU (KVM when `/dev/kvm` is usable), types at the prompt, and reads the audit log back twice:
+  in the guest with `owl -p`, and from the disk image with `debugfs` after agnsh's own `poweroff`.
+  The agnos repo is only read.
+- Checks: natural-language records; `cmd > file` (output, then `launched` + `executed`);
+  `> /.agnsh_audit.log` (refused, one `denied`); `>` onto a symlink (refused, target untouched,
+  `launched` + `error`); `cmd1 | cmd2` (`launched` + `executed`); a missing pipeline binary (reported
+  once, not retried down the NL path, one `error`); eight background jobs, a ninth refused with no job
+  number and **no stray child**, each reaped job's own outcome record; every line on disk a complete
+  record, and the in-guest read-back identical to the disk log's first records.
+- Watched fail: against 1.9.13 it records the overwritten log (5/10 on the audit checks) and the
+  redirect writing through the symlink.
+- Manual, not CI: it needs `../agnos` and `../gnoboot` built, and typing on agnos in QEMU runs at
+  about one keystroke a second, so a full run takes about eight minutes. Final run: 30/30 checks.
+- ⚠ It lives in agnoshi, not in agnos's harness set as the roadmap first proposed: agnoshi owns
+  the assertions, and reading agnos's build outputs means nothing has to land in two repos.
+- Two sleeper designs failed before the one that shipped, and the harness says why. A busy-counting
+  sleeper starved the machine — eight on one vCPU, and keystrokes dropped mid-command (`sleeper`
+  arrived as `sleer`). A fixed wall-time sleeper exited before the ninth job was typed, freeing a slot.
+  The shipped one yields every iteration and waits for the harness to create `/stop`.
+
+### Changed
+
+- `scripts/check-coverage.sh` points the agnos-only functions at the harness rather than at "an
+  agnos smoke run on iron". `CLAUDE.md` and `CONTRIBUTING.md` say when to run it.
+- `SECURITY.md`, `docs/guides/security-model.md`, `README.md`: the audit log only accumulates on
+  agnos from 1.9.14; the `>` target refuses a symlink from 1.9.14.
+- `.gitignore` gains `__pycache__/`, now that the repo carries a Python script.
+
+### 1.9.13 follow-through
+
+- The released artifacts were checked against the release's `SHA256SUMS`, and both binaries refuse a
+  planted symlink at either state file (aarch64 under qemu, x86_64 natively).
+- CI and the release workflow passed on GitHub with the bumped actions, and the new *Tests on aarch64
+  (qemu-user)* step ran (15 s; its skip path takes ~0 s).
+- `bench-history.csv` row `95b3862-dirty` is the quiet-host 6.6.6 row 1.9.13 could not record. The
+  bench binary was byte-identical to one built from `95b3862`, so it measures 1.9.13's code.
+- The zugot recipe (`zugot/marketplace/agnoshi.cyml`, a separate repo) moved 1.7.0 → 1.9.13, with
+  the asset's sha256 checked against `SHA256SUMS` and zugot's validator clean.
+
+### Performance — no host code path changed
+
+Both fixes are inside `#ifdef CYRIUS_TARGET_AGNOS`, and that is checked rather than assumed: the
+1.9.14 x86_64 `agnsh` is byte-identical to 1.9.13's source built with only the version string
+changed, and the bench binary is byte-identical to 1.9.13's.
+
 ## [1.9.13] - 2026-09-23 — cyrius 6.6.6, and the aarch64 build stops following symlinks
 
 A toolchain and dependency release that found a security defect on the way through. The tree

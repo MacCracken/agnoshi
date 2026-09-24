@@ -116,7 +116,7 @@ See `docs/guides/security-model.md` for the deep dive. v1.0.0 closed 21 audit fi
 - Argument validation on every ADMIN-level translator (`useradd`, `passwd`, `firewall_*`, git)
 - Audit log JSON-escaped **and UTF-8 validated**, so one crafted byte cannot make the log unparseable
 - State files opened `O_NOFOLLOW`, created 0600, audit-log mode re-asserted every open
-- `>` refuses to truncate the shell's own audit log or history
+- `>` refuses to truncate the shell's own audit log or history, and (AGNOS, 1.9.14) refuses a symlink as its target
 
 ⚠ **Documented elsewhere but NOT active in the binary** — the modules exist and
 are unwired: terminal-escape stripping in the approval UI and git-branch prompt,

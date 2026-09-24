@@ -23,9 +23,10 @@
 # AGNOS-ONLY: functions inside `#ifdef CYRIUS_TARGET_AGNOS`. They are absent
 #   from a host build, so a host test CANNOT reach them — counting them in the
 #   gated denominator would punish the suite for a platform boundary. But they
-#   DO ship on agnos, untested, so silently dropping them would hide exactly
-#   the gap the roadmap tracks as verification debt. They are reported
-#   separately and loudly instead.
+#   DO ship on agnos, and no host test can reach them, so silently dropping
+#   them would hide exactly the gap that let the agnos audit log overwrite
+#   itself until 1.9.14. They are reported separately and loudly instead;
+#   scripts/agnos-qemu-test.py is what runs them (QEMU, manual, not CI).
 #
 # Excluded from the denominator (entry scaffolding, not library code):
 #   main / _entry / _agnos_entry / print_* / interactive_loop / read_line
@@ -122,9 +123,9 @@ AGNOS_UNTESTED_N=$(echo $AGNOS_UNTESTED | wc -w)
 if [ "$AGNOS_TOTAL" -gt 0 ]; then
     echo ""
     echo "  agnos-only fns (absent from a host build, NOT gated): $AGNOS_TOTAL"
-    echo "    of which untested: $AGNOS_UNTESTED_N"
-    echo "    These need an agnos smoke run on iron, not a host unit test."
-    echo "    Tracked as verification debt in docs/development/roadmap.md."
+    echo "    of which not named by any host test: $AGNOS_UNTESTED_N"
+    echo "    No host test can reach these. Run them on agnos in QEMU with"
+    echo "    scripts/agnos-qemu-test.py (manual, not CI: needs ../agnos and ../gnoboot built)."
 fi
 
 if [ "$PERCENT" -lt "$THRESHOLD" ]; then

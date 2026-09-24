@@ -770,7 +770,8 @@ fn sh_try_pipeline_launch(line, mode): i64 {
 # target path INDIVIDUALLY (each side is metachar-free, so no `$()`/backtick/`;` rides
 # into execve). The '>' is consumed by this parser alone.
 #
-# MVP scope: a single `cmd > file` (truncate; AO_WRONLY|AO_CREAT|AO_TRUNC = 0x301). `>>`
+# MVP scope: a single `cmd > file` (truncate; AO_WRONLY|AO_CREAT|AO_TRUNC, plus AO_NOFOLLOW
+# since 1.9.14 so a symlink at the target is refused rather than written through). `>>`
 # append, multiple `>`, and combined pipe+redirect are NOT supported — each safely fails
 # the is_safe_path check on the residual '>' rather than misbehaving. The target should
 # be an absolute path (agnos userland has no cwd). Agnos-only, like the pipeline.
@@ -832,8 +833,9 @@ fn sh_run_redirect(line, mode): i64 {
     #
     # ⚠ SCOPE: this is an exact-string comparison against the resolved path, so
     # it stops the direct `> /.agnsh_audit.log` case, not every alias of it
-    # (`//.agnsh_audit.log`, a symlink pointing at it, a bind mount). Closing
-    # that properly needs canonicalisation, which agnos has no realpath for.
+    # (`//.agnsh_audit.log`, a bind mount). A symlink pointing at it is refused
+    # since 1.9.14, but by the target open's AO_NOFOLLOW below, not by this check.
+    # Closing the rest needs canonicalisation, which agnos has no realpath for.
     # It is a foot-gun guard, NOT a security boundary — an actor who can already
     # run arbitrary /bin programs has other ways to truncate a file. What it
     # does guarantee is that the *accidental* case is refused and, either way,
@@ -868,8 +870,13 @@ fn sh_run_redirect(line, mode): i64 {
     }
     # Committed from here: the target is about to be opened AO_TRUNC.
     audit_exec_ctx(line, "launched", AUDIT_NO_EXIT);
-    # Open FILE for write, truncating. agnos AO_WRONLY|AO_CREAT|AO_TRUNC = 0x1|0x100|0x200.
-    var fd = sys_open(file, strlen(file), 0x301);
+    # Open FILE for write, truncating — and REFUSE a symlink at its final component.
+    # ⛔ Until 1.9.14 this was 0x301 (AO_WRONLY|AO_CREAT|AO_TRUNC) with no AO_NOFOLLOW, the last
+    # state-changing open in agnsh without it. Measured in QEMU on agnos 1.57.5
+    # (scripts/agnos-qemu-test.py): with /redir-link -> /redir-target.txt, `echo pwned >
+    # /redir-link` truncated the target and wrote into it. agnos honours AO_NOFOLLOW from 1.56.53
+    # (the open answers -1); the flags are the agnos peer's AgnosOpenFlag names, not numbers.
+    var fd = sys_open(file, strlen(file), AO_WRONLY | AO_CREAT | AO_TRUNC | AO_NOFOLLOW);
     if (fd < 0) {
         eprintln_cstr("run: cannot open redirect target");
         audit_exec_ctx(line, "error", fd);

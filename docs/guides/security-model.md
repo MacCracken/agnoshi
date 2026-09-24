@@ -122,6 +122,15 @@ hangs, kills the shell, or reboots the machine still leaves a trace — a
 `launched` with no matching outcome *is* the signal. Refusals are recorded too,
 with `"approved":0`. `>` refuses to truncate the audit log or the history file.
 
+⛔ **On agnos, none of that held before 1.9.14.** agnos ignores `AO_APPEND`
+(`ext2_open` starts every file at position 0), and the writer relied on it, so
+each record was written at offset 0 over the previous one. Measured in QEMU on
+agnos 1.57.5 with `scripts/agnos-qemu-test.py`: a session that wrote six
+records left one complete record on disk — the last — plus the torn tails of
+longer ones. The writer now seeks to the end on agnos before writing, and refuses to
+write if the seek fails (a lost record is recoverable; one written over the log
+is not). Linux hosts were never affected — `O_APPEND` is honoured there.
+
 ### 6. Checkpoint / Undo — ⚠ NOT IN THE SHIPPED BINARY
 
 `src/checkpoint.cyr` implements backup-before-destructive-op, `undo` and a
@@ -248,9 +257,11 @@ deferred them "to v1.4.0"; both were in fact closed in the 1.9.x arc):
   `O_NOFOLLOW` (cyrius ≥ 6.6.4). CI now runs both test suites on aarch64
   under qemu-user, including a planted-symlink test. On **agnos**,
   `file_open` maps the bit to `AO_NOFOLLOW` since cyrius 6.6.4, which the
-  kernel honours from agnos 1.56.53; before that it was dropped. The one
-  write path still without it is the `>` redirect target's raw `0x301`
-  open in `run_agnos.cyr` — tracked in the roadmap.
+  kernel honours from agnos 1.56.53; before that it was dropped. The last
+  write path without it, the `>` redirect target's raw open in
+  `run_agnos.cyr`, gained `AO_NOFOLLOW` in 1.9.14: in QEMU on agnos 1.57.5,
+  `echo pwned > /redir-link` wrote through a planted symlink into its target
+  before the fix and is refused (`cannot open redirect target`) after it.
 - **chmod-failure logging** — ✅ **superseded in 1.9.4.** The chmod is no longer
   the primary protection: a new history file is created **0600 at open**, and the
   audit log's mode is re-asserted on every open. A failed chmod now only matters

@@ -103,6 +103,19 @@ fn AuditLogger_log(self, entry) {
     var fd = file_open(load64(self),
       OPEN_WRONLY | OPEN_CREAT | OPEN_APPEND | OPEN_NOFOLLOW, STATE_FILE_MODE);
     if (fd < 0) { return 0 - 1; }
+    # ⛔ agnos IGNORES AO_APPEND. Its ext2_open starts every file at position 0 and keeps no
+    # open flags, so until 1.9.14 each record on agnos was written at offset 0 over the last.
+    # Measured in QEMU on agnos 1.57.5 (scripts/agnos-qemu-test.py): a session's whole trail
+    # came back as its final record plus the torn tails of longer ones — the launched+outcome
+    # pair this log exists to keep could never survive to be read. Seek to the end explicitly,
+    # as lib/io.cyr's file_append_locked does on agnos (whence 2 = SEEK_END). If the seek
+    # fails, write nothing: a lost record is recoverable, a record written over the log is not.
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (xlseek(fd, 0, 2) < 0) {
+        file_close(fd);
+        return 0 - 1;
+    }
+    #endif
     # ⛔ REPAIR THE MODE, DO NOT ASSUME IT. The 0600 above applies only when THIS
     # open creates the file. An audit log that already exists — created by an
     # earlier agnsh under a different umask, restored from a backup, or copied
