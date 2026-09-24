@@ -87,11 +87,11 @@ Change mode interactively with `mode <name>`, or start with `--mode <name>`
 
 ⚠ **What the mode does NOT change today.** No mode hands you a raw shell, and no
 mode disables classification — every mode classifies, reports risk and writes an
-audit record. What `human` / `strict` add is a **confirmation prompt before a
-program launch** (`run`, or an AGNOS bareword). There is no interactive approval
-prompt for permission tiers yet: a SYSTEM_WRITE or ADMIN command prints
-`Approval required` and is not executed, because **the natural-language path
-does not execute at all** (see below).
+audit record. What `human` / `strict` add is a **confirmation prompt before
+every launch** — a typed program, `run`, or a natural-language line that runs.
+There is no interactive approval prompt for permission tiers yet: a USER_WRITE,
+SYSTEM_WRITE or ADMIN translation prints `Approval required` and is not executed
+(see below).
 
 ## Permission Levels
 
@@ -141,18 +141,28 @@ entries, nor make the log unparseable.
 
 ## What actually executes
 
-⚠ **The natural-language path does not execute anything.** Typing
-`show me all files` prints the translation, its risk, and writes an audit
-record — it does not run `ls`. That is why runnable inputs log
-`result: proposed`.
+Since 2.0.0 ([ADR-008](../adr/008-nl-exec-contract.md)):
 
-What *does* execute:
+- **Natural language runs when it is read-only.** Typing `show me all files`
+  prints the translation and its risk, then runs `ls`. A SAFE or READ_ONLY
+  translation runs; a USER_WRITE, SYSTEM_WRITE or ADMIN one prints
+  `Approval required -- not executed`; a BLOCKED one never runs.
+- **A program's name runs the program** (shell-first,
+  [ADR-007](../adr/007-input-classification.md)): `ls -la` runs `ls`. On a Linux
+  host the program is found on `$PATH`; on AGNOS in `/bin`. So a sentence that
+  starts with a program's name is that program's command line — on a host with Go
+  installed, `go to /tmp` runs `go`.
+- **`run /abs/path [args]`** — any target.
+- **AGNOS only**: two-stage pipelines `cmd1 | cmd2`, output redirection
+  `cmd > file`, and background jobs `prog &`. On a Linux host such a line is
+  refused.
+- A typed line the classifier calls BLOCKED (`rm -rf`, `dd`, …) asks `[y/N]`
+  first, in every mode.
 
-- **Any host or AGNOS**: `run /abs/path` — validated, mode-gated, audited.
-- **AGNOS only**: bareword `/bin/<name> [args]`, two-stage pipelines
-  `cmd1 | cmd2`, output redirection `cmd > file`, and background jobs `prog &`.
-
-Wiring execution into the NL path is roadmap 1.10.x — NL exec.
+Every launch is validated, mode-gated and audited. With `-c`, stdout is the
+program's and agnsh files its report in the report folder
+(`~/.local/state/agnoshi/reports/`); `agnsh -n -c "…"` classifies without running
+— see `docs/examples/scripting.md`.
 
 ## Undo — not available yet
 

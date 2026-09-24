@@ -110,6 +110,18 @@ fn translate_logged_in_users(intent) {
 Remember to use the `alloc + store64` pattern (ADR-002) — `Translation_new`
 handles this internally.
 
+⛔ **Since 2.0.0 a SAFE or READ_ONLY translation RUNS** ([ADR-008](../adr/008-nl-exec-contract.md)):
+the NL path resolves its command (`$PATH` on the host, `/bin` on AGNOS) and executes it with its
+arguments as argv. So:
+
+- the command must be a program the target has — `who` is; `cd` is a shell builtin and would change
+  nothing in a child process, so `nl_verdict` refuses CHANGE_DIR, and does the same for a
+  translation routed to an MCP tool (an `echo` placeholder). Add yours there if it is not a program;
+- every argument must be a **cstring**: push a parser field (a Str) with `arg_cstr`, which converts
+  it once (ADR-006) and keeps an absent field absent. A Str pushed as-is reaches `execve` as a
+  16-byte header, not as text — nothing noticed while nothing ran them;
+- if the target lacks the program, give it the one it has: `SHOW_FILE` becomes `owl -p` on AGNOS.
+
 If your translator reads parser-extracted string fields from the intent
 (path, name, etc.), **validate them with the Str-aware safety predicates**
 per [ADR-006](../adr/006-cstr-str-dispatch-discipline.md):

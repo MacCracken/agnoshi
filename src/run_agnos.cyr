@@ -138,6 +138,38 @@ fn _sh_path_segment(line, start, end): i64 {
 # it, the function would compile only on agnos and the host test would be right
 # back where it started. Its own #ifdef/#ifndef pair picks the launch mechanism.
 
+# ---- The gate every shell line passes (ADR-008, 2.0.0) ----
+#
+# Shell lines — `run`, barewords, pipelines, redirects, `&` jobs — are the user's own commands and do
+# not pass the permission tiers the NL path uses. What they do pass: HUMAN/STRICT confirm before any
+# launch, and a line the classifier calls BLOCKED (`rm -rf`, `dd`, `mkfs`, `chmod`, `chown`, `shred`)
+# confirms in EVERY mode (ruled 2026-09-23). Shell-first on the host would otherwise have let
+# `agnsh -c "rm -rf ~"` run in `auto`, where 1.9.x classified it BLOCKED and ran nothing. The AI never
+# runs BLOCKED (nlexec.cyr); the human may, after an explicit yes.
+
+# Does the permission classifier call this shell line BLOCKED? `line` is a command line whose first
+# word may be a path ("/bin/rm -rf x") — the classifier works on the basename.
+fn shell_line_blocked(line) {
+    var cmd_out[8];
+    store64(&cmd_out, 0);
+    var args = vec_new();
+    var argc = split_command_line(str_from(line), &cmd_out, args);
+    if (load64(&cmd_out) == 0) { return 0; }
+    if (analyze_command_permission(load64(&cmd_out), args, argc) == PermissionLevel.BLOCKED) { return 1; }
+    return 0;
+}
+
+# The launch gate. `action` is what the prompt names ("run /bin/ls -la"); `blocked` is
+# shell_line_blocked's answer for the line (a pipeline's is either stage's). Returns 1 to proceed, 0
+# when declined — the caller audits `denied` and returns EXIT_NOT_RUN.
+fn shell_launch_gate(action, blocked, mode) {
+    if (blocked == 0) {
+        if (mode_needs_confirm(mode) == 0) { return 1; }
+        return verb_confirm(action);
+    }
+    return verb_confirm(str_cat3_cstr("BLOCKED: ", action, ""));
+}
+
 # RUN_EXECWAIT_READY gates the `run` builtin's live exec path. **LIVE since agnos
 # 1.43.0 shipped execwait (#37).** On agnos the launch goes through sh_exec_line
 # (src/run_agnos.cyr → syscall(37, cmdline, len)), NOT the vendored lib run() — that
@@ -152,25 +184,40 @@ fn _sh_path_segment(line, start, end): i64 {
 # build keeps the lib fork/exec run().
 var RUN_EXECWAIT_READY = 1;
 
+# What sh_launch_line returns when no child ran — distinct from every exit status a child can have.
+var LAUNCH_FAILED = 0 - 1;      # it could not be launched
+var LAUNCH_DECLINED = 0 - 2;    # the gate refused it: declined, or BLOCKED without an explicit yes
+
 # Run a program from disk. Shared by the interactive loop and the -c one-shot
-# path. `path` is an already-validated absolute cstr. Returns the child exit
-# code, or 1 on refusal/abort/launch-failure.
+# path. `path` is an already-validated command line whose first word is an
+# absolute path ("/bin/ls -la"). Returns the child's exit code; EXIT_NOT_RUN
+# (126) when refused or declined; EXIT_NOTHING_TO_RUN (127) when it could not be
+# launched (ADR-008 § 4 — until 2.0.0 every one of those was 1).
 fn sh_run_program(path, mode) {
+    var code = sh_launch_line(path, mode);
+    if (code == LAUNCH_DECLINED) { return EXIT_NOT_RUN; }
+    if (code == LAUNCH_FAILED) { return EXIT_NOTHING_TO_RUN; }
+    return code;
+}
+
+# sh_run_program's body, keeping "no child ran" apart from a child's own 126 or 127: NL execution
+# (nlexec.cyr) reports a declined prompt differently from a program that could not be launched, and
+# from a program that ran and exited 127 itself. Returns the child's exit code, LAUNCH_DECLINED or
+# LAUNCH_FAILED.
+fn sh_launch_line(path, mode) {
     if (RUN_EXECWAIT_READY == 0) {
         eprintln_cstr("run: external programs not yet available (pending agnos 1.43.x execwait)");
         audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return LAUNCH_FAILED;
     }
     # Launching an arbitrary on-disk binary is at least as consequential as a
-    # destructive file verb, so it takes the same FIX 4 mode gate: HUMAN/STRICT
-    # confirm before launch; AUTO/ASSIST run directly.
-    if (mode_needs_confirm(mode) == 1) {
-        # verb_confirm prints "(aborted)" itself on a no/Enter, matching the
-        # rm/mv convention — stay silent here rather than double-reporting.
-        if (verb_confirm(str_cat3_cstr("run ", path, "")) == 0) {
-            audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
-            return 1;
-        }
+    # destructive file verb, so it takes the same FIX 4 mode gate — HUMAN/STRICT
+    # confirm, AUTO/ASSIST run directly — and a BLOCKED line confirms in every
+    # mode (the shell-line gate above). verb_confirm prints "(aborted)" itself on
+    # a no/Enter, so stay silent here rather than double-reporting.
+    if (shell_launch_gate(str_cat3_cstr("run ", path, ""), shell_line_blocked(path), mode) == 0) {
+        audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
+        return LAUNCH_DECLINED;
     }
     # ⚠ HOST ONLY: probe before claiming a launch. The exec-surface vocabulary
     # defines `error` as "the launch itself failed (missing binary, exec
@@ -188,10 +235,13 @@ fn sh_run_program(path, mode) {
     # fork/exec path does not hand back, so it is stated rather than papered
     # over. Found by the first test ever written against sh_run_program (1.9.10).
     #ifndef CYRIUS_TARGET_AGNOS
-    if (file_exists(path) == 0) {
+    # 2.0.0: `run PATH ARGS…` takes arguments on the host too, so the probe is on the program — the
+    # first word — not on the whole line.
+    var hargv = host_argv(0, path);
+    if (vec_len(hargv) == 0 || file_exists(vec_get(hargv, 0)) == 0) {
         eprintln_cstr("run: failed to launch program");
         audit_exec_ctx(path, "error", 0 - 1);
-        return 1;
+        return LAUNCH_FAILED;
     }
     #endif
     # Written BEFORE the child starts. A foreground program can hang forever,
@@ -224,7 +274,7 @@ fn sh_run_program(path, mode) {
     if (ecode < 0) {
         eprintln_cstr("run: failed to launch program");
         audit_exec_ctx(path, "error", ecode);
-        return 1;
+        return LAUNCH_FAILED;
     }
     if (ecode != 0) {
         # Shell metadata about the child, not the child's own output — stderr,
@@ -235,23 +285,22 @@ fn sh_run_program(path, mode) {
     audit_exec_ctx(path, audit_exec_outcome(ecode), ecode);
     return ecode;
     #endif
-    # host: the lib fork/exec path (PATH-resolved run()), unchanged.
+    # host: the one launcher every host program goes through (run_host.cyr, ADR-008 § 3) — an argv
+    # vector, agnsh's environment, never a shell. Until 2.0.0 this was lib run(path, 0, 0): no
+    # arguments and an EMPTY environment.
     #ifndef CYRIUS_TARGET_AGNOS
-    # Result is a VALUE FORM pair (tag, payload) since cyrius 6.6.0 — bind BOTH
-    # halves. `var r = run(...)` binds the tag alone and drops the exit code.
-    var rtag, rval = run(path, 0, 0);
-    if (is_ok(rtag) == 1) {
-        var code = result_unwrap(rtag, rval);
-        if (code != 0) {
-            eprint_str(str_from("run: exit "));
-            eprint_line(str_from_int(code));
-        }
-        audit_exec_ctx(path, audit_exec_outcome(code), code);
-        return code;
+    var code = host_exec(hargv);
+    if (code < 0) {
+        eprintln_cstr("run: failed to launch program");
+        audit_exec_ctx(path, "error", 0 - 1);
+        return LAUNCH_FAILED;
     }
-    eprintln_cstr("run: failed to launch program");
-    audit_exec_ctx(path, "error", 0 - 1);
-    return 1;
+    if (code != 0) {
+        eprint_str(str_from("run: exit "));
+        eprint_line(str_from_int(code));
+    }
+    audit_exec_ctx(path, audit_exec_outcome(code), code);
+    return code;
     #endif
 }
 
@@ -343,11 +392,9 @@ fn job_reap_poll(): i64 {
 # and record the pid. Returns 0 on launch (the child runs concurrently), 1 on refusal/failure.
 # Mirrors sh_run_program's mode gate (HUMAN/STRICT confirm; AUTO/ASSIST run directly).
 fn sh_run_program_bg(cmd, mode): i64 {
-    if (mode_needs_confirm(mode) == 1) {
-        if (verb_confirm(str_cat3_cstr("run ", cmd, " &")) == 0) {
-            audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
-            return 1;
-        }
+    if (shell_launch_gate(str_cat3_cstr("run ", cmd, " &"), shell_line_blocked(cmd), mode) == 0) {
+        audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
+        return EXIT_NOT_RUN;
     }
     var len = 0;
     while (load8(cmd + len) != 0) { len = len + 1; }
@@ -609,7 +656,8 @@ fn _sh_pipe_reap(pid): i64 {
     return code;
 }
 
-# Run a 2-stage pipeline. Returns cmd2's exit code (>=0), or 1 on setup/validation failure.
+# Run a 2-stage pipeline. Returns cmd2's exit code (>=0); EXIT_NOT_RUN when a stage is refused or the
+# line is declined, EXIT_NOTHING_TO_RUN when a stage is not a program, 1 for an empty stage.
 fn sh_run_pipeline(line, mode): i64 {
     var pi = _sh_find_pipe(line);
     if (pi < 0) { return 0 - 1; }                   # no ' | ' → not a pipeline (caller falls through)
@@ -631,12 +679,12 @@ fn sh_run_pipeline(line, mode): i64 {
     if (is_safe_path(cmd1) == 0) {
         eprintln_cstr("run: unsafe path in pipeline stage 1");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     if (is_safe_path(cmd2) == 0) {
         eprintln_cstr("run: unsafe path in pipeline stage 2");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     # Both stages must EXIST before we open the pipe + arm any redirect — else a missing
     # cmd1/cmd2 fails its #37 with the fd-swap armed, dangling onto the NEXT command (same
@@ -644,20 +692,21 @@ fn sh_run_pipeline(line, mode): i64 {
     if (_sh_bin_probe(cmd1) == 0) {
         eprintln_cstr("run: no such command in pipeline stage 1");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     if (_sh_bin_probe(cmd2) == 0) {
         eprintln_cstr("run: no such command in pipeline stage 2");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # HUMAN/STRICT confirm the whole pipeline BEFORE arming any redirect (verb_confirm
-    # never execs, so it can't consume the one-shot redirect).
-    if (mode_needs_confirm(mode) == 1) {
-        if (verb_confirm(str_cat3_cstr("run pipeline: ", line, "")) == 0) {
-            audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-            return 1;
-        }
+    # never execs, so it can't consume the one-shot redirect); a BLOCKED stage makes it
+    # confirm in every mode.
+    var pblocked = shell_line_blocked(cmd1);
+    if (shell_line_blocked(cmd2) == 1) { pblocked = 1; }
+    if (shell_launch_gate(str_cat3_cstr("run pipeline: ", line, ""), pblocked, mode) == 0) {
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return EXIT_NOT_RUN;
     }
     # Written before the pipe is wired and either stage is spawned: from here on
     # the shell has committed, and a stage that hangs must still leave a trace.
@@ -794,7 +843,8 @@ fn _sh_bin_probe(cmd): i64 {
     return 1;
 }
 
-# Run `cmd > file`. Returns cmd's exit code (>=0), or 1 on setup/validation failure.
+# Run `cmd > file`. Returns cmd's exit code (>=0); EXIT_NOT_RUN when refused or declined,
+# EXIT_NOTHING_TO_RUN when cmd is not a program, 1 for a line with nothing before or after the '>'.
 fn sh_run_redirect(line, mode): i64 {
     var ri = _sh_find_redirect(line);
     if (ri < 0) { return 0 - 1; }                    # no '>' → not a redirect (caller falls through)
@@ -817,12 +867,12 @@ fn sh_run_redirect(line, mode): i64 {
     if (is_safe_path(cmd) == 0) {
         eprintln_cstr("run: unsafe path in command");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     if (is_safe_path(file) == 0) {
         eprintln_cstr("run: unsafe redirect target");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     # ⛔ REFUSE TO REDIRECT OVER THE SHELL'S OWN STATE FILES. The target is opened
     # AO_TRUNC, so `owl /x > /.agnsh_audit.log` truncated the audit trail — and,
@@ -843,12 +893,12 @@ fn sh_run_redirect(line, mode): i64 {
     if (streq(file, audit_log_path()) == 1) {
         eprintln_cstr("run: refusing to redirect over the shell's audit log");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     if (streq(file, history_path()) == 1) {
         eprintln_cstr("run: refusing to redirect over the shell's history file");
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     # Probe the command EXISTS before opening the target or arming the one-shot redirect.
     # Otherwise a typo (`notacmd > f`) would arm exec_redirect#62, then #37 fails on the
@@ -858,15 +908,13 @@ fn sh_run_redirect(line, mode): i64 {
     if (_sh_bin_probe(cmd) == 0) {
         eprintln_cstr("run: no such command");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # HUMAN/STRICT confirm BEFORE opening/arming (verb_confirm never execs, so it can't
     # consume the one-shot redirect).
-    if (mode_needs_confirm(mode) == 1) {
-        if (verb_confirm(str_cat3_cstr("run redirect: ", line, "")) == 0) {
-            audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
-            return 1;
-        }
+    if (shell_launch_gate(str_cat3_cstr("run redirect: ", line, ""), shell_line_blocked(cmd), mode) == 0) {
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return EXIT_NOT_RUN;
     }
     # Committed from here: the target is about to be opened AO_TRUNC.
     audit_exec_ctx(line, "launched", AUDIT_NO_EXIT);

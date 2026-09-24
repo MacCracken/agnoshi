@@ -6,7 +6,94 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed — 1.9.16's entry shipped without its benchmark table
+## [2.0.0] - 2026-09-23 — natural language runs
+
+agnoshi's premise is that natural language becomes execution, and until now the natural-language
+path only proposed: `agnsh -c "show files"` printed `Command: ls` and ran nothing. 2.0.0 runs the
+first tier — SAFE and READ_ONLY — under the contract ruled in
+[ADR-008](docs/adr/008-nl-exec-contract.md). It is a major release because that contract breaks
+scripts written against 1.x; the roadmap's 1.10.x arc is now 2.0.x.
+
+### Breaking — the `-c` contract (ADR-008)
+
+- **`-c` runs the line**, and **stdout is the program's output**. For a natural-language line, the
+  report — the 1.9.x `Intent:` / `Command:` / `Risk:` block, plus the input, mode, time and result —
+  is **filed in the report folder**, not printed: `$XDG_STATE_HOME/agnoshi/reports/` (default
+  `~/.local/state/agnoshi/reports/`) on the host, `/.agnsh_reports/` on agnos.
+- **Exit status is the program's**; a line agnsh does not run exits **126** (understood, not run) or
+  **127** (nothing to run). 1.x exited 0 for any parse. Shell-line refusals and launch failures move
+  from 1 to the same 126 / 127.
+- **Shell first on the host** (ADR-007): a line whose first word is a program on `$PATH` runs as that
+  program — `ls -la` runs `ls` where 1.x classified it. `|`, `>` and a trailing `&` are refused on the
+  host (they were natural-language proposals); agnos runs them as before.
+- **Host programs inherit agnsh's environment** — the host `run` passed an empty one — and
+  **`run PATH ARGS…`** takes arguments on the host.
+- Confirmation prompts and the agnos `cat` → `owl` hint are on **stderr** (they were stdout).
+- **A typed BLOCKED line always confirms** (ruled 2026-09-23): `rm -rf`, `dd`, `mkfs`, `chmod`,
+  `chown`, `shred` ask `[y/N]` in every mode, on both targets — agnos's `auto` ran them outright.
+- The audit log's parse-time record for an understood **USER_WRITE** line is `needs_approval` /
+  `approved: 0` (it was `proposed` / `1`), because in 2.0.0 that is what stops it running.
+
+#### Migrating from 1.x
+
+| 1.x | 2.0.0 |
+|---|---|
+| `agnsh -c "$cmd" \| grep -q 'Intent:'` to classify | `agnsh --dry-run -c "$cmd" \| grep -q 'Intent:'` |
+| the report on stdout | stdout is the program's; the report is `latest.txt` in the report folder |
+| exit 0 for any parse | the program's status, or 126 / 127 |
+| `"approved":1,"result":"proposed"` for `cp` | `"approved":0,"result":"needs_approval"` |
+
+A line whose first word is a program is that program's command line: on a host with Go installed,
+`agnsh -c "go to /tmp"` runs `go`. `docs/examples/scripting.md` has the full contract.
+
+### Added
+
+- **NL execution** (`src/nlexec.cyr`). A SAFE or READ_ONLY translation that names a program runs
+  through the same launcher as a typed `run` of it: `run`'s mode policy (`human` / `strict` confirm,
+  `auto` / `assist` run directly), the `launched` → `executed` / `failed` / `error` audit records, the
+  child's status. Not run, and reported with a reason: USER_WRITE and above (approval arrives later
+  in 2.0.x), BLOCKED (never), QUESTION, a `… then …` request, refused arguments, the SHELL_COMMAND
+  fall-through, `cd` (a builtin — agnsh's own is 2.1.x) and MCP-routed placeholders. The interactive
+  shell prints the report block, then runs.
+- **The report folder** (`src/report.cyr`): 0700, one report per `-c` run —
+  `<YYYYMMDDTHHMMSSZ>-<pid>.txt`, 0600, created exclusively with `O_NOFOLLOW` — plus `latest.txt`,
+  newest 100 kept. On the host a folder that is a symlink, belongs to another user, or is writable by
+  others is refused (the `/tmp/agnoshi-reports.<uid>` fallback is exactly where a pre-created folder
+  would be an attack), and the command still runs.
+- **`--dry-run` / `-n`**: runs **nothing** — no program, no pipeline, no power verb — prints the report
+  block on stdout (exactly what 1.x `-c` printed on the host) and files the report. `--mode` and `-n`
+  combine in either order.
+- **The host launcher** (`src/run_host.cyr`): a `$PATH` lookup over **absolute** entries only (an
+  empty or relative entry, which means the current directory, is never searched), executable regular
+  files only; and one fork / `execve` launcher with an argv vector — never `/bin/sh -c` — and
+  agnsh's environment, used by `run`, barewords and NL execution.
+- **The shell-line gate** (`shell_line_blocked` / `shell_launch_gate`, `src/run_agnos.cyr`): every
+  shell line is classified, and a BLOCKED one confirms in every mode — `run`, barewords, agnos
+  pipelines, redirects and `&` jobs.
+- On agnos, `SHOW_FILE` translates to `owl -p` — agnos has no `cat`.
+- [ADR-008](docs/adr/008-nl-exec-contract.md) — the contract, the rulings, and what was rejected.
+
+### Changed
+
+- The report block says `Approval required -- not executed` for an understood USER_WRITE line too;
+  until now only the HIGH tiers carried it, because nothing ran at all.
+- The PIPELINE hint distinguishes a `|` line (shell syntax: agnos runs it, the host has no pipeline
+  launcher) from a `… then …` request.
+- The interactive banner and `help` on the host describe what runs there.
+
+### Fixed
+
+- **Translation arguments mixed Strs and cstrings.** The translators pushed parser fields (Str)
+  beside cstring literals into one vector — harmless while nothing read `args`, and a garbage argv
+  the moment `execve` did. Every Str push is now converted once (`arg_cstr`, ADR-006), and an absent
+  field stays absent.
+- `parse_service_action` stored a bare cstring literal (`"start"`) in a Str field. 1.9.x fixed the
+  service *query* producer of this class and missed this one; `translate_service_control` read it with
+  `str_len`.
+- Two tests built translator inputs with the wrong types — a cstring package name and service name —
+  which only the new argument conversion noticed.
+
+#### Also fixed: the 1.9.16 release notes
 
 The 1.9.16 entry went out with a literal `PERF_TABLE_PENDING` where its `### Performance` table
 belonged. The release was tagged while the host was still too loaded to benchmark (a loaded run
@@ -17,6 +104,25 @@ ADR-007 had cited numbers from an intermediate build of the same slice. They are
 tagged code's numbers, which agree within 3 points on every benchmark (`parse/cd` +26% → +29%,
 `parse/shell_cmd` −46% → −45%). The tier cost it states is now the measured spread across the
 benchmarked lines, 0.35–0.66 µs, instead of the single-line "~0.6 µs"; `writing-intents.md` follows.
+
+### Verified
+
+- All CI gates; unit **885/885** (738 + 147 new), security 26/26, parse corpus 358/358, smoke
+  **126/126** (94 + 32 new); host-reachable coverage 227/227; the same suites on aarch64 under
+  qemu-user.
+- On agnos, `scripts/agnos-qemu-test.py` **34/34**, four of them new: `list files in /` runs kriya's
+  `ls` and lists `/bin`, `show contents of …` reads through `owl -p`, and each leaves `proposed`,
+  `launched`, `executed` on disk.
+
+### Performance
+
+The parse benchmarks are unchanged within noise (five alternating runs against 1.9.16, load ≈ 1.2):
+`parse/list_files` −0.6%, `parse/cd` −3.3%, `parse/find_files` −0.6%, `parse/git_status` +1.2%,
+`parse/shell_cmd` −2.3%. One measured cost: **`translate/cd` 165 → 194 ns (+17.6%)** — `arg_cstr`
+copying the path into a cstring, the price of an argv `execve` can use, paid once per argument of a
+translation that is about to start a process. NL execution itself is process creation, which the
+in-process suite does not measure. The x86_64 DCE binary grows 210,216 → 232,248 bytes (+22 KB): the
+report folder, the host launcher and NL execution. `bench-history.csv` row `caa4ee4-dirty`.
 
 ## [1.9.16] - 2026-09-23 — ADR-007: shell first, then specific before broad
 

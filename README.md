@@ -2,29 +2,33 @@
 
 **AI-native natural language shell for AGNOS.**
 
-Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell for AGNOS. It translates natural language into system commands with human oversight, security approval workflows, and full audit logging.
+Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell for AGNOS. It is a shell that understands natural language: a line whose first word is a program runs that program, and anything else is classified, reported, audited and — when its translation is read-only — run.
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**1.9.16 · Cyrius 6.6.6 · 23 modules · ~5 K src lines · 205 KB static binary (DCE, x86_64) · 661 KB aarch64 · 0 runtime deps · 738 unit + 26 security + 358 parse-corpus + 94 smoke tests · 100% host-reachable fn coverage**
+**2.0.0 · Cyrius 6.6.6 · 26 modules · ~6 K src lines · 227 KB static binary (DCE, x86_64) · 663 KB aarch64 · 0 runtime deps · 885 unit + 26 security + 358 parse-corpus + 126 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
+- **Natural language that runs** (2.0.0) — SAFE and READ_ONLY translations execute; the rest are reported and not run ([ADR-008](docs/adr/008-nl-exec-contract.md))
+- **Shell first** — a program's name runs the program, on AGNOS and (via `$PATH`) on Linux ([ADR-007](docs/adr/007-input-classification.md))
 - **Natural language interpretation** — keyword-based intent parser, 44 intent types
 - **30+ domain translators** — filesystem, process, network, packages, git, firewall, user/group, services
 - **Security-first** — every command classified (SAFE / READ_ONLY / USER_WRITE / SYSTEM_WRITE / ADMIN / BLOCKED), with basename extraction so `/usr/bin/dd` cannot bypass the blocklist
 - **Audit logging** — structured JSON log of every action *and every refusal*, with timestamp, user, mode, result and exit code
+- **A report per one-shot** — `-c` keeps stdout for the program and files what agnsh understood in the report folder
 - **Four modes** — human, assist, auto, strict
 - **Single static binary** — `agnsh`, no dynamic dependencies
 
 ⚠ **Not shipped yet, though the modules exist in `src/`**: interactive approval
-prompts, checkpoint/`undo`, and privilege escalation. `src/checkpoint.cyr` and
+prompts — so USER_WRITE, SYSTEM_WRITE and ADMIN natural-language lines report
+`Approval required` and do not run — checkpoint/`undo`, and privilege escalation. `src/checkpoint.cyr` and
 `src/security.cyr` are **not in the binary's include graph**, and
 `src/approval.cyr` is compiled in only for its risk classifier —
 `ApprovalManager_request`, the prompt itself, has no caller. A HIGH-risk command
 reports `Approval required` but is not prompted or blocked, there is no `undo`
 builtin, and nothing invokes `sudo`. See `docs/development/roadmap.md` (the
-1.10.x arc) for the wire-up slices, and `SECURITY.md` for exactly what does and
+2.0.x arc) for the wire-up slices, and `SECURITY.md` for exactly what does and
 does not hold today.
 
 ## Install
@@ -45,7 +49,8 @@ sudo sh scripts/install.sh
 
 ```bash
 agnsh                           # interactive shell
-agnsh -c "show me all files"    # one-shot command
+agnsh -c "show me all files"    # one-shot: runs `ls`; the report goes to the report folder
+agnsh -n -c "remove old.log"    # --dry-run: classify and print the report, run nothing
 agnsh --version                 # print version
 agnsh --help                    # show usage
 ```
@@ -66,8 +71,11 @@ src/                                COMPILED INTO THE BINARY (src/agnsh.cyr's in
 ├── approval.cyr      — risk assessment (the approval UI itself is NOT wired)
 ├── audit.cyr         — JSON audit log + audit-record construction
 ├── history.cyr       — command history (persistent, 0600 at open)
-└── run_agnos.cyr     — AGNOS launch path: exec, pipelines, redirect, bg jobs
-                        (agnos-only; its pure parsers are host-testable)
+├── report.cyr        — the NL report folder (XDG on the host, /.agnsh_reports on AGNOS)
+├── run_agnos.cyr     — AGNOS launch path: exec, pipelines, redirect, bg jobs, and the
+│                       shell-line gate both targets share (its pure parsers are host-testable)
+├── run_host.cyr      — the Linux host's $PATH lookup and argv launcher (host-only)
+└── nlexec.cyr        — the NL path: verdict, report, execution
 
 src/                                PRESENT BUT NOT IN THE BINARY
 ├── security.cyr      — SecurityContext, privilege escalation
@@ -85,7 +93,7 @@ src/                                PRESENT BUT NOT IN THE BINARY
 ⚠ **The split matters.** Anything in the second group is not in the shipped
 binary, so features it implements — approval prompts, `undo`, sudo escalation,
 tab completion, the git-branch prompt — do not exist at runtime today. Wire-up
-slices are in `docs/development/roadmap.md` (the 1.10.x and 1.11.x arcs).
+slices are in `docs/development/roadmap.md` (the 2.0.x and 2.1.x arcs).
 
 ## Documentation
 
@@ -105,6 +113,7 @@ slices are in `docs/development/roadmap.md` (the 1.10.x and 1.11.x arcs).
   - 005: String type discipline (cstring vs Str)
   - 006: cstring/Str dispatch discipline (refines 005)
   - 007: Input classification — shell first, then specific before broad (refines 003)
+  - 008: The NL execution contract — what runs, where the `-c` report goes, how the host reaches a program (2.0.0)
 - **Security audit**: `docs/audit/2026-04-13.md` (21 findings, all resolved)
 - **Man page**: `docs/agnsh.1` (install via `scripts/install.sh`)
 
@@ -119,6 +128,9 @@ See `docs/guides/security-model.md` for the deep dive. v1.0.0 closed 21 audit fi
 - Audit log JSON-escaped **and UTF-8 validated**, so one crafted byte cannot make the log unparseable
 - State files opened `O_NOFOLLOW`, created 0600, audit-log mode re-asserted every open
 - `>` refuses to truncate the shell's own audit log or history, and (AGNOS, 1.9.14) refuses a symlink as its target
+- Programs launch from an argument vector, never through `/bin/sh -c`; the host's `$PATH` lookup searches absolute entries only (2.0.0)
+- A typed line the classifier calls BLOCKED (`rm -rf`, `dd`, `mkfs`, …) asks `[y/N]` in every mode; the AI never runs one (2.0.0)
+- The report folder is 0700 with 0600 reports, and a folder that is a symlink, someone else's, or writable by others is refused (2.0.0)
 
 ⚠ **Documented elsewhere but NOT active in the binary** — the modules exist and
 are unwired: terminal-escape stripping in the approval UI and git-branch prompt,
@@ -137,7 +149,7 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.6.6 is 205 KB (x86_64, DCE) / 661 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 347 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.6.6 is 227 KB (x86_64, DCE) / 663 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 342 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 

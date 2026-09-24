@@ -21,6 +21,7 @@ include "lib/process.cyr"
 
 include "src/sanitize.cyr"
 include "src/statepaths.cyr"
+include "src/report.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/config.cyr"
@@ -36,6 +37,8 @@ include "src/history.cyr"
 # else. This is the first time the shell's untrusted-input parsers are
 # reachable from the test suite.
 include "src/run_agnos.cyr"
+include "src/run_host.cyr"
+include "src/nlexec.cyr"
 include "src/security.cyr"
 
 # Compose a SecurityContext (56 bytes — uid, gid, euid, username,
@@ -592,7 +595,7 @@ fn main() {
     # translate_install_package — needs a packages vec at intent + 56
     var ip_intent = Intent_new(IntentTag.INSTALL_PACKAGE);
     var ip_pkgs = vec_new();
-    vec_push(ip_pkgs, "vim");
+    vec_push(ip_pkgs, str_from("vim"));     # a Str, as extract_after produces (2.0.0: args are read)
     store64(ip_intent + 56, ip_pkgs);
     var ip_t = translate_install_package(ip_intent);
     check("translate_install_package cmd", streq(load64(ip_t), "apt") == 1);
@@ -793,7 +796,9 @@ fn main() {
     # tests above; here we lock the translator's own contract.)
     var sctl_intent = Intent_new(IntentTag.SERVICE_CONTROL);
     store64(sctl_intent + 8, str_from("start"));
-    store64(sctl_intent + 16, "nginx");
+    # A Str, as the parser stores it (extract_last_arg). This was the bare literal, which the
+    # translator never read until 2.0.0 made its args real argv (arg_cstr reads the field as a Str).
+    store64(sctl_intent + 16, str_from("nginx"));
     var sctl_t = translate_service_control(sctl_intent);
     check("translate_service_control cmd", streq(load64(sctl_t), "systemctl") == 1);
     check("translate_service_control perm ADMIN", load64(sctl_t + 24) == PermissionLevel.ADMIN);
@@ -1530,6 +1535,12 @@ fn main() {
       streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.SAFE, "x"), "proposed") == 1);
     check("audit class: read_only -> proposed",
       streq(classify_audit_result(IntentTag.LIST_FILES, PermissionLevel.READ_ONLY, "x"), "proposed") == 1);
+    # 2.0.0: an understood USER_WRITE line does not run without approval (ADR-008), so it is not
+    # "proposed" any more; the SHELL_COMMAND fall-through keeps the classifier's view.
+    check("classify: an understood user-write line needs approval",
+      streq(classify_audit_result(IntentTag.COPY, PermissionLevel.USER_WRITE, "x"), "needs_approval") == 1);
+    check("classify: the shell-command fall-through at user-write stays proposed",
+      streq(classify_audit_result(IntentTag.SHELL_COMMAND, PermissionLevel.USER_WRITE, "x"), "proposed") == 1);
     # Tag order matters: PIPELINE has no translator arm, so it falls to
     # translate_unknown and carries the SAME "Unknown intent" description as a
     # real safety rejection. The tag must win, or a pipeline would be logged as
@@ -1712,8 +1723,10 @@ fn main() {
     var sv = Interpreter_new();
     var sv1 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("start service nginx")));
     check("service control -> systemctl", streq(load64(sv1), "systemctl") == 1);
+    # Since 2.0.0 Translation.args are cstrings (translate.cyr, ADR-006), so they compare directly —
+    # the str_cstr these used to wrap them in now reads a cstring as a Str header.
     check("service control action survives",
-      streq(str_cstr(vec_get(load64(sv1 + 8), 0)), "start") == 1);
+      streq(vec_get(load64(sv1 + 8), 0), "start") == 1);
     var sv2 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("restart service sshd")));
     check("service restart -> systemctl", streq(load64(sv2), "systemctl") == 1);
     var gs1 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("git stash")));
@@ -1721,7 +1734,7 @@ fn main() {
     var gs2 = Interpreter_translate(sv, Interpreter_parse(sv, str_from("git stash pop")));
     check("git stash pop -> git", streq(load64(gs2), "git") == 1);
     check("git stash pop keeps its subcommand",
-      streq(str_cstr(vec_get(load64(gs2 + 8), 1)), "pop") == 1);
+      streq(vec_get(load64(gs2 + 8), 1), "pop") == 1);
     # The stored field must be a real Str, not a cstring address.
     var svp = Interpreter_parse(sv, str_from("start service nginx"));
     check("intent field is a usable Str", str_len(load64(svp + 8)) == 5);
@@ -2111,16 +2124,22 @@ fn main() {
     _t_capture_end(1, 9);
     check("eprintln_cstr keeps stdout clean", _t_file_has(cappath, "must-not-reach-stdout") == 0);
 
-    # --- verb_out_cstr / verb_out_nl: the confirm PROMPT is stdout by design ---
-    # The prompt is not a diagnostic; it is the interaction, so it belongs on
-    # fd 1. Asserted so the 1.9.4 stderr migration cannot sweep it up by mistake.
+    # --- verb_out_cstr / verb_out_nl: the confirm PROMPT is on stderr (2.0.0) ---
+    # Until 2.0.0 the prompt was stdout "by design", as the interaction. ADR-008 gives
+    # stdout to the program `-c` runs, so a prompt there would land in whatever a
+    # script captures. Both halves asserted: stderr has it, stdout does not.
     xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
+    _t_capture_begin(2, 9, cappath);
     check("verb_out_cstr returns 0", verb_out_cstr("prompt-text") == 0);
     check("verb_out_nl returns 0", verb_out_nl() == 0);
-    _t_capture_end(1, 9);
-    check("verb_out_cstr writes to fd 1", _t_file_has(cappath, "prompt-text") == 1);
+    _t_capture_end(2, 9);
+    check("verb_out_cstr writes to fd 2", _t_file_has(cappath, "prompt-text") == 1);
     check("verb_out_nl emits exactly one newline", _t_count_nl(cappath) == 1);
+    xunlink(cappath);
+    _t_capture_begin(1, 9, cappath);
+    verb_out_cstr("prompt-not-on-stdout");
+    _t_capture_end(1, 9);
+    check("the prompt keeps stdout clean", _t_file_has(cappath, "prompt-not-on-stdout") == 0);
 
     # --- verb_read_yes / verb_confirm: the gate in front of every launch ---
     # ⛔ Until 1.9.10 the harness pinned read_line to a constant EOF, so the
@@ -2144,11 +2163,12 @@ fn main() {
     _t_stdin_set(" y");
     check("verb_read_yes does not accept a leading space", verb_read_yes() == 0);
 
+    # 2.0.0: the prompt is on STDERR (ADR-008 — stdout is the program's), so fd 2 is captured.
     xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
+    _t_capture_begin(2, 9, cappath);
     _t_stdin_set("y");
     var vc_yes = verb_confirm("run /bin/echo");
-    _t_capture_end(1, 9);
+    _t_capture_end(2, 9);
     check("verb_confirm proceeds on y", vc_yes == 1);
     check("verb_confirm shows what it is asking about",
       _t_file_has(cappath, "run /bin/echo") == 1);
@@ -2157,10 +2177,10 @@ fn main() {
       _t_file_has(cappath, "(aborted)") == 0);
 
     xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
+    _t_capture_begin(2, 9, cappath);
     _t_stdin_set(0);
     var vc_eof = verb_confirm("run /bin/echo");
-    _t_capture_end(1, 9);
+    _t_capture_end(2, 9);
     check("verb_confirm declines at EOF", vc_eof == 0);
     check("verb_confirm reports the abort", _t_file_has(cappath, "(aborted)") == 1);
 
@@ -2169,27 +2189,27 @@ fn main() {
     # the prompt cannot be rendered the answer must be no — proceeding would run
     # a program the user was never asked about.
     xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
+    _t_capture_begin(2, 9, cappath);
     _t_stdin_set("y");
     var vc_null = verb_confirm(0);
-    _t_capture_end(1, 9);
+    _t_capture_end(2, 9);
     check("verb_confirm declines when the prompt cannot be rendered", vc_null == 0);
     check("verb_confirm says why it declined",
       _t_file_has(cappath, "cannot render confirmation prompt") == 1);
 
     # --- sh_cat_owl_warning ---
     xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
+    _t_capture_begin(2, 9, cappath);
     var owl_hit = sh_cat_owl_warning("cat /etc/hosts");
-    _t_capture_end(1, 9);
+    _t_capture_end(2, 9);
     check("cat is intercepted", owl_hit == 1);
     check("the nudge names owl", _t_file_has(cappath, "owl FILE") == 1);
     xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
+    _t_capture_begin(2, 9, cappath);
     var owl_bare = sh_cat_owl_warning("cat");
     var owl_miss = sh_cat_owl_warning("category of files");
     var owl_miss2 = sh_cat_owl_warning("ls");
-    _t_capture_end(1, 9);
+    _t_capture_end(2, 9);
     check("bare cat is intercepted", owl_bare == 1);
     check("a word merely starting with cat is not", owl_miss == 0);
     check("an unrelated line is not", owl_miss2 == 0);
@@ -2418,7 +2438,9 @@ fn main() {
     _t_stdin_set(0);
     var rr_declined = sh_run_program("/bin/true", Mode.HUMAN);
     _t_capture_end(1, 9);
-    check("a declined confirm refuses to launch", rr_declined == 1);
+    # 2.0.0: a refusal is EXIT_NOT_RUN (126), a launch that cannot happen EXIT_NOTHING_TO_RUN (127) —
+    # the shell's own codes (ADR-008 § 4); both were 1 before.
+    check("a declined confirm refuses to launch", rr_declined == EXIT_NOT_RUN);
     check("a declined launch is audited as denied", _t_file_has(rpath2, "\"result\":\"denied\"") == 1);
     check("a declined launch is audited as unapproved", _t_file_has(rpath2, "\"approved\":0") == 1);
     # ⛔ AND IT MUST NOT HAVE LAUNCHED. A `launched` record here would mean the
@@ -2463,7 +2485,7 @@ fn main() {
     # "never started" from "started and returned non-zero".
     xunlink(rpath2);
     var rr_missing = sh_run_program("/nonexistent/agnsh/selftest/binary", Mode.AI_AUTONOMOUS);
-    check("a missing binary reports failure", rr_missing == 1);
+    check("a missing binary reports failure", rr_missing == EXIT_NOTHING_TO_RUN);
     check("a failed launch is audited as error", _t_file_has(rpath2, "\"result\":\"error\"") == 1);
     check("a failed launch is distinct from a failed child",
       _t_file_has(rpath2, "\"result\":\"failed\"") == 0);
@@ -2532,6 +2554,417 @@ fn main() {
       xstat(sl_target, &slst) == 0 && (load32(&slst + STAT_MODE) % 512) == 420);
     xunlink(sl_link);
     xunlink(sl_target);
+
+    # ================================================================
+    # 2.0.0 — the NL report folder (ADR-008)
+    # ================================================================
+    # The path rule: XDG_STATE_HOME if absolute, else $HOME/.local/state, else /tmp by uid.
+    check("report dir from an absolute XDG_STATE_HOME",
+      streq(report_dir_from("/x/state", "/home/u"), "/x/state/agnoshi/reports") == 1);
+    check("report dir drops XDG_STATE_HOME's trailing slash",
+      streq(report_dir_from("/x/state/", "/home/u"), "/x/state/agnoshi/reports") == 1);
+    check("a relative XDG_STATE_HOME is ignored (XDG rule)",
+      streq(report_dir_from("rel/state", "/home/u"), "/home/u/.local/state/agnoshi/reports") == 1);
+    check("an empty XDG_STATE_HOME is ignored",
+      streq(report_dir_from("", "/home/u"), "/home/u/.local/state/agnoshi/reports") == 1);
+    check("HOME=/ gives /.local/state, not //.local/state",
+      streq(report_dir_from(0, "/"), "/.local/state/agnoshi/reports") == 1);
+    check("HOME's trailing slash is dropped",
+      streq(report_dir_from(0, "/home/u/"), "/home/u/.local/state/agnoshi/reports") == 1);
+    check("a relative HOME falls back to /tmp by uid",
+      streq(report_dir_from(0, "relhome"), tmp_state_path("agnoshi-reports")) == 1);
+    check("no HOME falls back to /tmp by uid",
+      streq(report_dir_from(0, 0), tmp_state_path("agnoshi-reports")) == 1);
+    check("report_dir follows the host rule",
+      streq(report_dir(), report_dir_from(getenv("XDG_STATE_HOME"), getenv("HOME"))) == 1);
+    check("_report_join drops one trailing slash", streq(_report_join("/a/", "/b"), "/a/b") == 1);
+    check("_report_join from the root", streq(_report_join("/", "/x"), "/x") == 1);
+    var rdig[24];
+    check("_report_put_uint writes zero", _report_put_uint(&rdig, 0) == 1 && load8(&rdig) == 48);
+    check("_report_put_uint writes every digit", _report_put_uint(&rdig, 12345) == 5
+      && load8(&rdig) == 49 && load8(&rdig + 4) == 53);
+    check("_report_put refuses no path", _report_put(0, str_from("x"), OPEN_TRUNC) == 0 - 1);
+    # Names: fixed-width UTC stamp first, so they sort in time order.
+    check("report name at the epoch", streq(report_file_name(0, 42, 0), "19700101T000000Z-42.txt") == 1);
+    check("report name for a real time",
+      streq(report_file_name(1758686131, 7, 0), "20250924T035531Z-7.txt") == 1);
+    check("a second report in the same second gets a sequence number",
+      streq(report_file_name(1758686131, 7, 2), "20250924T035531Z-7-2.txt") == 1);
+    check("a sequenced name is a report name", _report_is_name(str_from("20250924T035531Z-7-2.txt")) == 1);
+    check("a name ending in a dash is not", _report_is_name(str_from("20250924T035531Z-7-.txt")) == 0);
+    check("a name with two sequence dashes is not",
+      _report_is_name(str_from("20250924T035531Z-7-2-3.txt")) == 0);
+    check("a report name is recognised", _report_is_name(str_from("20250924T035531Z-12345.txt")) == 1);
+    check("latest.txt is not a report name", _report_is_name(str_from("latest.txt")) == 0);
+    check("a name with no pid is not a report", _report_is_name(str_from("20250924T035531Z-.txt")) == 0);
+    check("a name without the T is not a report", _report_is_name(str_from("20250924X035531Z-1.txt")) == 0);
+    check("a name with another extension is not a report",
+      _report_is_name(str_from("20250924T035531Z-1.log")) == 0);
+    check("names order by time", _report_name_less(str_from("20250924T035531Z-9.txt"),
+        str_from("20250924T035532Z-1.txt")) == 1);
+    # The folder: created 0700; refused when it is a symlink or others can write it.
+    var rdir = tmp_state_path("agnsh_selftest_reports");
+    report_prune(rdir, 0);
+    xunlink(str_cat3_cstr(rdir, "/", "latest.txt"));
+    xunlink(str_cat3_cstr(rdir, "/", "notes.txt"));
+    xrmdir(rdir);
+    check("a fresh report folder is usable", report_dir_prepare(rdir) == 0);
+    var rst[144];
+    check("the report folder is created 0700",
+      xstat(rdir, &rst) == 0 && (load32(&rst + STAT_MODE) % 512) == 448);
+    sys_chmod(rdir, 511);
+    check("a report folder others can write is refused",
+      streq(report_dir_prepare(rdir), "others can write the report folder") == 1);
+    sys_chmod(rdir, 448);
+    var rlink = tmp_state_path("agnsh_selftest_reports_link");
+    xunlink(rlink);
+    sys_symlink(rdir, rlink);
+    check("a symlinked report folder is refused",
+      streq(report_dir_prepare(rlink), "the report folder is not a directory") == 1);
+    xunlink(rlink);
+    # Writing: an exclusive per-run file plus latest.txt, both 0600.
+    var rbody = str_from("Intent: 0  Command: ls\n");
+    var rpath = report_write(rdir, rbody, 1758686131, 7);
+    check("a report is written", rpath != 0);
+    check("...under its time-and-pid name",
+      rpath != 0 && streq(rpath, str_cat3_cstr(rdir, "/", "20250924T035531Z-7.txt")) == 1);
+    check("...with the report's content", rpath != 0 && _t_file_has(rpath, "Command: ls") == 1);
+    check("...0600", rpath != 0 && xstat(rpath, &rst) == 0 && (load32(&rst + STAT_MODE) % 512) == 384);
+    var rlatest = str_cat3_cstr(rdir, "/", "latest.txt");
+    check("latest.txt holds the same report", _t_file_has(rlatest, "Command: ls") == 1);
+    var rpath_seq = report_write(rdir, str_from("second\n"), 1758686131, 7);
+    check("the same second and pid never overwrite a report (exclusive create)",
+      _t_file_has(rpath, "second") == 0);
+    check("...the second report takes the next sequence number", rpath_seq != 0
+      && streq(rpath_seq, str_cat3_cstr(rdir, "/", "20250924T035531Z-7-1.txt")) == 1);
+    # latest.txt planted as a symlink: the new report is still written, the target untouched.
+    var rltarget = tmp_state_path("agnsh_selftest_latest_target");
+    xunlink(rltarget);
+    _t_write_cstr(rltarget, "not a report\n");
+    xunlink(rlatest);
+    sys_symlink(rltarget, rlatest);
+    check("a report is written when latest.txt is a symlink",
+      report_write(rdir, str_from("third\n"), 1758686132, 7) != 0);
+    check("...and latest.txt's symlink target is untouched", _t_file_has(rltarget, "third") == 0);
+    xunlink(rlatest);
+    xunlink(rltarget);
+    # Pruning keeps the newest and never touches latest.txt or a foreign file.
+    report_write(rdir, str_from("4\n"), 1758686133, 7);
+    report_write(rdir, str_from("5\n"), 1758686134, 7);
+    _t_write_cstr(str_cat3_cstr(rdir, "/", "notes.txt"), "keep me\n");
+    check("pruning to 2 removes the three oldest", report_prune(rdir, 2) == 3);
+    check("...the oldest is gone",
+      file_exists(str_cat3_cstr(rdir, "/", "20250924T035531Z-7.txt")) == 0);
+    check("...the newest stays",
+      file_exists(str_cat3_cstr(rdir, "/", "20250924T035534Z-7.txt")) == 1);
+    check("...latest.txt stays", file_exists(rlatest) == 1);
+    check("...a foreign file stays", file_exists(str_cat3_cstr(rdir, "/", "notes.txt")) == 1);
+    report_prune(rdir, 0);
+    xunlink(rlatest);
+    xunlink(str_cat3_cstr(rdir, "/", "notes.txt"));
+    xrmdir(rdir);
+
+    # ================================================================
+    # 2.0.0 — the NL verdict and the -c contract (ADR-008)
+    # ================================================================
+    var nlaudit = tmp_state_path("agnsh_selftest_nlaudit");
+    xunlink(nlaudit);
+    audit_path_override_set(nlaudit);
+    check("a | line is the pipe form of PIPELINE", nl_is_pipe_line("ls | grep foo") == 1);
+    check("a then line is not", nl_is_pipe_line("list files then show disk usage") == 0);
+    # One verdict per kind of line: may it run, and if not, why and with which status.
+    var nv = nl_verdict("show me all files", "AI-AUTO");
+    check("a read-only line may run", load64(nv + NV_RUN) == 1 && load64(nv + NV_STATUS) == 0);
+    check("...and its block is the 1.9.x report",
+      str_eq_cstr(load64(nv + NV_BLOCK), "Intent: 0  Command: ls\n  Risk: [LOW]\n") == 1);
+    nv = nl_verdict("copy a to b", "AI-AUTO");
+    check("a user-write line does not run yet", load64(nv + NV_RUN) == 0 && load64(nv + NV_STATUS) == 126);
+    check("...because it needs approval", streq(load64(nv + NV_REASON), "approval required") == 1);
+    check("...and its block says it was not executed",
+      str_contains_cstr(load64(nv + NV_BLOCK), "Approval required -- not executed") == 1);
+    nv = nl_verdict("rm -rf /tmp/foo", "AI-AUTO");
+    check("a blocked line is 126, blocked",
+      load64(nv + NV_STATUS) == 126 && streq(load64(nv + NV_REASON), "blocked") == 1);
+    check("...with the BLOCKED line", str_contains_cstr(load64(nv + NV_BLOCK), "WARNING: BLOCKED") == 1);
+    nv = nl_verdict("what is dns", "AI-AUTO");
+    check("a question is 127", load64(nv + NV_STATUS) == 127 && streq(load64(nv + NV_REASON), "a question") == 1);
+    nv = nl_verdict("ls | grep foo", "AI-AUTO");
+    check("a | line under the classifier is 127, a shell pipeline",
+      load64(nv + NV_STATUS) == 127 && streq(load64(nv + NV_REASON), "a shell pipeline") == 1);
+    check("...and on the host the hint says there is no pipeline launcher",
+      str_contains_cstr(load64(nv + NV_BLOCK), "no pipeline launcher yet") == 1);
+    nv = nl_verdict("list files then show disk usage", "AI-AUTO");
+    check("a then request is 127, a multi-step request",
+      load64(nv + NV_STATUS) == 127 && streq(load64(nv + NV_REASON), "a multi-step request") == 1);
+    nv = nl_verdict("remove ../etc/passwd", "AI-AUTO");
+    check("refused arguments are 126",
+      load64(nv + NV_STATUS) == 126 && streq(load64(nv + NV_REASON), "arguments refused by the safety checks") == 1);
+    nv = nl_verdict("", "AI-AUTO");
+    check("an empty line is 127, not understood",
+      load64(nv + NV_STATUS) == 127 && str_eq_cstr(load64(nv + NV_BLOCK), "Intent: 43 (UNKNOWN)\n") == 1);
+    nv = nl_verdict("xyzzy plugh", "AI-AUTO");
+    check("an unknown command is 127, not a known command -- not an approval case",
+      load64(nv + NV_STATUS) == 127 && streq(load64(nv + NV_REASON), "not a known command") == 1);
+    check("...and its block does not claim approval would run it",
+      str_contains_cstr(load64(nv + NV_BLOCK), "Approval required") == 0);
+    check("the parse-time audit record is still written", _t_file_has(nlaudit, "copy a to b") == 1);
+    var nvx = alloc(NV_BYTES);
+    var nsb = str_builder_new();
+    str_builder_add_cstr(nsb, "block\n");
+    _nv_not_run(nvx, nsb, "why", 127);
+    check("_nv_not_run fills the verdict", load64(nvx + NV_RUN) == 0 && load64(nvx + NV_STATUS) == 127
+      && streq(load64(nvx + NV_REASON), "why") == 1 && str_eq_cstr(load64(nvx + NV_BLOCK), "block\n") == 1);
+    # The filed report and its result line.
+    check("nl_outcome for a run", str_eq_cstr(nl_outcome(3, 0), "executed, exit 3") == 1);
+    check("nl_outcome for a refusal", str_eq_cstr(nl_outcome(0, "blocked"), "not executed: blocked") == 1);
+    var nrt = nl_report_text(nl_verdict("show me all files", "HUMAN"), "show me all files", "HUMAN",
+      "T0", str_from("R0"));
+    check("the report opens with the input, mode and time",
+      str_starts_with(nrt, str_from("input: show me all files\nmode: HUMAN\ntime: T0\nIntent: 0")) == 1);
+    check("the report ends with the result", str_ends_with(nrt, str_from("result: R0\n")) == 1);
+    # nl_run_c: --dry-run prints the block on stdout, runs nothing, and files the report.
+    var nldir = tmp_state_path("agnsh_selftest_nlreports");
+    var nllatest = str_cat3_cstr(nldir, "/", "latest.txt");
+    report_prune(nldir, 0);
+    xunlink(nllatest);
+    xrmdir(nldir);
+    var capout = tmp_state_path("agnsh_selftest_capout");
+    var caperr = tmp_state_path("agnsh_selftest_caperr");
+    # NL execution (2.0.0): the translation as a command line, its program resolved on $PATH.
+    var ncl = nl_command_line(load64(nl_verdict("show me all files", "AI-AUTO") + NV_TRANSLATION));
+    check("the command line starts with the resolved program",
+      ncl != 0 && load8(ncl) == 47 && _t_ends_with(ncl, "ls -a") == 1);
+    var nfake_args = vec_new();
+    vec_push(nfake_args, 0);
+    vec_push(nfake_args, "x");
+    var nfake = Translation_new("agnsh_no_such_prog_selftest", nfake_args, "d", PermissionLevel.READ_ONLY, "e");
+    check("a program this host does not have gives no command line", nl_command_line(nfake) == 0);
+    var nfake2 = Translation_new("sh", nfake_args, "d", PermissionLevel.READ_ONLY, "e");
+    check("an absent argument is skipped", _t_ends_with(nl_command_line(nfake2), "sh x") == 1);
+    var nvf = alloc(NV_BYTES);
+    store64(nvf + NV_TRANSLATION, nfake);
+    _t_capture_begin(2, 10, caperr);
+    var nlf = nl_launch(nvf, Mode.AI_AUTONOMOUS);
+    _t_capture_end(2, 10);
+    check("nl_launch: no such program is LAUNCH_FAILED", nlf == LAUNCH_FAILED);
+    check("...and says so", _t_file_has(caperr, "no such command on this system") == 1);
+    # sh_launch_line keeps "no child ran" apart from a child's own status.
+    check("sh_launch_line returns the child's status", sh_launch_line("/bin/false", Mode.AI_AUTONOMOUS) == 1);
+    _t_capture_begin(2, 10, caperr);
+    var sll_miss = sh_launch_line("/nonexistent/agnsh/selftest", Mode.AI_AUTONOMOUS);
+    _t_stdin_set(0);
+    var sll_decl = sh_launch_line("/bin/true", Mode.HUMAN);
+    _t_capture_end(2, 10);
+    check("sh_launch_line: a missing program is LAUNCH_FAILED", sll_miss == LAUNCH_FAILED);
+    check("sh_launch_line: a declined prompt is LAUNCH_DECLINED", sll_decl == LAUNCH_DECLINED);
+    # arg_cstr: a parser field (Str) becomes a cstring argument; an absent field stays absent.
+    check("arg_cstr converts a Str", streq(arg_cstr(str_from("x.txt")), "x.txt") == 1);
+    check("arg_cstr keeps an absent field absent", arg_cstr(0) == 0);
+    _t_capture_begin(1, 9, capout);
+    var nlr = nl_launch(nl_verdict("show me all files", "AI-AUTO"), Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    check("nl_launch runs a read-only translation", nlr == 0);
+    check("...whose output is the program's", _t_file_has(capout, "VERSION") == 1);
+    _t_capture_begin(1, 9, capout);
+    _t_capture_begin(2, 10, caperr);
+    var nls = nl_run_c("show me all files", Mode.AI_AUTONOMOUS, 1, nldir);
+    _t_capture_end(2, 10);
+    _t_capture_end(1, 9);
+    check("--dry-run exits 0 for a line that would run", nls == 0);
+    check("--dry-run prints the report block on stdout", _t_file_has(capout, "Intent: 0  Command: ls") == 1);
+    check("--dry-run adds nothing on stderr", _t_count_nl(caperr) == 0);
+    check("--dry-run files the report", _t_file_has(nllatest, "result: not executed: dry run") == 1);
+    # A line that does not run: stdout empty, one stderr line naming the reason and the report.
+    _t_capture_begin(1, 9, capout);
+    _t_capture_begin(2, 10, caperr);
+    nls = nl_run_c("copy a to b", Mode.AI_AUTONOMOUS, 0, nldir);
+    _t_capture_end(2, 10);
+    _t_capture_end(1, 9);
+    check("a line that does not run exits 126", nls == 126);
+    check("...leaving stdout empty", _t_slurp(capout) == 0);
+    check("...with one stderr line naming the reason and the report",
+      _t_file_has(caperr, "agnsh: not executed: approval required -- report: ") == 1 && _t_count_nl(caperr) == 1);
+    check("...whose report records the input", _t_file_has(nllatest, "input: copy a to b") == 1);
+    check("...and the result", _t_file_has(nllatest, "result: not executed: approval required") == 1);
+    # A line that runs: the program's output on stdout, nothing from agnsh on stderr, its status.
+    _t_capture_begin(1, 9, capout);
+    _t_capture_begin(2, 10, caperr);
+    nls = nl_run_c("show me all files", Mode.AI_AUTONOMOUS, 0, nldir);
+    _t_capture_end(2, 10);
+    _t_capture_end(1, 9);
+    check("a read-only line runs under -c and exits with its status", nls == 0);
+    check("...stdout is the program's output", _t_file_has(capout, "VERSION") == 1
+      && _t_file_has(capout, "Intent:") == 0);
+    check("...agnsh says nothing on stderr", _t_count_nl(caperr) == 0);
+    check("...and the report records the execution", _t_file_has(nllatest, "result: executed, exit 0") == 1);
+    # HUMAN confirms; EOF declines.
+    _t_capture_begin(2, 10, caperr);
+    _t_stdin_set(0);
+    nls = nl_run_c("show me all files", Mode.HUMAN, 0, nldir);
+    _t_capture_end(2, 10);
+    check("HUMAN mode declines at EOF: 126", nls == 126);
+    check("...with the notice", _t_file_has(caperr, "agnsh: not executed: declined") == 1);
+    # The interactive path prints the block, then runs.
+    _t_capture_begin(1, 9, capout);
+    var nli = nl_run_interactive("show me all files", Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    check("interactive NL prints the report and runs the command", nli == 0
+      && _t_file_has(capout, "Intent: 0  Command: ls") == 1 && _t_file_has(capout, "VERSION") == 1);
+    _t_capture_begin(1, 9, capout);
+    nli = nl_run_interactive("copy a to b", Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    check("interactive NL does not run what needs approval", nli == 126
+      && _t_file_has(capout, "Approval required -- not executed") == 1);
+    # An unusable report folder changes nothing but the notice.
+    var nlbad = tmp_state_path("agnsh_selftest_nlbad");
+    _t_write_cstr(nlbad, "a file, not a folder\n");
+    _t_capture_begin(2, 10, caperr);
+    nls = nl_run_c("what is dns", Mode.AI_AUTONOMOUS, 0, nlbad);
+    _t_capture_end(2, 10);
+    check("an unusable report folder does not change the status", nls == 127);
+    check("...and the notice says why there is no report",
+      _t_file_has(caperr, "-- no report: cannot create the report folder") == 1);
+    xunlink(nlbad);
+    report_prune(nldir, 0);
+    xunlink(nllatest);
+    xrmdir(nldir);
+    xunlink(capout);
+    xunlink(caperr);
+    audit_path_override_set(0);
+    xunlink(nlaudit);
+
+    # ================================================================
+    # 2.0.0 — the host's resolver, launcher and the shell-line gate (ADR-008 § 3)
+    # ================================================================
+    var hlog = tmp_state_path("agnsh_selftest_hostlog");
+    xunlink(hlog);
+    audit_path_override_set(hlog);
+    # Program words: a plain name only — never a path, never a metacharacter.
+    check("a program word", _host_prog_word_ok("ls", 2) == 1);
+    check("a dotted program word", _host_prog_word_ok("python3.12", 10) == 1);
+    check("g++ is a program word", _host_prog_word_ok("g++", 3) == 1);
+    check("a path is not a program word", _host_prog_word_ok("a/b", 3) == 0);
+    check("a metacharacter is not", _host_prog_word_ok("rm;x", 4) == 0);
+    check("an empty word is not", _host_prog_word_ok("", 0) == 0);
+    # PATH lookup over a folder this test builds: an executable, a plain file, a directory.
+    var pdir = tmp_state_path("agnsh_selftest_pathdir");
+    var pprog = str_cat3_cstr(pdir, "/", "agnsh_selftest_prog");
+    var pnox = str_cat3_cstr(pdir, "/", "agnsh_selftest_noexec");
+    var pdirp = str_cat3_cstr(pdir, "/", "agnsh_selftest_dirprog");
+    xunlink(pprog);
+    xunlink(pnox);
+    xrmdir(pdirp);
+    xrmdir(pdir);
+    xmkdir(pdir, 448);
+    _t_write_cstr(pprog, "#!/bin/sh\nexit 7\n");
+    sys_chmod(pprog, 448);
+    _t_write_cstr(pnox, "not a program\n");
+    xmkdir(pdirp, 448);
+    check("PATH lookup finds an executable",
+      streq(path_lookup_in("agnsh_selftest_prog", 19, pdir), pprog) == 1);
+    check("...through a trailing slash, without doubling it",
+      streq(path_lookup_in("agnsh_selftest_prog", 19, str_cat3_cstr(pdir, "/", "")), pprog) == 1);
+    check("...past earlier entries that do not have it",
+      streq(path_lookup_in("agnsh_selftest_prog", 19, str_cat3_cstr("/nonexistent/agnsh:", pdir, "")), pprog) == 1);
+    check("a file without the exec bit is not a program", path_lookup_in("agnsh_selftest_noexec", 21, pdir) == 0);
+    check("_host_is_exec_file: the executable", _host_is_exec_file(pprog) == 1);
+    check("_host_is_exec_file: not the plain file", _host_is_exec_file(pnox) == 0);
+    check("_host_is_exec_file: not a directory", _host_is_exec_file(pdirp) == 0);
+    check("a directory is not a program", path_lookup_in("agnsh_selftest_dirprog", 22, pdir) == 0);
+    # A relative entry is never searched — not even `.` holding the program. Run from inside pdir.
+    var pcwd[4096];
+    var pcwd_ok = syscall(SYS_GETCWD, &pcwd, 4096);
+    sys_chdir(pdir);
+    check("a relative PATH entry is never searched, even `.`",
+      path_lookup_in("agnsh_selftest_prog", 19, ".") == 0);
+    check("an empty PATH entry (the current folder) is never searched",
+      path_lookup_in("agnsh_selftest_prog", 19, ":") == 0);
+    if (pcwd_ok > 0) { sys_chdir(&pcwd); }
+    check("no PATH at all falls back to the standard folders", path_lookup_in("sh", 2, 0) != 0);
+    check("path_lookup reads this process's PATH", path_lookup("sh", 2) != 0);
+    # argv: whitespace-split, no quoting; a resolved program replaces the first word.
+    var hav = host_argv(0, "  a  b\tc ");
+    check("host_argv splits on spaces and tabs", vec_len(hav) == 3 && streq(vec_get(hav, 2), "c") == 1);
+    hav = host_argv("/x/a", "a b");
+    check("host_argv puts the resolved program first",
+      streq(vec_get(hav, 0), "/x/a") == 1 && streq(vec_get(hav, 1), "b") == 1);
+    check("the environment is readable", host_environ_envp() != 0);
+    # The launcher: exit status through, 127 for a program that cannot exec, 128+N for signal N.
+    check("host_exec returns the child's status", host_exec(host_argv(pprog, "p")) == 7);
+    check("host_exec: a missing program is 127 from the child",
+      host_exec(host_argv("/nonexistent/agnsh/selftest", "x")) == 127);
+    var hsig = vec_new();
+    vec_push(hsig, path_lookup("sh", 2));
+    vec_push(hsig, "-c");
+    vec_push(hsig, "kill -TERM $$");
+    check("a child killed by signal 15 is 143", host_exec(hsig) == 143);
+    check("host_exec refuses an empty argv", host_exec(vec_new()) == 0 - 1);
+    # Operators are shell syntax: refused on the host, never natural language.
+    _t_capture_begin(2, 10, caperr);
+    var hop1 = host_refuse_operators("ls | sort");
+    var hop2 = host_refuse_operators("echo hi > x");
+    var hop3 = host_refuse_operators("sleep 1 &");
+    _t_capture_end(2, 10);
+    check("a pipeline is refused on the host", hop1 == EXIT_NOTHING_TO_RUN);
+    check("a redirect is refused on the host", hop2 == EXIT_NOTHING_TO_RUN);
+    check("a background job is refused on the host", hop3 == EXIT_NOTHING_TO_RUN);
+    check("...and each says so", _t_file_has(caperr, "pipelines are AGNOS-only") == 1
+      && _t_file_has(caperr, "redirects are AGNOS-only") == 1 && _t_file_has(caperr, "background jobs") == 1);
+    check("a plain line is not refused", host_refuse_operators("show files") == 0 - 1);
+    # The shell-line gate: a BLOCKED line confirms in every mode.
+    check("rm -rf is BLOCKED", shell_line_blocked("rm -rf x") == 1);
+    check("a plain rm is not", shell_line_blocked("rm x") == 0);
+    check("dd by path is BLOCKED (basename)", shell_line_blocked("/usr/bin/dd if=a of=b") == 1);
+    check("ls is not", shell_line_blocked("ls -la") == 0);
+    _t_stdin_set("n");
+    check("an unblocked line in AUTO passes without a prompt", shell_launch_gate("run x", 0, Mode.AI_AUTONOMOUS) == 1
+      && _t_stdin_reads == 0);
+    _t_capture_begin(2, 10, caperr);
+    _t_stdin_set(0);
+    var hg_blk = shell_launch_gate("run rm -rf x", 1, Mode.AI_AUTONOMOUS);
+    _t_capture_end(2, 10);
+    check("a BLOCKED line prompts even in AUTO, and EOF declines", hg_blk == 0);
+    check("...naming it BLOCKED", _t_file_has(caperr, "BLOCKED: run rm -rf x") == 1);
+    _t_capture_begin(2, 10, caperr);
+    _t_stdin_set("y");
+    var hg_yes = shell_launch_gate("run rm -rf x", 1, Mode.AI_AUTONOMOUS);
+    _t_capture_end(2, 10);
+    check("...and an explicit yes proceeds", hg_yes == 1);
+    _t_capture_begin(2, 10, caperr);
+    _t_stdin_set(0);
+    var hg_hum = shell_launch_gate("run x", 0, Mode.HUMAN);
+    _t_capture_end(2, 10);
+    check("HUMAN still confirms an unblocked line", hg_hum == 0);
+    # Shell-first barewords.
+    check("a bareword program runs", host_try_bareword_launch("true", Mode.AI_AUTONOMOUS) == 0);
+    check("...its status is returned", host_try_bareword_launch("false", Mode.AI_AUTONOMOUS) == 1);
+    check("a first word that is not a program falls through to NL",
+      host_try_bareword_launch("notaprog_agnsh_selftest arg", Mode.AI_AUTONOMOUS) == 0 - 1);
+    _t_capture_begin(2, 10, caperr);
+    var hbw_meta = host_try_bareword_launch("ls $HOME", Mode.AI_AUTONOMOUS);
+    _t_capture_end(2, 10);
+    check("a program line with a metacharacter is refused, not NL", hbw_meta == EXIT_NOT_RUN);
+    xunlink(hlog);
+    _t_capture_begin(2, 10, caperr);
+    _t_stdin_set(0);
+    var hbw_blk = host_try_bareword_launch("rm -rf /nonexistent/agnsh/selftest", Mode.AI_AUTONOMOUS);
+    _t_capture_end(2, 10);
+    check("a typed BLOCKED line declined at EOF is 126", hbw_blk == EXIT_NOT_RUN);
+    check("...audited as denied, never launched", _t_file_has(hlog, "\"result\":\"denied\"") == 1
+      && _t_file_has(hlog, "\"result\":\"launched\"") == 0);
+    # run with arguments on the host (2.0.0).
+    _t_capture_begin(1, 9, capout);
+    var hrun = sh_run_program("/bin/echo agnsh-run-args", Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    check("run passes arguments on the host", hrun == 0 && _t_file_has(capout, "agnsh-run-args") == 1);
+    xunlink(pprog);
+    xunlink(pnox);
+    xrmdir(pdirp);
+    xrmdir(pdir);
+    xunlink(capout);
+    xunlink(caperr);
+    audit_path_override_set(0);
+    xunlink(hlog);
 
     return report();
 }

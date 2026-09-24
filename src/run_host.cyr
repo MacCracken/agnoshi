@@ -1,0 +1,227 @@
+# run_host.cyr — how the Linux host reaches a program (ADR-008 § 3, 2.0.0).
+#
+# One resolver and one launcher for every host program: `run PATH ARGS…`, shell-first barewords
+# (ADR-007 decision 1) and NL execution. The resolver searches $PATH's ABSOLUTE entries; the
+# launcher forks and execve's an argv vector — never `/bin/sh -c` — with agnsh's own environment,
+# leaving stdout and stderr to the child. agnos has its own launchers in run_agnos.cyr.
+#ifndef CYRIUS_TARGET_AGNOS
+
+# Could `word` (`wl` bytes) name a program? Non-empty, no '/', and only letters, digits and `._+-`.
+# Anything else is not looked up at all: it cannot be a bareword program, and the lookup should never
+# build a path out of arbitrary input.
+fn _host_prog_word_ok(word, wl) {
+    if (wl <= 0) { return 0; }
+    for (var i = 0; i < wl; i = i + 1) {
+        var c = load8(word + i);
+        var ok = 0;
+        if (c >= 97) { if (c <= 122) { ok = 1; } }     # a-z
+        if (c >= 65) { if (c <= 90) { ok = 1; } }      # A-Z
+        if (c >= 48) { if (c <= 57) { ok = 1; } }      # 0-9
+        if (c == 46 || c == 95 || c == 43 || c == 45) { ok = 1; }   # . _ + -
+        if (ok == 0) { return 0; }
+    }
+    return 1;
+}
+
+# A regular file this user may execute — not a directory, and executable by access(X_OK), which
+# answers for the real uid. stat follows symlinks: /usr/bin/editor -> alternatives is a program.
+fn _host_is_exec_file(path) {
+    var st[STAT_BUFSZ];
+    if (sys_stat(path, &st) != 0) { return 0; }
+    if ((load32(&st + STAT_MODE) & 61440) != 32768) { return 0; }   # S_IFMT == S_IFREG
+    if (sys_access(path, 1) != 0) { return 0; }                     # X_OK
+    return 1;
+}
+
+# The first executable regular file named `word` (`wl` bytes) in `path_env` (a $PATH value), as a
+# fresh absolute path — or 0. Only ABSOLUTE entries are searched: an empty or relative entry means
+# the current directory, and running whatever a directory someone else controls holds is the classic
+# PATH hijack. With no PATH at all, the conventional /usr/local/bin:/usr/bin:/bin.
+fn path_lookup_in(word, wl, path_env) {
+    if (_host_prog_word_ok(word, wl) == 0) { return 0; }
+    if (path_env == 0) { path_env = "/usr/local/bin:/usr/bin:/bin"; }
+    var n = strlen(path_env);
+    var s = 0;
+    while (s <= n) {
+        var e = s;
+        while (e < n) {
+            if (load8(path_env + e) == 58) { break; }                # ':'
+            e = e + 1;
+        }
+        if (e > s) {
+            if (load8(path_env + s) == 47) {                          # absolute entries only
+                var dl = e - s;
+                if (load8(path_env + e - 1) == 47) { dl = dl - 1; }   # one trailing '/'
+                var cand = alloc(dl + 1 + wl + 1);
+                if (cand == 0) { return 0; }
+                memcpy(cand, path_env + s, dl);
+                store8(cand + dl, 47);
+                memcpy(cand + dl + 1, word, wl);
+                store8(cand + dl + 1 + wl, 0);
+                if (_host_is_exec_file(cand) == 1) { return cand; }
+            }
+        }
+        s = e + 1;
+    }
+    return 0;
+}
+
+# path_lookup_in over this process's $PATH.
+fn path_lookup(word, wl) {
+    return path_lookup_in(word, wl, getenv("PATH"));
+}
+
+# agnsh's environment as an execve envp (NULL-terminated), read from /proc/self/environ: a child of
+# the shell sees what the shell was given — PATH, HOME, LANG — as it does on agnos. Until 2.0.0 the
+# host `run` passed an empty environment. Returns 0 when it cannot be read; the caller then passes an
+# empty one.
+fn host_environ_envp() {
+    var fd = file_open("/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+    var cap = 65536;
+    var blob = alloc(cap + 1);
+    if (blob == 0) { file_close(fd); return 0; }
+    var n = 0;
+    var more = 1;
+    while (more == 1) {
+        var r = file_read(fd, blob + n, cap - n);
+        if (r <= 0) { more = 0; } else { n = n + r; }
+        if (n >= cap) { more = 0; }
+    }
+    file_close(fd);
+    store8(blob + n, 0);
+    var count = 0;
+    for (var i = 0; i < n; i = i + 1) {
+        if (load8(blob + i) == 0) { count = count + 1; }
+    }
+    var envp = alloc((count + 1) * 8);
+    if (envp == 0) { return 0; }
+    var ei = 0;
+    var start = 0;
+    for (var j = 0; j < n; j = j + 1) {
+        if (load8(blob + j) == 0) {
+            if (j > start) { store64(envp + ei * 8, blob + start); ei = ei + 1; }
+            start = j + 1;
+        }
+    }
+    store64(envp + ei * 8, 0);
+    return envp;
+}
+
+# Split `line` on spaces and tabs into a vec of fresh NUL-terminated cstrings — no quoting, as on
+# agnos, where the kernel stages argv the same way. When `prog` is not 0 it replaces the first word:
+# the resolved absolute path of a bareword.
+fn host_argv(prog, line) {
+    var argv = vec_new();
+    var n = strlen(line);
+    var i = 0;
+    while (i < n) {
+        while (i < n) {
+            var c = load8(line + i);
+            if (c != 32 && c != 9) { break; }
+            i = i + 1;
+        }
+        if (i >= n) { break; }
+        var st = i;
+        while (i < n) {
+            var c2 = load8(line + i);
+            if (c2 == 32 || c2 == 9) { break; }
+            i = i + 1;
+        }
+        var w = alloc(i - st + 1);
+        if (w == 0) { return argv; }
+        memcpy(w, line + st, i - st);
+        store8(w + i - st, 0);
+        if (vec_len(argv) == 0 && prog != 0) { vec_push(argv, prog); }
+        else { vec_push(argv, w); }
+    }
+    return argv;
+}
+
+# Run `argv` (a vec of cstrings, argv[0] an absolute path) and wait for it: never through a shell,
+# with agnsh's environment, and stdout and stderr left to the child. Returns its exit status — 128 +
+# N when signal N killed it — or -1 when it could not be started.
+fn host_exec(argv) {
+    var argc = vec_len(argv);
+    if (argc < 1) { return 0 - 1; }
+    var av = alloc((argc + 1) * 8);
+    if (av == 0) { return 0 - 1; }
+    for (var i = 0; i < argc; i = i + 1) { store64(av + i * 8, vec_get(argv, i)); }
+    store64(av + argc * 8, 0);
+    var envp = host_environ_envp();
+    if (envp == 0) {
+        envp = alloc(8);
+        if (envp == 0) { return 0 - 1; }
+        store64(envp, 0);
+    }
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        sys_execve(load64(av), av, envp);
+        sys_exit(127);
+    }
+    var st[8];
+    store64(&st, 0);
+    var r = sys_waitpid(pid, &st, 0);
+    while (r == 0 - 4) { r = sys_waitpid(pid, &st, 0); }   # EINTR: a signal is not the child's end
+    if (r < 0) { return 0 - 1; }
+    var status = load32(&st);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 0 - 1;
+}
+
+# `|`, `>` and a trailing `&` are shell syntax (ADR-007 decision 2), and this host build has no
+# pipeline, redirect or job launcher: such a line is refused, never handed to the NL parser. Returns
+# EXIT_NOTHING_TO_RUN for a refused line, or -1 when the line has none of them.
+fn host_refuse_operators(line) {
+    var what = 0;
+    if (_sh_find_pipe(line) >= 0) { what = "pipelines"; }
+    elif (_sh_find_redirect(line) >= 0) { what = "redirects"; }
+    elif (sh_scan_trailing_amp(line) >= 0) { what = "background jobs"; }
+    if (what == 0) { return 0 - 1; }
+    eprint_str(str_from("run: "));
+    eprint_str(str_from(what));
+    eprint_line(str_from(" are AGNOS-only in this build -- nothing was run"));
+    audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+    return EXIT_NOTHING_TO_RUN;
+}
+
+# Shell-first on the host (ADR-007 decision 1): a line whose first word is a program on $PATH runs
+# as that program, through the gate every shell line passes. Returns the exit status, or -1 when the
+# first word is not a program — the caller then hands the line to the NL path. Validation comes AFTER
+# the lookup, unlike agnos's bareword launcher: there the existence probe opens a path built from the
+# input, here the lookup only ever tries a plain program name, and an NL sentence containing `$`
+# is not refused unless its first word really is a program.
+fn host_try_bareword_launch(line, mode) {
+    var wl = 0;
+    while (load8(line + wl) != 0) {
+        var c = load8(line + wl);
+        if (c == 32 || c == 9) { break; }
+        wl = wl + 1;
+    }
+    var prog = path_lookup(line, wl);
+    if (prog == 0) { return 0 - 1; }
+    # From here the line is a shell line: whatever happens, it is not natural language.
+    var shown = str_cat3_cstr(prog, "", line + wl);
+    if (is_safe_path(shown) == 0) {
+        eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
+        audit_exec_ctx(shown, "denied", AUDIT_NO_EXIT);
+        return EXIT_NOT_RUN;
+    }
+    if (shell_launch_gate(str_cat3_cstr("run ", shown, ""), shell_line_blocked(shown), mode) == 0) {
+        audit_exec_ctx(shown, "denied", AUDIT_NO_EXIT);
+        return EXIT_NOT_RUN;
+    }
+    audit_exec_ctx(shown, "launched", AUDIT_NO_EXIT);
+    var code = host_exec(host_argv(prog, line));
+    if (code < 0) {
+        eprintln_cstr("run: failed to launch program");
+        audit_exec_ctx(shown, "error", 0 - 1);
+        return EXIT_NOTHING_TO_RUN;
+    }
+    audit_exec_ctx(shown, audit_exec_outcome(code), code);
+    return code;
+}
+
+#endif

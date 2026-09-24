@@ -7,7 +7,7 @@ Natural language inputs and their translations.
 > not a shell line ([ADR-007](../adr/007-input-classification.md)): on AGNOS, a line whose first
 > word is a program in `/bin` runs that program instead — `find files named foo` runs kriya's
 > `find` — and a line with `|` or `>` is a pipeline or redirect. On the Linux host every line
-> reaches the parser today; 1.10.0 gives the host the same `PATH` lookup.
+> reaches the parser today; 2.0.0 gives the host the same `PATH` lookup.
 
 ## Filesystem
 
@@ -101,10 +101,12 @@ Anything not matched falls to SHELL_COMMAND (tag 15) and is classified by
 `analyze_command_permission` — which extracts the basename first, so
 `/usr/bin/dd` is still BLOCKED.
 
-⚠ **It is classified, not run.** The natural-language path does not execute
-anything: it reports the translation and its risk, and writes an audit record.
-The only execution paths are `run /abs/path` (any target) and, on AGNOS,
-bareword `/bin/<name>`, `cmd1 | cmd2`, `cmd > file` and `prog &`.
+⚠ **SHELL_COMMAND is never run as natural language.** It is the fall-through for
+a line whose first word is not a program here — shell-first dispatch
+([ADR-007](../adr/007-input-classification.md)) would already have run one that
+is. Since 2.0.0 the rows above whose translation is SAFE or READ_ONLY **run**
+(`ls`, `cat`, `grep`, `find`, `ps`, `df`, `free`, `git status`, …); the rest are
+reported and not run ([ADR-008](../adr/008-nl-exec-contract.md)).
 
 ## Try It
 

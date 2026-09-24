@@ -1,0 +1,242 @@
+# report.cyr — the NL report folder (ADR-008, 2.0.0).
+#
+# `agnsh -c` keeps stdout for the program it runs. The report of what agnsh understood and did —
+# the 1.9.x `Intent:` / `Command:` / `Risk:` lines plus the input, mode, time and outcome — is
+# filed here instead: one file per run and a `latest.txt`, the newest REPORT_KEEP kept. The
+# interactive shell prints its report on screen and files nothing.
+
+# 0700 for the folder. Each report is STATE_FILE_MODE (0600): it carries the command line.
+var REPORT_DIR_MODE = 448;
+# Reports kept; after each write the oldest beyond this are removed.
+var REPORT_KEEP = 100;
+
+# `base` + `suffix` as a fresh cstring, dropping one trailing '/' from `base` so that HOME=/
+# gives /.local/... rather than //.local/... — the same rule history_path follows.
+fn _report_join(base, suffix) {
+    var blen = strlen(base);
+    if (blen > 0) { if (load8(base + blen - 1) == 47) { blen = blen - 1; } }
+    var slen = strlen(suffix);
+    var buf = alloc(blen + slen + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, base, blen);
+    memcpy(buf + blen, suffix, slen);
+    store8(buf + blen + slen, 0);
+    return buf;
+}
+
+# The host report folder from its inputs, split out of report_dir() so that the rule is testable
+# without an environment: `xdg` and `home` are $XDG_STATE_HOME and $HOME, 0 when unset.
+# The XDG base-directory rule: an unset, empty or RELATIVE $XDG_STATE_HOME is ignored and the
+# default is $HOME/.local/state. HOME must be absolute too; without a usable one the folder falls
+# back to /tmp, qualified by uid (tmp_state_path says what that does and does not defend against —
+# report_dir_prepare's ownership check covers the rest).
+fn report_dir_from(xdg, home) {
+    if (xdg != 0) { if (load8(xdg) == 47) { return _report_join(xdg, "/agnoshi/reports"); } }
+    if (home != 0) {
+        if (load8(home) == 47) { return _report_join(home, "/.local/state/agnoshi/reports"); }
+    }
+    return tmp_state_path("agnoshi-reports");
+}
+
+# Where this build files its reports. agnos keeps its root-dotfile style — /.agnsh_reports beside
+# /.agnsh_history and /.agnsh_audit.log — because HOME is always / there and its rootfs has no
+# /var; the host follows XDG.
+fn report_dir() {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/.agnsh_reports";
+    #endif
+    return report_dir_from(getenv("XDG_STATE_HOME"), getenv("HOME"));
+}
+
+# Make the report folder usable. Creates it 0700 (parents too) and, on the host, refuses it unless
+# it is a real directory — not a symlink — that this user owns and nobody else can write: a folder
+# someone else pre-created, which the /tmp fallback invites, would hand them every report. Returns
+# 0 when usable, otherwise the reason as a cstring for the caller's stderr notice.
+fn report_dir_prepare(dir) {
+    if (dir == 0) { return "no report folder"; }
+    if (xmkdir_p(dir, REPORT_DIR_MODE) != 0) { return "cannot create the report folder"; }
+    #ifndef CYRIUS_TARGET_AGNOS
+    var st[STAT_BUFSZ];
+    if (sys_lstat(dir, &st) != 0) { return "cannot inspect the report folder"; }
+    var mode = load32(&st + STAT_MODE);
+    if ((mode & 61440) != 16384) { return "the report folder is not a directory"; }   # S_IFMT / S_IFDIR
+    if (load32(&st + STAT_UID) != sys_getuid()) { return "the report folder belongs to another user"; }
+    if ((mode & 18) != 0) { return "others can write the report folder"; }   # 0022
+    #endif
+    return 0;
+}
+
+# Append the decimal digits of `n` (>= 0) at `buf`; returns how many were written.
+fn _report_put_uint(buf, n) {
+    if (n <= 0) { store8(buf, 48); return 1; }
+    var digits = 0;
+    var t = n;
+    while (t > 0) { digits = digits + 1; t = t / 10; }
+    var k = digits;
+    t = n;
+    while (k > 0) {
+        k = k - 1;
+        store8(buf + k, 48 + (t % 10));
+        t = t / 10;
+    }
+    return digits;
+}
+
+# `<YYYYMMDDTHHMMSSZ>-<pid>.txt` for a report written at `epoch` (seconds) by process `pid`, or
+# `<YYYYMMDDTHHMMSSZ>-<pid>-<seq>.txt` when `seq` > 0. The UTC stamp comes first and is fixed-width,
+# so names sort in time order and pruning can keep the newest by name alone; the pid separates two
+# processes in the same second, and `seq` two reports from one process in the same second.
+fn report_file_name(epoch, pid, seq) {
+    var iso = iso8601(epoch);                        # YYYY-MM-DDTHH:MM:SSZ
+    var buf = alloc(64);
+    if (buf == 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (load8(iso + i) != 0) {
+        var c = load8(iso + i);
+        if (c != 45) { if (c != 58) { store8(buf + n, c); n = n + 1; } }   # drop '-' and ':'
+        i = i + 1;
+    }
+    store8(buf + n, 45);                             # '-'
+    n = n + 1;
+    n = n + _report_put_uint(buf + n, pid);
+    if (seq > 0) {
+        store8(buf + n, 45);
+        n = n + 1;
+        n = n + _report_put_uint(buf + n, seq);
+    }
+    memcpy(buf + n, ".txt", 4);
+    store8(buf + n + 4, 0);
+    return buf;
+}
+
+# Is `name` (Str) a name report_file_name makes? `latest.txt`, and anything else someone puts in
+# the folder, is never pruned.
+fn _report_is_name(name) {
+    var n = str_len(name);
+    if (n < 22) { return 0; }                        # 16-char stamp, '-', a digit, ".txt"
+    var d = str_data(name);
+    for (var i = 0; i < 16; i = i + 1) {
+        var c = load8(d + i);
+        if (i == 8) {
+            if (c != 84) { return 0; }               # 'T'
+        } elif (i == 15) {
+            if (c != 90) { return 0; }               # 'Z'
+        } elif (c < 48 || c > 57) {
+            return 0;
+        }
+    }
+    if (load8(d + 16) != 45) { return 0; }           # '-'
+    # <pid> or <pid>-<seq>: digits with at most one inner '-'.
+    var dashes = 0;
+    for (var j = 17; j < n - 4; j = j + 1) {
+        var dc = load8(d + j);
+        if (dc == 45) {
+            dashes = dashes + 1;
+            if (dashes > 1) { return 0; }
+            if (j == 17) { return 0; }
+            if (j == n - 5) { return 0; }
+        } elif (dc < 48 || dc > 57) {
+            return 0;
+        }
+    }
+    if (load8(d + n - 4) != 46) { return 0; }        # ".txt"
+    if (load8(d + n - 3) != 116) { return 0; }
+    if (load8(d + n - 2) != 120) { return 0; }
+    if (load8(d + n - 1) != 116) { return 0; }
+    return 1;
+}
+
+# Byte-wise a < b over two Strs (a shorter prefix sorts first).
+fn _report_name_less(a, b) {
+    var la = str_len(a);
+    var lb = str_len(b);
+    var da = str_data(a);
+    var db = str_data(b);
+    var m = la;
+    if (lb < m) { m = lb; }
+    for (var i = 0; i < m; i = i + 1) {
+        var ca = load8(da + i);
+        var cb = load8(db + i);
+        if (ca < cb) { return 1; }
+        if (ca > cb) { return 0; }
+    }
+    if (la < lb) { return 1; }
+    return 0;
+}
+
+# Keep the newest `keep` reports in `dir`; returns how many were removed. Names sort in time order,
+# so the oldest is the smallest: remove the smallest until `keep` remain.
+fn report_prune(dir, keep) {
+    var all = dir_list(str_from(dir));
+    var names = vec_new();
+    for (var i = 0; i < vec_len(all); i = i + 1) {
+        var nm = vec_get(all, i);
+        if (_report_is_name(nm) == 1) { vec_push(names, nm); }
+    }
+    var removed = 0;
+    var count = vec_len(names);
+    while (count > keep) {
+        var oldest = 0 - 1;
+        for (var k = 0; k < vec_len(names); k = k + 1) {
+            var cand = vec_get(names, k);
+            if (cand != 0) {
+                if (oldest < 0) { oldest = k; }
+                elif (_report_name_less(cand, vec_get(names, oldest)) == 1) { oldest = k; }
+            }
+        }
+        if (oldest < 0) { return removed; }
+        var victim = vec_get(names, oldest);
+        var vname = alloc(str_len(victim) + 1);
+        if (vname == 0) { return removed; }
+        memcpy(vname, str_data(victim), str_len(victim));
+        store8(vname + str_len(victim), 0);
+        if (xunlink(str_cat3_cstr(dir, "/", vname)) == 0) { removed = removed + 1; }
+        vec_set(names, oldest, 0);
+        count = count - 1;
+    }
+    return removed;
+}
+
+# Write `content` (Str) to `path`, 0600 and never through a symlink. `create` is OPEN_EXCL (a new
+# report, which must not already exist) or OPEN_TRUNC (latest.txt, replaced). Returns 0 on success.
+fn _report_put(path, content, create) {
+    if (path == 0) { return 0 - 1; }
+    var fd = file_open(path, OPEN_WRONLY | OPEN_CREAT | create | OPEN_NOFOLLOW, STATE_FILE_MODE);
+    if (fd < 0) { return 0 - 1; }
+    var len = str_len(content);
+    var w = file_write(fd, str_data(content), len);
+    # 0600 on the open descriptor: STATE_FILE_MODE at create is filtered by the umask. agnos has no
+    # permission bits and no fchmod (syscall 91 is gpu_blit_bb there) — see history.cyr.
+    #ifndef CYRIUS_TARGET_AGNOS
+    sys_fchmod(fd, STATE_FILE_MODE);
+    #endif
+    file_close(fd);
+    if (w != len) { return 0 - 1; }
+    return 0;
+}
+
+# File `content` as this run's report and as latest.txt, then prune. Returns the report's path, or 0
+# when it could not be written — the caller says so on stderr; a report is never worth failing the
+# command over. latest.txt is best effort: a run that loses the race to it still has its own file.
+fn report_write(dir, content, epoch, pid) {
+    # The exclusive create refuses an existing name; a second report from this process in the same
+    # second takes the next sequence number rather than being lost.
+    var path = 0;
+    var seq = 0;
+    while (seq < 10) {
+        var name = report_file_name(epoch, pid, seq);
+        if (name == 0) { return 0; }
+        var cand = str_cat3_cstr(dir, "/", name);
+        if (_report_put(cand, content, OPEN_EXCL) == 0) {
+            path = cand;
+            seq = 10;
+        } else {
+            seq = seq + 1;
+        }
+    }
+    if (path == 0) { return 0; }
+    _report_put(str_cat3_cstr(dir, "/", "latest.txt"), content, OPEN_TRUNC);
+    report_prune(dir, REPORT_KEEP);
+    return path;
+}

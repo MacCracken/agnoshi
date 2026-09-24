@@ -35,6 +35,7 @@ fn chrono_now_rfc3339() { return str_from(iso8601_now()); }
 
 include "src/sanitize.cyr"
 include "src/statepaths.cyr"
+include "src/report.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/intent.cyr"
@@ -45,8 +46,10 @@ include "src/approval.cyr"
 include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
+include "src/run_host.cyr"
+include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 1.9.16";
+var VERSION_STR = "agnoshi 2.0.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -55,7 +58,10 @@ fn print_version() {
 fn print_usage() {
     println("Usage: agnsh [OPTIONS] [-c COMMAND]");
     println("");
-    println("  -c, --command CMD   Execute one command and exit");
+    println("  -c, --command CMD   Run one command and exit: stdout is the program's, and");
+    println("                      the report goes to the report folder");
+    println("  -n, --dry-run       With -c: classify and report on stdout, run nothing");
+    println("      --mode NAME     With -c: auto|assist|human|strict (default auto)");
     println("  -v, --version       Show version");
     println("  -h, --help          Show this help");
     println("");
@@ -66,95 +72,6 @@ fn print_usage() {
     #endif
     println("  run PATH            -- run a program from disk");
     println("  exit                -- leave shell");
-}
-
-fn print_intent_result(input_cstr, mode_label_cstr) {
-    var s = str_from(input_cstr);
-    var interp = Interpreter_new();
-    var intent = Interpreter_parse(interp, s);
-    var tag = load64(intent);
-
-    str_print(str_from("Intent: "));
-    str_print(str_from_int(tag));
-
-    if (tag == IntentTag.UNKNOWN) {
-        println(" (UNKNOWN)");
-        return 0;
-    }
-
-    var translation = Interpreter_translate(interp, intent);
-    if (translation == 0) {
-        println(" (no translation)");
-        return 0;
-    }
-
-    var cmd = load64(translation);
-    var perm = load64(translation + 24);
-    var risk = risk_from_permission(perm);
-
-    # `cmd` is a cstring literal stored by translate_X (e.g. "ls", "cp",
-    # "systemctl"); wrap in str_from so str_print's `load64(s+8)` reads a
-    # real Str length, not the bytes past the cstring's null terminator.
-    # Pre-v1.2.1 the line silently printed garbage / nothing.
-    str_print(str_from("  Command: "));
-    str_print(str_from(cmd));
-    println("");
-
-    str_print(str_from("  Risk: "));
-    println(risk_icon(risk));
-
-    # BLOCKED commands (Risk: CRITICAL) never execute — surface the decision in
-    # `-c` output so scripts can see it without parsing a permission integer.
-    # Say what HAPPENS. Until 1.9.15 these read "would not execute without explicit
-    # override" (no override exists) and "Approval required (interactive prompt in
-    # shell mode)" — but the interactive loop routes NL input through this same
-    # function and no prompt exists anywhere (ApprovalManager_request has no
-    # caller). The NL path executes nothing yet (roadmap 1.10.x — NL exec). The
-    # `WARNING: BLOCKED` and `Approval required` prefixes are unchanged; scripts
-    # and scripts/smoke-test.sh match on them.
-    if (perm == PermissionLevel.BLOCKED) {
-        println("  WARNING: BLOCKED -- not executed, and there is no override");
-    } elif (risk == RiskLevel.HIGH) {
-        println("  Approval required -- not executed (no approval prompt in this build)");
-    }
-
-    # Error-recovery hints. Three "parse succeeded but translation isn't
-    # actually runnable" classes — without a hint the user sees
-    # `Command: echo / Risk: [LOW]` and reasonably believes their input
-    # ran. Surface what actually happened so they can rephrase.
-    #
-    # 1. QUESTION (tag 42) — LLM-routed; streaming not wired yet.
-    # 2. PIPELINE (tag 41) — no translate_pipeline arm; falls to
-    #    translate_unknown. On agnos a real `cmd1 | cmd2` of /bin programs is
-    #    launched before input ever reaches here; the hint says why this one
-    #    was not (host build, or a stage that is not a /bin program).
-    # 3. Safety-rejected translation — any tag whose translate_X called
-    #    is_safe_path_str / is_safe_arg_str on a parser-extracted field
-    #    and rejected (path traversal, shell metachars, leading dash,
-    #    null PID, etc.). Detected by the "Unknown intent" description
-    #    that translate_unknown stamps. Surfacing this is the actual
-    #    v1.2.1 "error recovery loop" sub-bullet: tell the user the
-    #    translator refused so they can rephrase.
-    if (tag == IntentTag.QUESTION) {
-        println("  Hint: question intent -- LLM streaming arrives in a later slice");
-    } elif (tag == IntentTag.PIPELINE) {
-        # Reaching HERE means the agnos pipeline launcher did NOT claim the line
-        # (host build, or a stage that is not a /bin program), so the NL path saw
-        # it. On agnos a real `cmd1 | cmd2` never gets this far — it auto-execs.
-        # The old text ("auto-exec arrives with the exec wire-up") outlived that
-        # by six releases.
-        #ifdef CYRIUS_TARGET_AGNOS
-        println("  Hint: pipeline stages must be /bin programs to auto-run");
-        #endif
-        #ifndef CYRIUS_TARGET_AGNOS
-        println("  Hint: pipeline auto-exec is AGNOS-only; this host build parses only");
-        #endif
-    } elif (streq(load64(translation + 16), "Unknown intent") == 1) {
-        println("  Hint: translator safety check rejected this input -- try rephrasing");
-    }
-
-    audit_one_shot(input_cstr, cmd, perm, mode_label_cstr, tag, load64(translation + 16));
-    return 0;
 }
 
 # Line-splitting read buffer (module-static so the leftover survives between
@@ -337,7 +254,7 @@ fn interactive_loop() {
     println("Files: cp mv rm ls mkdir rmdir touch echo wc find grep (kriya) - owl FILE (cat)   Run: run");
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    println("Run: run /abs/path   (bareword / pipeline / redirect launching is AGNOS-only)");
+    println("Run: a program's name, or run /abs/path   (pipelines, > and & are AGNOS-only)");
     #endif
     println("");
 
@@ -459,8 +376,9 @@ fn interactive_loop() {
             #endif
             #ifndef CYRIUS_TARGET_AGNOS
             println("Run:");
-            println("  run /abs/path                        run a program from disk");
-            println("  (bareword / pipeline / redirect launching is AGNOS-only)");
+            println("  <name> [args]                        run a program found on $PATH");
+            println("  run /abs/path [args]                 run a program from disk");
+            println("  (pipelines, > redirects and & jobs are AGNOS-only)");
             #endif
             println("Or type a natural-language command.");
             continue;
@@ -568,6 +486,19 @@ fn interactive_loop() {
             continue;
         }
         #endif
+        # Shell-first on the host (ADR-007, ADR-008 § 3): `|`, `>` and `&` are shell syntax the host
+        # cannot run yet — refused, never natural language — and a bareword that is a program on
+        # $PATH runs as that program.
+        #ifndef CYRIUS_TARGET_AGNOS
+        if (host_refuse_operators(&buf) >= 0) {
+            CommandHistory_add(history, &buf);
+            continue;
+        }
+        if (host_try_bareword_launch(&buf, cur_mode) >= 0) {
+            CommandHistory_add(history, &buf);
+            continue;
+        }
+        #endif
 
         # Record every non-builtin input in history. Persists on exit.
         CommandHistory_add(history, &buf);
@@ -576,7 +507,8 @@ fn interactive_loop() {
         # hardcoded "auto"); a downstream filter on `"mode":"HUMAN"`
         # can now distinguish interactive-human sessions from
         # interactive-auto.
-        print_intent_result(&buf, mode_display(cur_mode));
+        # The report block, then the command if it may run (ADR-008; src/nlexec.cyr).
+        nl_run_interactive(&buf, cur_mode);
     }
     CommandHistory_save(history);
     # History is saved either way — a broken stdin must not also cost the user
@@ -604,35 +536,49 @@ fn main() {
         print_usage();
         return 0;
     }
-    # Optional `--mode NAME` prefix before -c. Lets the one-shot path drive
-    # the FIX 4 mode-gated confirm non-interactively (and host smoke tests
-    # pipe y/n under a chosen mode). Default for -c stays AUTO — destructive
-    # verbs run directly, matching the prior `-c` behavior. When present,
-    # shift the -c / command positionals two slots to the right.
+    # Leading options before -c, in either order (2.0.0): `--mode NAME` and `--dry-run` / `-n`.
+    # --mode lets the one-shot path drive the FIX 4 mode-gated confirm non-interactively (and host
+    # smoke tests pipe y/n under a chosen mode); the default for -c stays AUTO. --dry-run classifies
+    # and files the report but runs nothing (ADR-008).
     var c_mode = Mode.AI_AUTONOMOUS;
+    var c_dry = 0;
     var c_idx = 1;     # index of the -c flag
-    if (streq(arg1, "--mode") == 1) {
-        if (n_args < 3) {
-            eprintln_cstr("Error: --mode requires a name (auto|assist|human|strict)");
-            return 1;
+    var c_opts = 1;
+    while (c_opts == 1) {
+        if (c_idx >= n_args) {
+            c_opts = 0;
+        } elif (streq(argv(c_idx), "--mode") == 1) {
+            if (c_idx + 1 >= n_args) {
+                eprintln_cstr("Error: --mode requires a name (auto|assist|human|strict)");
+                return 1;
+            }
+            # ⛔ FAIL CLOSED. This used to pass Mode.AI_AUTONOMOUS as the fallback,
+            # so `--mode assit` (or any typo) silently selected the MOST permissive
+            # mode — the one that skips the launch confirmation — while the user
+            # believed they had asked for `strict`. A misspelled safety flag must
+            # be an error, never a downgrade. The interactive `mode <name>` builtin
+            # already rejects unknown names via try_mode_switch; this is the CLI
+            # path catching up. Mode values are 0..3, so -1 is a safe sentinel.
+            c_mode = mode_from_name(argv(c_idx + 1), 0 - 1);
+            if (c_mode == 0 - 1) {
+                str_print(str_from("Error: unknown mode '"));
+                str_print(str_from(argv(c_idx + 1)));
+                println("' (expected auto|assist|human|strict)");
+                return 1;
+            }
+            c_idx = c_idx + 2;
+        } elif (streq(argv(c_idx), "--dry-run") == 1 || streq(argv(c_idx), "-n") == 1) {
+            c_dry = 1;
+            c_idx = c_idx + 1;
+        } else {
+            c_opts = 0;
         }
-        # ⛔ FAIL CLOSED. This used to pass Mode.AI_AUTONOMOUS as the fallback,
-        # so `--mode assit` (or any typo) silently selected the MOST permissive
-        # mode — the one that skips the launch confirmation — while the user
-        # believed they had asked for `strict`. A misspelled safety flag must
-        # be an error, never a downgrade. The interactive `mode <name>` builtin
-        # already rejects unknown names via try_mode_switch; this is the CLI
-        # path catching up. Mode values are 0..3, so -1 is a safe sentinel.
-        c_mode = mode_from_name(argv(2), 0 - 1);
-        if (c_mode == 0 - 1) {
-            str_print(str_from("Error: unknown mode '"));
-            str_print(str_from(argv(2)));
-            println("' (expected auto|assist|human|strict)");
-            return 1;
-        }
-        c_idx = 3;
-        arg1 = argv(3);
     }
+    if (c_idx >= n_args) {
+        print_usage();
+        return 1;
+    }
+    arg1 = argv(c_idx);
     if (streq(arg1, "-c") == 1 || streq(arg1, "--command") == 1) {
         if (n_args < c_idx + 2) {
             eprintln_cstr("Error: -c requires a command argument");
@@ -640,6 +586,9 @@ fn main() {
         }
         var c_cmd = argv(c_idx + 1);
         audit_set_context(c_cmd, mode_display(c_mode));
+        # --dry-run runs NOTHING (ADR-008) — not a power verb, not `run`, not a launcher. Every line
+        # goes to the classifier, which prints its report: exactly what 1.9.x `-c` printed on the host.
+        if (c_dry == 1) { return nl_run_c(c_cmd, c_mode, 1, report_dir()); }
         # ⭐ 1.9.11 — THE POWER VERBS ARE NOW SCRIPTABLE. They existed ONLY in interactive_loop, so
         # `agnsh -c "poweroff"` fell through to print_intent_result and was not a power operation at
         # all. That is also why no smoke could ever drive the agnsh half of the shutdown path: there
@@ -716,10 +665,18 @@ fn main() {
         var c_bw = sh_try_bareword_launch(c_cmd, c_mode);
         if (c_bw >= 0) { return c_bw; }
         #endif
+        # Shell-first on the host, as in the interactive loop.
+        #ifndef CYRIUS_TARGET_AGNOS
+        var h_op = host_refuse_operators(c_cmd);
+        if (h_op >= 0) { return h_op; }
+        var h_bw = host_try_bareword_launch(c_cmd, c_mode);
+        if (h_bw >= 0) { return h_bw; }
+        #endif
         # -c is one-shot non-interactive; the audit `mode` field reflects the
-        # resolved mode label (was hardcoded "auto"; --mode now selects).
-        print_intent_result(c_cmd, mode_display(c_mode));
-        return 0;
+        # resolved mode label (was hardcoded "auto"; --mode now selects). The report goes to the
+        # report folder and stdout stays the program's (ADR-008); the status is the program's, or
+        # 126 / 127 when nothing ran.
+        return nl_run_c(c_cmd, c_mode, 0, report_dir());
     }
 
     print_usage();

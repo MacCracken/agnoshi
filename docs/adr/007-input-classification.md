@@ -19,7 +19,7 @@ cascade of keyword parsers. Roadmap 1.9.16 held three open questions that are on
    `parse/shell_cmd` 6.0 µs) before falling through to SHELL_COMMAND.
 3. **The `>` scan is unanchored.** On agnos a sentence containing `>` is diverted to the redirect path.
 
-It had to be settled before 1.10.x: a mis-claimed line prints a wrong proposal today, and would run
+It had to be settled before 2.0.x: a mis-claimed line prints a wrong proposal today, and would run
 one once the NL path executes.
 
 ## Decision
@@ -29,7 +29,7 @@ one once the NL path executes.
 A line whose first word is a program **runs as that program**; only what is not a shell line reaches
 the NL parser. The discriminator is the dispatch layer's program lookup — a fact — not a heuristic
 inside the parser. agnos does this already (`sh_try_bareword_launch` probes `/bin/<word>` before
-`print_intent_result`). The Linux host adopts it with a `PATH` lookup in 1.10.0, alongside NL
+`print_intent_result`). The Linux host adopts it with a `PATH` lookup in 2.0.0, alongside NL
 execution; until then the host's only launcher is `run /abs/path`.
 
 ### 2. Operators are shell syntax
@@ -37,7 +37,7 @@ execution; until then the host's only launcher is `run /abs/path`.
 A line with `|` or `>` is a shell line. If a stage is not a program the line is an **error**
 (`run: no such command…`) and is never reinterpreted as natural language. agnos behaves this way today
 — the pipeline and redirect launchers run before the NL path and fail rather than fall through — and
-the host follows in 1.10.0. The unanchored `>` therefore stays: on agnos `show files > 10MB` is an
+the host follows in 2.0.0. The unanchored `>` therefore stays: on agnos `show files > 10MB` is an
 error, not a proposal.
 
 ### 3. Specific before broad
@@ -112,7 +112,7 @@ re-routes a documented phrase fails CI.
 
 **Neutral**
 - A sentence that opens with a program's name is that program's command line, not natural language:
-  on agnos `find files named foo` runs kriya's `find` today, and from 1.10.0 `git status` on the host
+  on agnos `find files named foo` runs kriya's `find` today, and from 2.0.0 `git status` on the host
   runs git. About a third of the rows in `docs/examples/common-commands.md` open with such a word; the
   table documents the parser, which those lines reach only when no program by that name is found, and
   its scope note says so.
@@ -141,4 +141,4 @@ re-routes a documented phrase fails CI.
   `sh_try_redirect_launch`, `sh_try_bareword_launch`
 - `tests/test_parse_corpus.tcyr`, `docs/examples/common-commands.md`
 - [CHANGELOG](../../CHANGELOG.md) 1.9.5 (the shadowing fixes) and 1.9.16
-- [Roadmap](../development/roadmap.md) — 1.10.x NL exec (the host's `PATH` lookup)
+- [Roadmap](../development/roadmap.md) — 2.0.x NL exec (the host's `PATH` lookup)

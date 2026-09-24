@@ -703,7 +703,10 @@ fn parse_service_action(trimmed) {
     var name = extract_last_arg(trimmed);
     if (name == 0) { return 0; }
     var intent = Intent_new(IntentTag.SERVICE_CONTROL);
-    store64(intent + 8, action);
+    # ⛔ A Str, like every other intent field. This stored the bare cstring literal, and
+    # translate_service_control reads the field with str_len / safe_arg_in_str — the
+    # cstring-in-a-Str-field class (ADR-006) that sank SERVICE_CONTROL once before.
+    store64(intent + 8, str_from(action));
     store64(intent + 16, name);
     return intent;
 }

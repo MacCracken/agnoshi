@@ -35,25 +35,41 @@ Classification uses **basename extraction** so `/usr/bin/dd`, `./rm`,
 ### Approval workflow — ⚠ NOT IN THE SHIPPED BINARY YET
 
 **What ships today**: every translated command is classified into a permission
-tier and its risk is reported. A HIGH-risk command prints
+tier and its risk is reported. Since 2.0.0 a SAFE or READ_ONLY translation
+**runs** (see *Execution*, below); a USER_WRITE, SYSTEM_WRITE or ADMIN one prints
 `Approval required -- not executed (no approval prompt in this build)` and a
 BLOCKED one prints `WARNING: BLOCKED -- not executed, and there is no override`.
-**Neither prompts** — the natural-language path does not execute anything yet
-(see *Execution*, below). Until 1.9.15 the HIGH-risk line promised an
+**Neither prompts, and neither runs**: with no approval prompt, "requires
+approval" means "does not run". Until 1.9.15 the HIGH-risk line promised an
 "interactive prompt in shell mode" that no mode had.
 
 **What does not ship**: `ApprovalManager_request` and the escape-stripped
 approval display (`print_str_safe`, the H5 mitigation) live in
 `src/approval.cyr` / `src/sanitize.cyr` but their only caller is
 `src/session.cyr`, which is **not in `src/agnsh.cyr`'s include graph**. Wiring
-them in is roadmap 1.10.x — approval-gated exec.
+them in is roadmap 2.0.x — approval-gated exec.
 
 ### Execution — what can actually run
 
-Only `run /abs/path` executes on a Linux host; on AGNOS, bareword `/bin/<name>`
-launches, two-stage pipelines, `>` redirection and `prog &` also execute. The
-**natural-language path does not execute anything** — it classifies, reports and
-audits. Every launch and every refusal is recorded in the audit log (see below).
+Since 2.0.0 ([ADR-008](docs/adr/008-nl-exec-contract.md)):
+
+- **Shell lines.** On a Linux host: a bareword program found on `$PATH` (only its
+  *absolute* entries are searched — an empty or relative entry, which would mean
+  the current directory, never is) and `run /abs/path ARGS…`. On AGNOS: bareword
+  `/bin/<name>`, `run`, two-stage pipelines, `>` redirection and `prog &`. A
+  `|`, `>` or `&` line on the host is refused, never read as natural language.
+- **Natural language.** A SAFE or READ_ONLY translation runs through the same
+  launcher as a typed `run` of the same command. Nothing else runs.
+- **Every launch** is an argument vector — never `/bin/sh -c` — after the line
+  passes `is_safe_path` (no traversal, no shell metacharacter). `human` and
+  `strict` confirm first, and **a typed line the classifier calls BLOCKED asks
+  `[y/N]` in every mode**, `auto` included; with no answer (`-c` with nothing on
+  stdin) it is declined. The AI never runs a BLOCKED command; a human may, after
+  an explicit yes.
+- Host programs inherit agnsh's environment (until 2.0.0 the host `run` passed an
+  empty one), as AGNOS programs always have.
+
+Every launch and every refusal is recorded in the audit log (see below).
 
 ### Input sanitization
 All user-controlled strings flowing to syscalls must pass validation:
@@ -69,7 +85,7 @@ All user-controlled strings flowing to syscalls must pass validation:
 `src/checkpoint.cyr` implements backup-before-destructive-op and `undo`, but it
 is **not in the binary's include graph** and there is no `undo` builtin. Do not
 rely on any rollback guarantee. (It calls seven stdlib helpers that no longer
-exist, so its wire-up is a re-implementation — roadmap 1.10.x — checkpointing.)
+exist, so its wire-up is a re-implementation — roadmap 2.0.x — checkpointing.)
 
 ### Audit log
 Every action is logged as a JSON line to `~/.agnsh_audit.log`. All fields
@@ -103,9 +119,16 @@ protection is a future property, not a current one.
   every open**, through the open descriptor since 1.9.15, so a file restored
   from a backup cannot stay world-readable. On agnos there are no permission
   bits to set.
+- Report folder (2.0.0): `$XDG_STATE_HOME/agnoshi/reports/` (default
+  `~/.local/state/agnoshi/reports/`; `/.agnsh_reports/` on AGNOS), mode 0700, each
+  report 0600 and created exclusively with `O_NOFOLLOW`. On the host a folder that
+  is a symlink, belongs to another user or is writable by group or others is
+  refused and no report is written.
 - Checkpoint directory: mode 0700 — *in the unwired module; see above*
 
-⚠ When `$HOME` is unset both fall back to `/tmp/<name>.<uid>`. The uid qualifier
+⚠ When `$HOME` is unset the history and audit log fall back to `/tmp/<name>.<uid>`
+(the report folder to `/tmp/agnoshi-reports.<uid>`, which the ownership check
+above guards). The uid qualifier
 prevents collision between users, but `/tmp` remains world-writable: treat that
 fallback as degraded operation, not a supported configuration.
 
@@ -126,7 +149,8 @@ modules are marked.
   integration in the binary (no `src/llm.cyr`, no network stack compiled in), so
   nothing is sent to a model and nothing is sanitized for one.
 - **ASI02 (Unauthorized Actions)**: permission tiers and basename classification
-  ship and work (`/usr/bin/dd` → `dd` → BLOCKED). ⚠ Approval *workflows* do not
-  — see above. What ships is classification, reporting and auditing.
+  ship and work (`/usr/bin/dd` → `dd` → BLOCKED). Since 2.0.0 they decide what a
+  natural-language line may run (SAFE and READ_ONLY only), and a typed BLOCKED
+  line confirms in every mode. ⚠ Approval *workflows* do not ship — see above.
 - **ASI03 (Insecure Integration)**: ⚠ **not implemented** — there is no sandbox
   and no dotfile protection in the binary.

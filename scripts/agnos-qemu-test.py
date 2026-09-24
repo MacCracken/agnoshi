@@ -210,6 +210,10 @@ def field(rec, name):
 
 
 NL = ["show me all files", "git status", "list running processes"]
+# 2.0.0: SAFE / READ_ONLY NL lines RUN (ADR-008). These two have programs on agnos -- kriya's ls, and
+# owl, which SHOW_FILE translates to there because agnos has no cat.
+NL_LS = "list files in /"
+NL_OWL = "show contents of /redir-target.txt"
 REDIR_OK = "echo hello-redirect > /out.txt"
 REDIR_AUDIT = "echo pwned > " + AUDIT
 REDIR_LINK = "echo pwned > /redir-link"
@@ -286,6 +290,12 @@ try:
     for line in NL:
         seg = run_wait(line, "Risk:")
         check(f"NL {line!r} answered", "Command:" in seg and "Risk:" in seg)
+    # ...and since 2.0.0 they run: the report block, then the program's own output.
+    seg = run_wait(NL_LS, "] >", timeout=40)
+    check("NL exec: `list files in /` runs ls and lists /bin", "Command: ls" in seg and "\nbin" in seg.replace("\r", ""))
+    seg = run_wait(NL_OWL, "REDIRECT-TARGET", timeout=40)
+    check("NL exec: SHOW_FILE reads through owl on agnos",
+          "Command: owl" in seg and "REDIRECT-TARGET-ORIGINAL" in seg)
 
     # ---- 2. redirection ----
     # Control first: a plain open FOLLOWS the planted symlink, so a later refusal to redirect onto
@@ -381,6 +391,10 @@ def results_for(inp):
 
 check("disk keeps the three NL records, in order",
       [field(r, "input") for r in disk if field(r, "result") == "proposed"][:3] == NL)
+check("NL exec: the ls line is proposed, launched, then executed",
+      results_for(NL_LS) == ["proposed", "launched", "executed"])
+check("NL exec: the owl line is proposed, launched, then executed",
+      results_for(NL_OWL) == ["proposed", "launched", "executed"])
 check("`cmd > file`: launched, then executed", results_for(REDIR_OK) == ["launched", "executed"])
 check("`> " + AUDIT + "`: denied, nothing launched", results_for(REDIR_AUDIT) == ["denied"])
 check("`>` onto a symlink: launched, then error", results_for(REDIR_LINK) == ["launched", "error"])

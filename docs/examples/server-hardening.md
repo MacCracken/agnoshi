@@ -18,7 +18,7 @@
 > classification, every launch, and every refusal, JSON-escaped and UTF-8
 > validated. That is a real auditing posture. It is **not** an enforcement one.
 >
-> Treat this document as a design target for the roadmap's 1.10.x exec +
+> Treat this document as a design target for the roadmap's 2.0.x exec +
 > approval slots, not as deployment instructions.
 
 This guide demonstrates using agnsh as the default shell on a hardened
@@ -62,7 +62,7 @@ sudo chsh -s /usr/local/bin/agnsh opsuser
 agnsh reads **no configuration file**. There is no `/etc/agnoshi/`, no parser,
 and no path lookup anywhere in `src/`. Mode is selected per-invocation with
 `--mode <name>` or interactively with `mode <name>`. The block below is a design
-sketch for a future `.agnshrc`-style config (roadmap 1.11.x — `.agnshrc`):
+sketch for a future `.agnshrc`-style config (roadmap 2.1.x — `.agnshrc`):
 
 ```toml
 default_mode = "strict"
@@ -96,10 +96,11 @@ EOF
 
 ## Hardened Approval Workflow — ⚠ ASPIRATIONAL, NOT CURRENT
 
-⛔ The transcript below is a design sketch. In 1.9.8 `strict` mode adds a y/n
-confirmation **only before a program launch** (`run`, or an AGNOS bareword). A
-natural-language translation is reported and audited, never prompted, because
-the NL path does not execute. The intended behaviour:
+⛔ The transcript below is a design sketch. In 2.0.0 `strict` mode adds a y/n
+confirmation before **every launch** — a typed program, `run`, or a
+natural-language line that runs (SAFE and READ_ONLY only). A USER_WRITE,
+SYSTEM_WRITE or ADMIN translation such as `systemctl restart nginx` is reported
+and audited, never prompted, and not run. The intended behaviour:
 
 ```
 $ ssh opsuser@prod-server
@@ -174,7 +175,7 @@ Correlate agnsh's JSON log with auditd's records for full forensic view.
 |-------|-----------|
 | SSH | Key-based auth, fail2ban, port forward restrictions |
 | Login shell | ⛔ **Not an enforcement boundary today** — risk is reported, not enforced |
-| Command classification | ✅ Accurate and useful: basename extraction, six tiers. BLOCKED is *reported*; the NL path executes nothing either way |
+| Command classification | ✅ Accurate and useful: basename extraction, six tiers. It decides what a natural-language line may run (SAFE and READ_ONLY only, 2.0.0), and a typed BLOCKED line confirms in every mode |
 | Input sanitization | No shell injection via crafted NL input |
 | ~~Checkpoint~~ | ⛔ **Not shipped** — no checkpointing, no `undo`, no rollback |
 | Audit | JSON log of every action, integrity-safe escaping |

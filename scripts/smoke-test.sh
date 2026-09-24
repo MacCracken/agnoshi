@@ -34,6 +34,11 @@ echo "=== agnsh smoke test ==="
 echo "Binary: $BIN"
 echo ""
 
+# 2.0.0: every NL line run with -c files a report (ADR-008). Keep this run's reports out of the
+# runner's own $XDG_STATE_HOME / ~/.local/state.
+SMOKE_STATE=$(mktemp -d -t agnsh-state.XXXXXX)
+export XDG_STATE_HOME="$SMOKE_STATE"
+
 # --version
 out=$("$BIN" --version 2>&1)
 check "version" "agnoshi" "$out"
@@ -50,52 +55,54 @@ check "help lists version" "version" "$out"
 out=$("$BIN" -h 2>&1)
 check "help (-h)" "Usage" "$out"
 
-# -c COMMAND: intent classification
-out=$("$BIN" -c "show me all files" 2>&1)
+# Intent classification. Since 2.0.0 `-c` keeps stdout for the program it runs and files the
+# report (ADR-008); `--dry-run` prints the 1.9.x report and runs nothing, so the classifier checks
+# read it from there. A line that would not run exits 126/127, hence `|| true` under set -e.
+out=$("$BIN" --dry-run -c "show me all files" 2>&1) || true
 check "parse show files" "Intent:" "$out"
 
-out=$("$BIN" -c "list running processes" 2>&1)
+out=$("$BIN" --dry-run -c "list running processes" 2>&1) || true
 check "parse list procs" "Intent:" "$out"
 
-out=$("$BIN" -c "git status" 2>&1)
+out=$("$BIN" --dry-run -c "git status" 2>&1) || true
 check "parse git status" "Intent:" "$out"
 
-out=$("$BIN" -c "install vim" 2>&1)
+out=$("$BIN" --dry-run -c "install vim" 2>&1) || true
 check "parse install" "Intent:" "$out"
 
 # NB: "find files named foo" used to exercise the FIND_FILES intent here,
 # but `find` is now an in-process FS builtin (1.4.2), so a `find`-leading
 # line runs the verb. Use the equivalent NL phrasing that does NOT begin
 # with a verb word to keep the intent-parser coverage.
-out=$("$BIN" -c "search for files named foo" 2>&1)
+out=$("$BIN" --dry-run -c "search for files named foo" 2>&1) || true
 check "parse find files" "Intent:" "$out"
 
-out=$("$BIN" -c "remove file.txt" 2>&1)
+out=$("$BIN" --dry-run -c "remove file.txt" 2>&1) || true
 check "parse remove" "Intent:" "$out"
 
-out=$("$BIN" -c "firewall allow 8080" 2>&1)
+out=$("$BIN" --dry-run -c "firewall allow 8080" 2>&1) || true
 check "parse firewall" "Intent:" "$out"
 
-out=$("$BIN" -c "create user alice" 2>&1)
+out=$("$BIN" --dry-run -c "create user alice" 2>&1) || true
 check "parse user add" "Intent:" "$out"
 
 # Approval wiring -- every -c output now carries a "Risk: [LEVEL]"
 # line (assessed via risk_from_permission). BLOCKED commands surface
 # a WARNING line; HIGH-risk ones note the approval requirement.
-out=$("$BIN" -c "show me files" 2>&1)
+out=$("$BIN" --dry-run -c "show me files" 2>&1) || true
 check "risk LOW for read-only" "Risk: \[LOW\]" "$out"
 
-out=$("$BIN" -c "copy a to b" 2>&1)
+out=$("$BIN" --dry-run -c "copy a to b" 2>&1) || true
 check "risk MED for user-write" "Risk: \[MED\]" "$out"
 
-out=$("$BIN" -c "install vim" 2>&1)
+out=$("$BIN" --dry-run -c "install vim" 2>&1) || true
 check "risk HIGH for admin" "Risk: \[HIGH\]" "$out"
 check "high-risk approval hint" "Approval required" "$out"
 # 1.9.15: the line says what happened. It used to promise "(interactive prompt in shell
 # mode)", and no prompt exists in any mode.
 check "high-risk line says nothing ran" "Approval required -- not executed" "$out"
 
-out=$("$BIN" -c "rm -rf /tmp/foo" 2>&1)
+out=$("$BIN" --dry-run -c "rm -rf /tmp/foo" 2>&1) || true
 check "risk CRIT for blocked" "Risk: \[CRIT\]" "$out"
 check "blocked warning line" "WARNING: BLOCKED" "$out"
 # 1.9.15: it used to say "would not execute without explicit override" — no override exists.
@@ -103,42 +110,118 @@ check "blocked line claims no override" "not executed, and there is no override"
 
 # Command field populated -- the cstring/Str print mismatch that left
 # this blank pre-v1.2.1 is now fixed.
-out=$("$BIN" -c "show me files" 2>&1)
+out=$("$BIN" --dry-run -c "show me files" 2>&1) || true
 check "command field has ls" "Command: ls" "$out"
 
 # Error-recovery hints -- when the parse succeeds but the translation
 # isn't actually runnable (LLM not wired, pipeline exec not wired,
 # safety check rejected), surface a Hint: line so the user knows the
 # echo+Risk:[LOW] output isn't a real run.
-out=$("$BIN" -c "what is dns" 2>&1)
+out=$("$BIN" --dry-run -c "what is dns" 2>&1) || true
 check "question hint surfaces" "Hint: question intent" "$out"
-out=$("$BIN" -c "ls | grep foo" 2>&1)
+out=$("$BIN" --dry-run -c "ls | grep foo" 2>&1) || true
 # The hint text changed in 1.9.2. It used to read "auto-exec arrives with the
 # exec wire-up", which had been false for six releases — pipelines DO auto-exec
 # on agnos. Assert on the stable "Hint: pipeline" prefix rather than re-pinning
 # a full sentence that will drift again.
 check "pipeline hint surfaces" "Hint: pipeline" "$out"
-out=$("$BIN" -c "remove ../etc/passwd" 2>&1)
+out=$("$BIN" --dry-run -c "remove ../etc/passwd" 2>&1) || true
 check "safety-reject hint surfaces" "Hint: translator safety check rejected" "$out"
 # Happy-path inputs should NOT carry a hint line.
-out=$("$BIN" -c "show me files" 2>&1)
+out=$("$BIN" --dry-run -c "show me files" 2>&1) || true
 case "$out" in
   *"Hint:"*) FAIL=$((FAIL+1)); FAILED_TESTS="$FAILED_TESTS
   FAIL: happy-path output should not have Hint:";;
   *) PASS=$((PASS+1));;
 esac
 
+# The -c contract (2.0.0, ADR-008): stdout is the program's, the report goes to the report
+# folder, and a line agnsh does not run says why on stderr and exits 126 (understood, not run) or
+# 127 (nothing to run).
+C_STATE=$(mktemp -d -t agnsh-report.XXXXXX)
+REPORTS="$C_STATE/agnoshi/reports"
+ec=0
+out=$(XDG_STATE_HOME="$C_STATE" "$BIN" -c "copy a to b" 2>/dev/null) || ec=$?
+check "a line that does not run exits 126" "^126$" "$ec"
+check "...and leaves stdout empty" "^$" "$out"
+err=$(XDG_STATE_HOME="$C_STATE" "$BIN" -c "copy a to b" 2>&1 >/dev/null) || true
+check "...and says why on stderr, naming the report" "agnsh: not executed: approval required -- report: " "$err"
+check "the report is filed as latest.txt" "Intent: 6  Command: cp" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
+check "the report records the input" "input: copy a to b" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
+check "the report records the result" "result: not executed: approval required" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
+check "the report folder is private" "^700$" "$(stat -c %a "$REPORTS" 2>/dev/null)"
+check "a report is private" "^600$" "$(stat -c %a "$REPORTS/latest.txt" 2>/dev/null)"
+ec=0
+XDG_STATE_HOME="$C_STATE" "$BIN" -c "what is dns" >/dev/null 2>&1 || ec=$?
+check "a line with nothing to run exits 127" "^127$" "$ec"
+ec=0
+dry=$(XDG_STATE_HOME="$C_STATE" "$BIN" --dry-run -c "show me files" 2>&1) || ec=$?
+check "--dry-run prints the 1.9.x report" "Intent: 0  Command: ls" "$dry"
+check "--dry-run exits 0 for a line that would run" "^0$" "$ec"
+check "--dry-run files its report too" "result: not executed: dry run" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
+dry=$(XDG_STATE_HOME="$C_STATE" "$BIN" -n --mode strict -c "show me files" 2>&1) || true
+check "-n and --mode combine in either order" "Intent: 0  Command: ls" "$dry"
+rm -rf "$C_STATE"
+
+# Shell-first on the host (2.0.0, ADR-007 / ADR-008 § 3): a line whose first word is a program on
+# $PATH runs as that program -- through one argv launcher that inherits the environment and never
+# uses a shell. `|`, `>` and `&` are shell syntax this host cannot run yet: refused, never NL.
+out=$("$BIN" -c "echo agnsh-smoke-hello" 2>/dev/null) || true
+check "a bareword program runs, output on stdout" "^agnsh-smoke-hello$" "$out"
+ec=0
+"$BIN" -c "false" >/dev/null 2>&1 || ec=$?
+check "...and its exit status is agnsh's" "^1$" "$ec"
+ec=0
+err=$("$BIN" -c "ls | sort" 2>&1 >/dev/null) || ec=$?
+check "a pipeline is refused on the host" "pipelines are AGNOS-only" "$err"
+check "...with 127" "^127$" "$ec"
+ec=0
+err=$("$BIN" -c "rm -rf /tmp/agnsh-smoke-nonexistent" 2>&1 >/dev/null </dev/null) || ec=$?
+check "a typed BLOCKED line asks even in auto" "BLOCKED: run" "$err"
+check "...and with no answer it is declined (126)" "^126$" "$ec"
+out=$("$BIN" -c "run /bin/echo agnsh-run-args" 2>/dev/null) || true
+check "run takes arguments on the host" "^agnsh-run-args$" "$out"
+out=$(AGNSH_SMOKE_VAR=inherited "$BIN" -c "env" 2>/dev/null) || true
+check "a program inherits agnsh's environment" "AGNSH_SMOKE_VAR=inherited" "$out"
+
+# NL execution (2.0.0, ADR-008): SAFE and READ_ONLY lines run; the program's output is stdout.
+NL_DIR=$(mktemp -d -t agnsh-nl.XXXXXX)
+NL_STATE="$NL_DIR/state"
+mkdir -p "$NL_DIR/work"
+touch "$NL_DIR/work/agnsh-nl-marker"
+ec=0
+out=$(cd "$NL_DIR/work" && HOME="$NL_DIR" XDG_STATE_HOME="$NL_STATE" "$BIN" -c "show me all files" 2>/dev/null) || ec=$?
+check "an NL read-only line runs" "agnsh-nl-marker" "$out"
+check "...with the program's status" "^0$" "$ec"
+check "...and no report on stdout" "^[^I]*$" "$(echo "$out" | grep -c 'Intent:')"
+check "its report records the execution" "result: executed, exit 0" "$(cat "$NL_STATE/agnoshi/reports/latest.txt" 2>/dev/null)"
+nl_log=$(cat "$NL_DIR/.agnsh_audit.log" 2>/dev/null)
+check "the audit keeps the parse-time record" '"input":"show me all files","action":"ls","approved":1,"result":"proposed"' "$nl_log"
+check "...and adds the exec records with the exit code" '"result":"executed","exit_code":0' "$nl_log"
+ec=0
+(cd "$NL_DIR/work" && HOME="$NL_DIR" XDG_STATE_HOME="$NL_STATE" "$BIN" --mode human -c "show me all files" >/dev/null 2>&1 </dev/null) || ec=$?
+check "human mode confirms first, and no answer declines (126)" "^126$" "$ec"
+ec=0
+(HOME="$NL_DIR" XDG_STATE_HOME="$NL_STATE" "$BIN" -c "copy a to b" >/dev/null 2>&1) || ec=$?
+check "a user-write NL line does not run yet (126)" "^126$" "$ec"
+check "...and the audit says it needs approval" '"input":"copy a to b","action":"cp","approved":0,"result":"needs_approval"' "$(cat "$NL_DIR/.agnsh_audit.log" 2>/dev/null)"
+rm -rf "$NL_DIR"
+
 # Interactive mode -- drive via stdin pipe and check that the mode-
 # switching builtins flow correctly and the prompt updates. Each line
 # of input is one user turn (the read_line helper accepts byte-by-byte
 # stdin so piped multi-line blobs no longer collapse into one buffer).
-INT_OUT=$(printf 'mode\nmode human\nmode\nmode strict\nshow files\nexit\n' | "$BIN" 2>&1)
+# 2.0.0: the NL line now RUNS, and under strict it confirms first -- the `n` answers that prompt, so
+# `exit` is still read as the command it is.
+INT_OUT=$(printf 'mode\nmode human\nmode\nmode strict\nshow files\nn\nexit\n' | "$BIN" 2>&1)
 check "interactive shows assist start" "\[ASSIST\] >" "$INT_OUT"
 check "interactive mode reports current" "Current mode: AI-ASSIST" "$INT_OUT"
 check "interactive mode switch to human" "Mode -> HUMAN" "$INT_OUT"
 check "interactive prompt updates after switch" "\[HUMAN\] >" "$INT_OUT"
 check "interactive mode switch to strict" "Mode -> STRICT" "$INT_OUT"
 check "interactive parses NL under mode" "Intent:" "$INT_OUT"
+check "strict confirms before an NL command runs" "run .*ls.* ? \[y/N\]" "$INT_OUT"
+check "...and a no declines it" "(aborted)" "$INT_OUT"
 check "interactive exits cleanly" "bye" "$INT_OUT"
 
 # Interactive negative -- unknown mode name should error, not crash,
@@ -180,8 +263,10 @@ rm -rf "$EMPTY_HOME"
 # commands, verify the log has well-formed lines with the expected
 # action+approved shape.
 SMOKE_HOME=$(mktemp -d -t agnsh-smoke.XXXXXX)
-HOME="$SMOKE_HOME" "$BIN" -c "show me files" >/dev/null 2>&1
-HOME="$SMOKE_HOME" "$BIN" -c "rm -rf /tmp/x" >/dev/null 2>&1
+# 2.0.0: `-c` exits 126/127 for a line it does not run (|| true under set -e), and the BLOCKED probe
+# is NL phrasing -- a shell-shaped `rm -rf ...` line is a shell line, not a classifier input.
+HOME="$SMOKE_HOME" "$BIN" --dry-run -c "show me files" >/dev/null 2>&1 || true
+HOME="$SMOKE_HOME" "$BIN" --dry-run -c "delete /tmp/x" >/dev/null 2>&1 || true
 LOG="$SMOKE_HOME/.agnsh_audit.log"
 if [ -f "$LOG" ]; then
     PASS=$((PASS+1))
@@ -205,12 +290,12 @@ RES_HOME=$(mktemp -d -t agnsh-result.XXXXXX)
 # NL phrasing `delete /tmp/x`, which the intent parser classifies BLOCKED
 # (result "blocked") exactly as the old `rm /tmp/x` did — preserving the
 # safety-classification coverage without colliding with the rm verb.
-HOME="$RES_HOME" "$BIN" -c "show files" > /dev/null 2>&1
-HOME="$RES_HOME" "$BIN" -c "install vim" > /dev/null 2>&1
-HOME="$RES_HOME" "$BIN" -c "delete /tmp/x" > /dev/null 2>&1
-HOME="$RES_HOME" "$BIN" -c "what is dns" > /dev/null 2>&1
-HOME="$RES_HOME" "$BIN" -c "ls | grep foo" > /dev/null 2>&1
-HOME="$RES_HOME" "$BIN" -c "remove ../etc/passwd" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" --dry-run -c "show files" > /dev/null 2>&1 || true
+HOME="$RES_HOME" "$BIN" --dry-run -c "install vim" > /dev/null 2>&1 || true
+HOME="$RES_HOME" "$BIN" --dry-run -c "delete /tmp/x" > /dev/null 2>&1 || true
+HOME="$RES_HOME" "$BIN" --dry-run -c "what is dns" > /dev/null 2>&1 || true
+HOME="$RES_HOME" "$BIN" --dry-run -c "ls | grep foo" > /dev/null 2>&1 || true
+HOME="$RES_HOME" "$BIN" --dry-run -c "remove ../etc/passwd" > /dev/null 2>&1 || true
 RES_LOG="$RES_HOME/.agnsh_audit.log"
 res_content=$(cat "$RES_LOG" 2>/dev/null)
 check "result proposed for read-only" '"input":"show files".*"result":"proposed"' "$res_content"
@@ -228,7 +313,7 @@ check "result safe-decline for traversal-rm" '"input":"remove ../etc/passwd","ac
 # Additional cleaner safety-reject probe — CREATE_DIR is USER_WRITE
 # (not BLOCKED), so the audit result MUST be `rejected_safety` for
 # a path-traversal input. No permission-vs-safety ambiguity here.
-HOME="$RES_HOME" "$BIN" -c "create directory ../foo" > /dev/null 2>&1
+HOME="$RES_HOME" "$BIN" --dry-run -c "create directory ../foo" > /dev/null 2>&1 || true
 res_content=$(cat "$RES_LOG" 2>/dev/null)
 check "result rejected_safety for usr-write traversal" '"input":"create directory ../foo".*"result":"rejected_safety"' "$res_content"
 rm -rf "$RES_HOME"
@@ -330,8 +415,9 @@ if [ -z "$out_o" ]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
   FAIL: launch diagnostic leaked to stdout: $out_o"; fi
 check "diagnostic goes to stderr" "run:" "$out_e"
-# ...and normal output still goes to stdout.
-out_n=$(HOME="$HYG_HOME" "$BIN" -c "show files" 2>/dev/null || true)
+# ...and the report --dry-run prints still goes to stdout. (Since 2.0.0 a plain -c gives stdout to
+# the program it runs and files the report instead -- see the -c contract block above.)
+out_n=$(HOME="$HYG_HOME" "$BIN" --dry-run -c "show files" 2>/dev/null || true)
 check "normal output stays on stdout" "Intent:" "$out_n"
 
 # (b) The audit log's 0600 is re-asserted on an existing file, not only at
@@ -340,14 +426,14 @@ check "normal output stays on stdout" "Intent:" "$out_n"
 rm -f "$HYG_HOME/.agnsh_audit.log"
 touch "$HYG_HOME/.agnsh_audit.log"
 chmod 644 "$HYG_HOME/.agnsh_audit.log"
-HOME="$HYG_HOME" "$BIN" -c "show files" >/dev/null 2>&1
+HOME="$HYG_HOME" "$BIN" --dry-run -c "show files" >/dev/null 2>&1 || true
 mode=$(stat -c '%a' "$HYG_HOME/.agnsh_audit.log" 2>/dev/null || echo "?")
 check "audit log mode repaired to 0600" "600" "$mode"
 
 # (c) The log APPENDS. On a Darwin host the hardcoded 1089 decoded to
 # O_WRONLY|O_ASYNC|O_TRUNC — no O_CREAT, and truncating every open.
 before=$(wc -l < "$HYG_HOME/.agnsh_audit.log" 2>/dev/null || echo 0)
-HOME="$HYG_HOME" "$BIN" -c "list files" >/dev/null 2>&1
+HOME="$HYG_HOME" "$BIN" --dry-run -c "list files" >/dev/null 2>&1 || true
 after=$(wc -l < "$HYG_HOME/.agnsh_audit.log" 2>/dev/null || echo 0)
 if [ "$after" -gt "$before" ]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
@@ -372,7 +458,7 @@ else PASS=$((PASS + 1)); fi
 # (e) HOME unset falls back to a UID-QUALIFIED /tmp path, not a fixed name every
 # user on the box would share.
 rm -f "/tmp/agnsh_audit.log" "/tmp/agnsh_audit.log.$(id -u)"
-(unset HOME; "$BIN" -c "show files" >/dev/null 2>&1) || true
+(unset HOME; "$BIN" --dry-run -c "show files" >/dev/null 2>&1) || true
 if [ -f "/tmp/agnsh_audit.log.$(id -u)" ]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
   FAIL: HOME-unset fallback did not use the uid-qualified path"; fi
@@ -390,7 +476,7 @@ rm -rf "$HYG_HOME"
 # parser that already handled it correctly could see it. Asserted at the binary
 # level, not just the parser, so the whole pipeline is covered.
 PS_HOME=$(mktemp -d)
-psh() { HOME="$PS_HOME" "$BIN" -c "$1" 2>/dev/null | head -1 || true; }
+psh() { HOME="$PS_HOME" "$BIN" --dry-run -c "$1" 2>/dev/null | head -1 || true; }
 
 # `delete user bob` used to emit `rm` — an rm against a FILE named "bob".
 check "delete user -> userdel" "Command: userdel" "$(psh 'delete user bob')"
@@ -420,6 +506,8 @@ check "show hostname stays uname" "Command: uname" "$(psh 'show hostname')"
 check "show me all files stays ls" "Command: ls" "$(psh 'show me all files')"
 
 rm -rf "$PS_HOME"
+
+rm -rf "$SMOKE_STATE"
 
 echo ""
 echo "Passed: $PASS"

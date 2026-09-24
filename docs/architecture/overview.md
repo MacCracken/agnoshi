@@ -62,7 +62,7 @@ agnoshi
 on AGNOS, the `/bin` launchers — pipeline, redirect, bareword. A shell line runs and never reaches the
 parser, and a `|` / `>` line whose stage is not a program is an error, not natural language. Only
 what is left reaches `Interpreter_parse`, which tries its specific tier (anchored phrases) before its
-broad tier (single keywords). The Linux host has no launchers yet — 1.10.0 adds a `PATH` lookup — so
+broad tier (single keywords). The Linux host has no launchers yet — 2.0.0 adds a `PATH` lookup — so
 every host line that is not a builtin or `run` reaches the parser.
 
 ```
@@ -89,14 +89,23 @@ User Input (stdin)
     |                                           result: proposed / needs_approval
     |                                                   / blocked / rejected_safety
     |
-    |   ⛔ THE NL PATH STOPS HERE. It does not execute. The approval loop
-    |      (ApprovalManager_request) and checkpointing (CheckpointManager) live
-    |      in src/session.cyr + src/checkpoint.cyr, NEITHER of which is in the
-    |      binary's include graph. Wiring exec in is roadmap 1.10.x — NL exec.
+    |                                                 |
+    |                          SAFE / READ_ONLY only (2.0.0, ADR-008):
+    |                                                 v
+    |                                         [nl_launch] -> the same launcher
+    |                                           as `run` (below); -c files the
+    |                                           report in the report folder
     |
-    +--> EXECUTION, a separate path entirely:
-    |      run /abs/path  -> [sh_run_program] -> host fork/exec, or AGNOS #37/#43
-    |      AGNOS only:    bareword /bin/<name>, cmd1 | cmd2, cmd > file, prog &
+    |   The approval loop (ApprovalManager_request) and checkpointing
+    |   (CheckpointManager) are NOT in the include graph: USER_WRITE and above
+    |   are reported and not run. Approval-gated exec is roadmap 2.0.x.
+    |
+    +--> SHELL LINES (checked before the parser, ADR-007):
+    |      run /abs/path, or a bareword -> [shell-line gate: BLOCKED confirms in
+    |      every mode] -> [sh_launch_line] -> host fork/execve (run_host.cyr),
+    |      or AGNOS #37/#43
+    |      host: bareword found on $PATH; `|`, `>`, `&` refused
+    |      AGNOS: bareword /bin/<name>, cmd1 | cmd2, cmd > file, prog &
     |                                                 |
     |                                                 v
     |                       [audit_exec] -> "launched" BEFORE the child starts,

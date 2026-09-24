@@ -1,0 +1,294 @@
+# nlexec.cyr — the natural-language path: verdict, report and execution (ADR-008, 2.0.0).
+#
+# One NL line gives one verdict: what agnsh understood (the report block — the 1.9.x `Intent:` /
+# `Command:` / `Risk:` lines, verbatim), whether it may run and, when it may not, why and with which
+# `-c` exit status. The interactive shell prints the block; `-c` files a report (the block plus the
+# input, mode, time and outcome) in the report folder and keeps stdout for the program.
+#
+# Split out of src/agnsh.cyr, where print_intent_result lived: a test binary cannot include the
+# entry file, so nothing there can be asserted (the statepaths.cyr split, 1.9.7, for the same reason).
+
+enum NlVerdict {
+    NV_TAG = 0;             # the IntentTag
+    NV_TRANSLATION = 8;     # the Translation, or 0
+    NV_BLOCK = 16;          # Str: the report block, newline-terminated
+    NV_RUN = 24;            # 1 when the translation may run (ADR-008 § 1)
+    NV_REASON = 32;         # cstring: why it may not, when NV_RUN is 0
+    NV_STATUS = 40;         # the -c status when it does not run: EXIT_NOT_RUN / EXIT_NOTHING_TO_RUN
+    NV_BYTES = 48;
+}
+
+# Is this the `cmd1 | cmd2` form of PIPELINE (Interpreter_parse's own marker, " | ") rather than the
+# natural-language `… then …` form?
+fn nl_is_pipe_line(input_cstr) {
+    return str_contains(str_from(input_cstr), " | ");
+}
+
+# Finish a verdict that will not run.
+fn _nv_not_run(v, sb, reason, status) {
+    store64(v + NV_BLOCK, str_builder_build(sb));
+    store64(v + NV_RUN, 0);
+    store64(v + NV_REASON, reason);
+    store64(v + NV_STATUS, status);
+    return v;
+}
+
+# Classify one NL line: parse, translate, build the report block, write the parse-time audit record,
+# and decide whether it may run. `mode_label` is the audit record's mode field.
+fn nl_verdict(input_cstr, mode_label) {
+    var v = alloc(NV_BYTES);
+    store64(v + NV_TRANSLATION, 0);
+    store64(v + NV_RUN, 0);
+    store64(v + NV_REASON, 0);
+    store64(v + NV_STATUS, 0);
+    var sb = str_builder_new();
+    var interp = Interpreter_new();
+    var intent = Interpreter_parse(interp, str_from(input_cstr));
+    var tag = load64(intent);
+    store64(v + NV_TAG, tag);
+    str_builder_add_cstr(sb, "Intent: ");
+    str_builder_add_int(sb, tag);
+    if (tag == IntentTag.UNKNOWN) {
+        str_builder_add_cstr(sb, " (UNKNOWN)\n");
+        return _nv_not_run(v, sb, "not understood", EXIT_NOTHING_TO_RUN);
+    }
+    var translation = Interpreter_translate(interp, intent);
+    if (translation == 0) {
+        str_builder_add_cstr(sb, " (no translation)\n");
+        return _nv_not_run(v, sb, "no translation", EXIT_NOTHING_TO_RUN);
+    }
+    store64(v + NV_TRANSLATION, translation);
+    var cmd = load64(translation);
+    var perm = load64(translation + 24);
+    var desc = load64(translation + 16);
+    var risk = risk_from_permission(perm);
+    str_builder_add_cstr(sb, "  Command: ");
+    str_builder_add_cstr(sb, cmd);
+    str_builder_add_cstr(sb, "\n  Risk: ");
+    str_builder_add_cstr(sb, risk_icon(risk));
+    str_builder_add_cstr(sb, "\n");
+    # Say what HAPPENS (1.9.15). The `WARNING: BLOCKED` and `Approval required` prefixes are what
+    # scripts and scripts/smoke-test.sh match on. Since 2.0.0 SAFE and READ_ONLY lines run, so an
+    # understood USER_WRITE line (`cp`, `mv`, `mkdir`) that does not must say so too — until then only
+    # the HIGH tiers carried the line, because nothing ran at all. SHELL_COMMAND is the exception: it
+    # is the fall-through for a line the parser did not understand, and approval would not make a
+    # non-program run, so its MED tier gets the Hint below instead. Approval-gated exec is 2.0.x.
+    var risk_high = 0;
+    if (perm == PermissionLevel.SYSTEM_WRITE || perm == PermissionLevel.ADMIN) { risk_high = 1; }
+    if (perm == PermissionLevel.USER_WRITE && tag != IntentTag.SHELL_COMMAND) { risk_high = 1; }
+    if (perm == PermissionLevel.BLOCKED) {
+        str_builder_add_cstr(sb, "  WARNING: BLOCKED -- not executed, and there is no override\n");
+    } elif (risk_high == 1) {
+        str_builder_add_cstr(sb, "  Approval required -- not executed (no approval prompt in this build)\n");
+    }
+    # Error-recovery hints: a parse that succeeded into something that is not a runnable command.
+    # Without one the user reads `Command: echo / Risk: [LOW]` and believes it ran.
+    if (tag == IntentTag.QUESTION) {
+        str_builder_add_cstr(sb, "  Hint: question intent -- LLM streaming arrives in a later slice\n");
+    } elif (tag == IntentTag.PIPELINE) {
+        # PIPELINE is two things. A `|` line is shell syntax (ADR-007 decision 2): outside --dry-run
+        # it reaches a pipeline launcher, never this parser — agnos has one, the host does not yet.
+        # A `… then …` request is natural language that names several steps; the NL path runs one
+        # command per line.
+        if (nl_is_pipe_line(input_cstr) == 1) {
+            #ifdef CYRIUS_TARGET_AGNOS
+            str_builder_add_cstr(sb, "  Hint: pipeline stages must be /bin programs to auto-run\n");
+            #endif
+            #ifndef CYRIUS_TARGET_AGNOS
+            str_builder_add_cstr(sb, "  Hint: pipeline -- this host build has no pipeline launcher yet\n");
+            #endif
+        } else {
+            str_builder_add_cstr(sb, "  Hint: pipeline -- a multi-step request runs one step per line\n");
+        }
+    } elif (tag == IntentTag.SHELL_COMMAND) {
+        str_builder_add_cstr(sb, "  Hint: not a known command here -- nothing was run\n");
+    } elif (tag == IntentTag.CHANGE_DIR) {
+        # `cd` in a child process changes the child's directory and nothing else: it is a shell
+        # builtin, and agnsh's own `cd` is roadmap 2.1.x.
+        str_builder_add_cstr(sb, "  Hint: cd is a shell builtin -- it arrives in a later release\n");
+    } elif (load64(translation + 40) != 0) {
+        str_builder_add_cstr(sb, "  Hint: routed to an MCP tool -- not run in this build\n");
+    } elif (streq(desc, "Unknown intent") == 1) {
+        str_builder_add_cstr(sb, "  Hint: translator safety check rejected this input -- try rephrasing\n");
+    }
+    audit_one_shot(input_cstr, cmd, perm, mode_label, tag, desc);
+    # Decision order: BLOCKED first (it is final), then the fall-through (not a program, so no tier
+    # applies), then the approval tiers, then the understood-but-not-runnable kinds.
+    if (perm == PermissionLevel.BLOCKED) { return _nv_not_run(v, sb, "blocked", EXIT_NOT_RUN); }
+    if (tag == IntentTag.SHELL_COMMAND) {
+        return _nv_not_run(v, sb, "not a known command", EXIT_NOTHING_TO_RUN);
+    }
+    if (perm >= PermissionLevel.USER_WRITE) {
+        return _nv_not_run(v, sb, "approval required", EXIT_NOT_RUN);
+    }
+    if (tag == IntentTag.QUESTION) { return _nv_not_run(v, sb, "a question", EXIT_NOTHING_TO_RUN); }
+    if (tag == IntentTag.PIPELINE) {
+        if (nl_is_pipe_line(input_cstr) == 1) {
+            return _nv_not_run(v, sb, "a shell pipeline", EXIT_NOTHING_TO_RUN);
+        }
+        return _nv_not_run(v, sb, "a multi-step request", EXIT_NOTHING_TO_RUN);
+    }
+    if (tag == IntentTag.CHANGE_DIR) {
+        return _nv_not_run(v, sb, "a directory change", EXIT_NOTHING_TO_RUN);
+    }
+    if (load64(translation + 40) != 0) {
+        return _nv_not_run(v, sb, "an MCP query", EXIT_NOTHING_TO_RUN);
+    }
+    if (streq(desc, "Unknown intent") == 1) {
+        return _nv_not_run(v, sb, "arguments refused by the safety checks", EXIT_NOT_RUN);
+    }
+    store64(v + NV_BLOCK, str_builder_build(sb));
+    store64(v + NV_RUN, 1);
+    return v;
+}
+
+# The report filed for one `-c` run: input, mode and time, the report block, and the outcome (Str).
+fn nl_report_text(v, input_cstr, mode_label, time_cstr, outcome) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "input: ");
+    str_builder_add_cstr(sb, input_cstr);
+    str_builder_add_cstr(sb, "\nmode: ");
+    str_builder_add_cstr(sb, mode_label);
+    str_builder_add_cstr(sb, "\ntime: ");
+    str_builder_add_cstr(sb, time_cstr);
+    str_builder_add_cstr(sb, "\n");
+    str_builder_add(sb, load64(v + NV_BLOCK));
+    str_builder_add_cstr(sb, "result: ");
+    str_builder_add(sb, outcome);
+    str_builder_add_cstr(sb, "\n");
+    return str_builder_build(sb);
+}
+
+# The report's `result:` for a run: `executed, exit N`, or `not executed: <reason>`.
+fn nl_outcome(code, reason_cstr) {
+    var sb = str_builder_new();
+    if (reason_cstr != 0) {
+        str_builder_add_cstr(sb, "not executed: ");
+        str_builder_add_cstr(sb, reason_cstr);
+    } else {
+        str_builder_add_cstr(sb, "executed, exit ");
+        str_builder_add_int(sb, code);
+    }
+    return str_builder_build(sb);
+}
+
+# The translation as a command line for the shell launcher: its program resolved — on the host through
+# the same $PATH lookup as a typed bareword (ADR-008 § 3), on agnos as /bin/<command> — then its
+# arguments, separated by spaces (agnos's kernel and the host launcher both split argv on them; there
+# is no quoting yet). Returns 0 when the host has no such program.
+fn nl_command_line(tr) {
+    var cmd = load64(tr);
+    var prog = 0;
+    #ifdef CYRIUS_TARGET_AGNOS
+    prog = str_cat3_cstr("/bin/", cmd, "");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    prog = path_lookup(cmd, strlen(cmd));
+    #endif
+    if (prog == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prog);
+    var args = load64(tr + 8);
+    if (args != 0) {
+        for (var i = 0; i < vec_len(args); i = i + 1) {
+            var a = vec_get(args, i);
+            if (a != 0) {
+                str_builder_add_cstr(sb, " ");
+                str_builder_add_cstr(sb, a);
+            }
+        }
+    }
+    return str_cstr(str_builder_build(sb));
+}
+
+# Launch a runnable verdict's translation exactly as a typed `run` of the same command would go: the
+# mode gate (HUMAN/STRICT confirm), the `launched` then outcome audit records, the child's status.
+# Returns the exit status (>= 0), LAUNCH_DECLINED, or LAUNCH_FAILED.
+fn nl_launch(v, mode) {
+    var tr = load64(v + NV_TRANSLATION);
+    var line = nl_command_line(tr);
+    if (line == 0) {
+        eprint_str(str_from("agnsh: "));
+        eprint_str(str_from(load64(tr)));
+        eprint_line(str_from(": no such command on this system"));
+        audit_exec_ctx(load64(tr), "error", 0 - 1);
+        return LAUNCH_FAILED;
+    }
+    # The translators validated every argument; the launcher's own check still runs on the whole line.
+    if (is_safe_path(line) == 0) {
+        eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
+        audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+        return LAUNCH_DECLINED;
+    }
+    return sh_launch_line(line, mode);
+}
+
+# The interactive NL path: print the report block — what the user reads before anything runs — then
+# run the translation if it may, under the mode gate (ADR-008 § 1). Nothing is filed; history and the
+# audit log record the session. Returns the status, as `-c` would.
+fn nl_run_interactive(input_cstr, mode) {
+    var v = nl_verdict(input_cstr, mode_display(mode));
+    str_print(load64(v + NV_BLOCK));
+    if (load64(v + NV_RUN) == 0) { return load64(v + NV_STATUS); }
+    var code = nl_launch(v, mode);
+    if (code == LAUNCH_DECLINED) { return EXIT_NOT_RUN; }
+    if (code < 0) { return EXIT_NOTHING_TO_RUN; }
+    return code;
+}
+
+# Run one NL line for `-c` (ADR-008): classify it, run it if it may, file the report in
+# `report_dir`, and return the exit status. stdout belongs to the program, so everything agnsh has
+# to say goes to stderr — except under `dry_run`, which runs nothing and prints the report block on
+# stdout: exactly what `-c` printed before 2.0.0.
+fn nl_run_c(input_cstr, mode, dry_run, report_dir) {
+    var label = mode_display(mode);
+    var time = iso8601_now();
+    var v = nl_verdict(input_cstr, label);
+    var status = load64(v + NV_STATUS);
+    var outcome = 0;
+    var notice = 0;     # why nothing ran, for stderr (never under --dry-run, which runs nothing)
+    if (dry_run == 1) {
+        str_print(load64(v + NV_BLOCK));
+        outcome = nl_outcome(0, "dry run");
+        if (load64(v + NV_RUN) == 1) { status = 0; }
+    } elif (load64(v + NV_RUN) == 1) {
+        var code = nl_launch(v, mode);
+        if (code == LAUNCH_DECLINED) {
+            status = EXIT_NOT_RUN;
+            notice = "declined";
+            outcome = nl_outcome(0, notice);
+        } elif (code < 0) {
+            status = EXIT_NOTHING_TO_RUN;
+            notice = "the program could not be launched";
+            outcome = nl_outcome(0, notice);
+        } else {
+            status = code;
+            outcome = nl_outcome(code, 0);
+        }
+    } else {
+        notice = load64(v + NV_REASON);
+        outcome = nl_outcome(0, notice);
+    }
+    var why = report_dir_prepare(report_dir);
+    var path = 0;
+    if (why == 0) {
+        path = report_write(report_dir, nl_report_text(v, input_cstr, label, time, outcome),
+          clock_epoch_secs(), getpid());
+        if (path == 0) { why = "the report could not be written"; }
+    }
+    if (notice != 0) {
+        eprint_str(str_from("agnsh: not executed: "));
+        eprint_str(str_from(notice));
+        if (path != 0) {
+            eprint_str(str_from(" -- report: "));
+            eprint_line(str_from(path));
+        } else {
+            eprint_str(str_from(" -- no report: "));
+            eprint_line(str_from(why));
+        }
+    } elif (why != 0) {
+        eprint_str(str_from("agnsh: warning: no report was filed: "));
+        eprint_line(str_from(why));
+    }
+    return status;
+}

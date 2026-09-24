@@ -46,6 +46,7 @@ var OPEN_WRONLY = 1;
 var OPEN_CREAT = 512;      # 0x0200
 var OPEN_APPEND = 8;       # 0x0008
 var OPEN_TRUNC = 1024;     # 0x0400
+var OPEN_EXCL = 2048;      # 0x0800
 var OPEN_NOFOLLOW = 256;   # 0x0100
 #endif
 #ifndef CYRIUS_TARGET_MACOS
@@ -53,6 +54,9 @@ var OPEN_WRONLY = 1;
 var OPEN_CREAT = 64;       # 0o100
 var OPEN_APPEND = 1024;    # 0o2000
 var OPEN_TRUNC = 512;      # 0o1000
+# O_EXCL is 0o200 on x86_64 and aarch64 alike; on agnos file_open maps it to AO_EXCL
+# (cyrius 6.6.4, honoured by agnos >= 1.56.56).
+var OPEN_EXCL = 128;       # 0o200
 # O_NOFOLLOW differs per arch — see the note above. Linux takes the stdlib's
 # per-target value (131072 x86_64, 32768 aarch64); agnos keeps the x86-shaped
 # bit that file_open translates to AO_NOFOLLOW.
@@ -683,6 +687,12 @@ fn is_safe_commit_message(msg) {
 
 # Mode-gated destructive-action confirmation. Modes (0=AI_AUTONOMOUS,
 # 1=AI_ASSISTED, 2=HUMAN, 3=STRICT; src/mode.cyr): AUTO+ASSIST run directly,
+# Exit statuses for a line agnsh did not run (ADR-008 § 4) — the shell's own codes for "found but not
+# executable" and "not found". Shared by the NL driver and every launcher, so a script sees one
+# convention whichever path handled its line.
+var EXIT_NOT_RUN = 126;         # understood, not run: approval, BLOCKED, declined, refused
+var EXIT_NOTHING_TO_RUN = 127;  # nothing to run: not understood, no program, or it would not launch
+
 # HUMAN+STRICT prompt before a consequential action.
 fn mode_needs_confirm(mode): i64 {
     if (mode == 2) { return 1; }
@@ -690,13 +700,15 @@ fn mode_needs_confirm(mode): i64 {
     return 0;
 }
 
-# Write a cstring / a newline to stdout (syscall-direct, no Str churn).
+# Write a cstring / a newline for verb_confirm (syscall-direct, no Str churn). STDERR since 2.0.0: a
+# confirmation prompt is the shell talking, not the program, and `-c` keeps stdout for the program's
+# output (ADR-008) — a prompt on stdout would land in whatever a script captures.
 fn verb_out_cstr(cstr): i64 {
-    syscall(SYS_WRITE, 1, cstr, strlen(cstr));
+    syscall(SYS_WRITE, 2, cstr, strlen(cstr));
     return 0;
 }
 fn verb_out_nl(): i64 {
-    syscall(SYS_WRITE, 1, "\n", 1);
+    syscall(SYS_WRITE, 2, "\n", 1);
     return 0;
 }
 
@@ -777,6 +789,7 @@ fn sh_first_word_eq(line_cstr, word_cstr): i64 {
 }
 fn sh_cat_owl_warning(line_cstr): i64 {
     if (sh_first_word_eq(line_cstr, "cat") == 0) { return 0; }
-    println("cat: AGNOS reads files with owl -- try 'owl FILE' (or 'owl -p FILE' for plain output)");
+    # stderr since 2.0.0: it is the shell talking, and `-c` keeps stdout for programs (ADR-008).
+    eprintln_cstr("cat: AGNOS reads files with owl -- try 'owl FILE' (or 'owl -p FILE' for plain output)");
     return 1;
 }

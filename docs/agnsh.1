@@ -1,4 +1,4 @@
-.TH AGNSH 1 "August 2026" "agnoshi 1.9.10" "User Commands"
+.TH AGNSH 1 "September 2026" "agnoshi 2.0.0" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -8,57 +8,115 @@ agnsh \- AI-native natural language shell for AGNOS
 .IR COMMAND ]
 .SH DESCRIPTION
 .B agnsh
-translates natural language into system commands with human oversight,
-security approval workflows, and full audit logging.
+is a shell that also understands natural language. A line whose first word
+is a program runs as that program; anything else is read as natural
+language, classified, reported, and \(em if its translation is SAFE or
+READ_ONLY \(em run.
 .PP
 Without arguments, starts an interactive shell. The prompt carries the
 current mode (e.g.
 .BR [ASSIST]\ > ).
-Type natural language to see the proposed shell command, its risk level
+A natural-language line prints its report \(em the translated command and
+its risk level
 .RB ( [LOW] " / " [MED] " / " [HIGH] " / " [CRIT] ),
-and a
+with a
 .B Hint:
-line when the translation isn't directly runnable (LLM-routed question,
-unsupported pipeline, or translator safety rejection).
+line when the translation is not a runnable command \(em and then runs it
+if it may.
 .SH OPTIONS
 .TP
 .B -c, --command \fICMD\fR
-Execute one command and exit.
+Run one line and exit with its status. stdout is the program's output;
+agnsh's own notices and prompts go to stderr. For a natural-language line
+the report is written to the report folder (see
+.BR FILES )
+instead of stdout.
+.TP
+.B -n, --dry-run
+With
+.BR -c :
+run nothing \(em no program, no pipeline, no power verb \(em and print the
+report on stdout, as
+.B -c
+did before 2.0.0.
+.TP
+.B --mode \fINAME\fR
+With
+.BR -c ,
+run under mode \fINAME\fR (auto, assist, human, strict; default auto). An
+unrecognised name is an error and agnsh exits non-zero \(em it is never
+silently downgraded to a more permissive mode.
 .TP
 .B -v, --version
 Show version and exit.
 .TP
 .B -h, --help
 Show usage and exit.
+.SH WHAT RUNS
 .TP
-.B --mode \fINAME\fR
-Run under mode \fINAME\fR (auto, assist, human, strict). An unrecognised
-name is an error and agnsh exits non-zero \(em it is never silently
-downgraded to a more permissive mode.
+.B Shell lines
+A bareword program found on
+.B $PATH
+(only its absolute entries are searched), or
+.BR "run /abs/path " [ args ].
+On AGNOS also
+.BI /bin/ name\fR,
+two-stage pipelines
+.RB ( "cmd1 | cmd2" ),
+output redirection
+.RB ( "cmd > file" )
+and background jobs
+.RB ( "prog &" );
+on a Linux host those three are refused, never read as natural language.
+Programs run from an argument vector \(em never through a shell \(em and
+inherit agnsh's environment.
+.TP
+.B Natural language
+A SAFE or READ_ONLY translation runs. USER_WRITE, SYSTEM_WRITE and ADMIN
+translations report
+.I "Approval required"
+and do not run in this release; BLOCKED ones never run.
+.TP
+.B BLOCKED shell lines
+A typed line the classifier calls BLOCKED (rm -rf, dd, mkfs, chmod, chown,
+shred) asks for confirmation in every mode; with no answer it is declined.
 .SH MODES
-Every mode parses, classifies, reports risk and writes an audit record.
-What the mode changes is whether a program launch is confirmed first.
+Every mode classifies, reports risk and writes an audit record. What the
+mode changes is whether a launch is confirmed first.
 .TP
-.B human
-Confirms every program launch with a y/n prompt. It does not hand you a
-raw shell and does not disable classification.
+.B human, strict
+Every launch asks for a y/n confirmation on stderr.
 .TP
 .B assist
-Default. Parses and reports the proposed command and its risk. Program
-launches proceed without a confirmation prompt.
+Default for the interactive shell. Launches proceed without a prompt.
 .TP
 .B auto
-As assist, without the assist framing. Program launches proceed without a
-confirmation prompt.
+Default for
+.BR -c .
+Launches proceed without a prompt.
+.SH EXIT STATUS
 .TP
-.B strict
-Most conservative: every program launch requires a y/n confirmation.
+.B the program's status
+When it ran (128 +
+.I N
+when signal
+.I N
+killed it).
+.TP
+.B 126
+Understood but not run: approval required, BLOCKED, declined at a prompt,
+or arguments refused by the safety checks.
+.TP
+.B 127
+Nothing to run: not understood, a question, no such program, or it could
+not be launched.
+.TP
+.B 1
+Usage error.
 .PP
-.B NOTE:
-a high-risk natural-language translation reports
-.I "Approval required"
-but is never executed \(em the natural-language path does not execute at
-all yet, so no approval prompt appears for it in any mode.
+Under
+.B --dry-run
+the status is 0 for a line that would run.
 .SH BUILTINS
 .TP
 .B help
@@ -76,23 +134,17 @@ Show command history.
 .B mode [NAME]
 Show or change operating mode (human, assist, auto, strict).
 .TP
-.B run \fIPATH\fR
-Run a program from an absolute path. The only execution path on a Linux
-host; on AGNOS, bareword \fB/bin/\fIname\fR, two-stage pipelines
-.RB ( "cmd1 | cmd2" ),
-output redirection
-.RB ( "cmd > file" )
-and background jobs
-.RB ( "prog &" )
-also execute.
+.B run \fIPATH\fR [\fIARGS\fR]
+Run a program from an absolute path.
 .TP
 .B reboot, poweroff, halt
 Platform power control (AGNOS).
 .SH PERMISSIONS
-Every command is classified into one of six levels:
+Every natural-language translation is classified into one of six levels,
+and every typed shell line is checked for BLOCKED:
 .TP
 .B SAFE
-No state change (cd, echo, help).
+No state change (echo, help).
 .TP
 .B READ_ONLY
 System queries (ls, cat, ps).
@@ -107,7 +159,8 @@ Modifies system paths (requires approval).
 Requires sudo (requires approval).
 .TP
 .B BLOCKED
-Never allowed for AI (rm -rf, dd, mkfs, chmod, chown).
+Never run for the AI (rm -rf, dd, mkfs, chmod, chown, shred); a typed one
+runs only after an explicit yes.
 .SH FILES
 .TP
 .I ~/.agnsh_history
@@ -121,13 +174,29 @@ exit_code (JSON null when the record describes something that never ran).
 comes from one of two disjoint sets \(em parse-time (proposed,
 needs_approval, blocked, needs_llm, needs_exec, rejected_safety) or
 exec-time (launched, executed, failed, error, denied).
+.TP
+.I $XDG_STATE_HOME/agnoshi/reports/
+The report folder (default
+.IR ~/.local/state/agnoshi/reports/ ;
+.I /.agnsh_reports/
+on AGNOS). One report per natural-language line run with
+.BR -c ,
+named
+.IR YYYYMMDDTHHMMSSZ - pid .txt ,
+a copy in
+.IR latest.txt ,
+the newest 100 kept. The folder is 0700 and each report 0600; on a Linux
+host agnsh refuses a folder that is a symlink, belongs to another user or
+is writable by others.
 .PP
 When
 .B $HOME
-is unset, this and the history file fall back to
+is unset, the audit log and history fall back to
 .IR /tmp/agnsh_audit.log. "" uid
 and
-.IR /tmp/agnsh_history. "" uid
+.IR /tmp/agnsh_history. "" uid ,
+and the report folder to
+.IR /tmp/agnoshi-reports. "" uid
 \(em degraded operation, not a supported configuration.
 .SH AUTHOR
 Written for the AGNOS project.

@@ -93,7 +93,7 @@ writes the action string straight to the terminal with no stripping. A path
 containing an ESC byte can therefore style or reposition the confirmation text.
 The path itself has already passed `is_safe_path`, which rejects shell
 metacharacters and traversal but **not** control bytes — so this is a real, if
-narrow, gap. Tracked for the approval wire-up (roadmap 1.10.x — approval-gated exec).
+narrow, gap. Tracked for the approval wire-up (roadmap 2.0.x — approval-gated exec).
 
 ### 5. Audit Log Integrity
 
@@ -137,7 +137,7 @@ is not). Linux hosts were never affected — `O_APPEND` is honoured there.
 100-entry auto-prune, but it is **not in the binary's include graph**, there is
 no `undo` builtin, and no `~/.agnoshi/checkpoints/` directory is ever created.
 **Do not rely on any rollback guarantee.** It calls seven stdlib helpers that
-no longer exist, so its wire-up is a re-implementation (roadmap 1.10.x — checkpointing).
+no longer exist, so its wire-up is a re-implementation (roadmap 2.0.x — checkpointing).
 
 ### 7. Privilege Escalation — ⚠ NOT IN THE SHIPPED BINARY
 
@@ -226,10 +226,13 @@ configuration.
 - Alias expansion — ⚠ `src/aliases.cyr` is **not compiled**, so neither the risk
   nor the metacharacter mitigation described in earlier revisions of this guide
   exists today.
-- **The natural-language path does not execute**, so its classification is
-  advisory. A user who types a raw `run /abs/path`, or an AGNOS bareword, is
-  gated by `is_safe_path` and the mode confirmation — not by the permission
-  tier. Closing that is roadmap 1.10.x (NL exec, then approval-gated exec).
+- **Typed shell lines skip the permission tiers.** Since 2.0.0 the
+  natural-language path executes (SAFE and READ_ONLY only), so its
+  classification is enforced. A user who types a program's name or
+  `run /abs/path` is gated by `is_safe_path`, the mode confirmation, and — for a
+  line the classifier calls BLOCKED — a confirmation in every mode (ADR-008). The
+  other tiers do not gate typed lines: doing so before approval exists would
+  stop agnos's kriya file verbs. Approval-gated exec is roadmap 2.0.x.
 - Race conditions between permission check and execution (TOCTOU) if the
   filesystem is mutated by another process. Full TOCTOU protection would
   require inode-locking at the kernel layer.
