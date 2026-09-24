@@ -21,12 +21,13 @@ cyrius deps
 # Build the binary
 cyrius build src/agnsh.cyr build/agnsh
 
-# Run all tests (unit + security + smoke + bench)
+# Run all tests (every tests/test_*.tcyr suite + smoke + bench)
 sh tests/test.sh
 
 # Individual suites
 cyrius build tests/test_core.tcyr build/test_core && ./build/test_core
 cyrius build tests/test_security.tcyr build/test_security && ./build/test_security
+cyrius build tests/test_parse_corpus.tcyr build/test_parse_corpus && ./build/test_parse_corpus
 cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core
 sh scripts/smoke-test.sh build/agnsh
 

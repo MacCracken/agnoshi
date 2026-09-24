@@ -10,6 +10,7 @@ ADRs document the why behind significant architectural decisions.
 - [ADR-004: Split Translate Dispatch Across Multiple Match Functions](004-split-translate-match.md) — 2026-04-13
 - [ADR-005: Explicit String Type Discipline](005-string-type-discipline.md) — 2026-04-13
 - [ADR-006: Cyrius cstring/Str Dispatch Discipline (refines ADR-005)](006-cstr-str-dispatch-discipline.md) — 2026-05-11
+- [ADR-007: Input Classification — Shell First, Then Specific Before Broad (refines ADR-003)](007-input-classification.md) — 2026-09-23
 
 ## Format
 
@@ -23,7 +24,7 @@ Each ADR follows the [MADR-inspired](https://adr.github.io/madr/) template:
 
 ## Writing a new ADR
 
-1. Pick the next sequential number (current: 006, next: 007)
+1. Pick the next sequential number (current: 007, next: 008)
 2. Copy an existing ADR as template
 3. Update the index in this README
 4. Keep it short — an ADR is a decision record, not an essay

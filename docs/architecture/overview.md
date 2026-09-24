@@ -58,11 +58,19 @@ agnoshi
 
 ## Data Flow
 
+**Dispatch order** ([ADR-007](../adr/007-input-classification.md)): builtins and `run` first; then,
+on AGNOS, the `/bin` launchers — pipeline, redirect, bareword. A shell line runs and never reaches the
+parser, and a `|` / `>` line whose stage is not a program is an error, not natural language. Only
+what is left reaches `Interpreter_parse`, which tries its specific tier (anchored phrases) before its
+broad tier (single keywords). The Linux host has no launchers yet — 1.10.0 adds a `PATH` lookup — so
+every host line that is not a builtin or `run` reaches the parser.
+
 ```
 User Input (stdin)
     |
     v
 [Interpreter_parse]  --> Intent struct (64 bytes: tag + 7 fields)
+    |   specific tier, then broad tier (ADR-007)
     |                      |
     |                      v
     |                  [Interpreter_translate] --> Translation (cmd, args, perm, explanation)

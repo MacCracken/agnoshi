@@ -864,16 +864,23 @@ fn main() {
 
     # Interpreter dispatch arms — parse_show_commands, parse_file_ops,
     # parse_system_ops, parse_git_ops, parse_admin_ops, parse_service_query,
-    # parse_service_action, parse_state_queries all return 0 on a clearly
-    # non-matching input; the anchors lock that contract.
-    check("parse_show_commands no-match", parse_show_commands(str_from("xyzqq")) == 0);
-    check("parse_file_ops no-match", parse_file_ops(str_from("xyzqq")) == 0);
-    check("parse_system_ops no-match", parse_system_ops(str_from("xyzqq")) == 0);
-    check("parse_git_ops no-match", parse_git_ops(str_from("xyzqq")) == 0);
-    check("parse_admin_ops no-match", parse_admin_ops(str_from("xyzqq")) == 0);
-    check("parse_service_query no-match", parse_service_query(str_from("xyzqq")) == 0);
-    check("parse_service_action no-match", parse_service_action(str_from("xyzqq")) == 0);
-    check("parse_state_queries no-match", parse_state_queries(str_from("xyzqq")) == 0);
+    # parse_service_action, parse_state_queries, parse_file_phrases and
+    # parse_git_anchored all return 0 on a clearly non-matching input; the
+    # anchors lock that contract. The specific-tier arms (ADR-007) take the
+    # line's PhraseIndex as well as the line.
+    var nm = str_from("xyzqq");
+    var nm_pix[PIX_BYTES];
+    phrase_index(&nm_pix, nm);
+    check("parse_show_commands no-match", parse_show_commands(nm) == 0);
+    check("parse_file_ops no-match", parse_file_ops(nm) == 0);
+    check("parse_system_ops no-match", parse_system_ops(nm) == 0);
+    check("parse_git_ops no-match", parse_git_ops(nm) == 0);
+    check("parse_admin_ops no-match", parse_admin_ops(nm, &nm_pix) == 0);
+    check("parse_service_query no-match", parse_service_query(nm, &nm_pix) == 0);
+    check("parse_service_action no-match", parse_service_action(nm) == 0);
+    check("parse_state_queries no-match", parse_state_queries(nm, &nm_pix) == 0);
+    check("parse_file_phrases no-match", parse_file_phrases(nm, &nm_pix) == 0);
+    check("parse_git_anchored no-match", parse_git_anchored(nm, &nm_pix) == 0);
 
     # token_count (interpreter.cyr)
     check("token_count empty", token_count(str_from("")) == 0);
@@ -1465,10 +1472,12 @@ fn main() {
     check("show hostname stays SYSTEM_INFO",
       load64(Interpreter_parse(sh, str_from("show hostname"))) == IntentTag.SYSTEM_INFO);
     # ⚠ The MEMORY_INFO arm keys on the bare words "memory"/"ram" (two checks
-    # instead of six — see the note in parse_state_queries). That is only safe
-    # because the file verbs are decided BEFORE parse_state_queries is consulted.
-    # These pin that ordering: a line that merely NAMES a file called memory is
-    # a file operation, not a question about RAM.
+    # instead of six — see the note in parse_state_queries). Until 1.9.16 that
+    # was safe because the file parser ran first; since ADR-007 the state parser
+    # runs first, and what keeps it safe is its own rule: a bare word is only
+    # whole (`memory.txt` is not `memory`), and a sentence that opens with a file
+    # verb declines it (opens_with_file_verb). These pin that: a line that merely
+    # NAMES a file called memory is a file operation, not a question about RAM.
     check("delete memory.txt is a file op, not a memory query",
       load64(Interpreter_parse(sh, str_from("delete memory.txt"))) == IntentTag.REMOVE);
     check("read the file memory is a file op",
@@ -1764,6 +1773,72 @@ fn main() {
       input_has_exact_word(str_from("Delete USER bob"), "user") == 1);
     check("exact word absent -> 0",
       input_has_exact_word(str_from("delete report.txt"), "user") == 0);
+
+    # input_has_phrase — the specific tier's matcher (ADR-007): whole words and
+    # bounded phrases, with sentence punctuation as a boundary.
+    check("phrase matches a whole word", input_has_phrase(str_from("show memory usage"), "memory") == 1);
+    check("phrase rejects a token prefix", input_has_phrase(str_from("delete firewall.log"), "firewall") == 0);
+    check("phrase rejects a word suffix", input_has_phrase(str_from("the program"), "ram") == 0);
+    check("phrase rejects a snake_case extension",
+      input_has_phrase(str_from("remove user_data.txt"), "remove user") == 0);
+    check("phrase is case-insensitive", input_has_phrase(str_from("What Is My IP"), "my ip") == 1);
+    check("sentence '?' is a boundary", input_has_phrase(str_from("what is my ip?"), "my ip") == 1);
+    check("sentence-final '.' is a boundary", input_has_phrase(str_from("show memory."), "memory") == 1);
+    check("'.' followed by a word byte is inside a word",
+      input_has_phrase(str_from("open memory.txt"), "memory") == 0);
+    check("a word after an inner '.' is not a new word",
+      input_has_phrase(str_from("open foo.memory"), "memory") == 0);
+    check("parentheses are boundaries", input_has_phrase(str_from("(memory)"), "memory") == 1);
+    check("a path is one word", input_has_phrase(str_from("ls /var/memory"), "memory") == 0);
+    check("a hyphen joins a word", input_has_phrase(str_from("ram-disk"), "ram") == 0);
+    check("an empty phrase never matches", input_has_phrase(str_from("anything"), "") == 0);
+    check("a phrase longer than the line", input_has_phrase(str_from("ram"), "ram usage") == 0);
+    # The helpers the matcher and the PhraseIndex share, so the two cannot drift.
+    check("_is_word_byte letter", _is_word_byte(109) == 1);
+    check("_is_word_byte slash", _is_word_byte(47) == 1);
+    check("_is_word_byte space", _is_word_byte(32) == 0);
+    check("_is_word_byte dot", _is_word_byte(46) == 0);
+    var wsa = str_data(str_from("a.b c"));
+    check("_word_starts_at line start", _word_starts_at(wsa, 0) == 1);
+    check("_word_starts_at after an inner dot", _word_starts_at(wsa, 2) == 0);
+    check("_word_starts_at after a space", _word_starts_at(wsa, 4) == 1);
+    var pat = str_from("my ip.");
+    check("_phrase_at hit before a final dot", _phrase_at(str_data(pat), str_len(pat), 0, "my ip") == 1);
+    check("_phrase_at miss off the end", _phrase_at(str_data(pat), str_len(pat), 3, "ip address") == 0);
+    check("_phrase_at empty phrase", _phrase_at(str_data(pat), str_len(pat), 0, "") == 0);
+    # The PhraseIndex — the same answers from one pass over the line.
+    # Words: Show My IP then foo mean — `memory` sits after an inner dot, so it is
+    # not a word start even though `mean` lets an `me…` phrase past both masks.
+    var pxs = str_from("Show My IP. then foo.memory mean");
+    var pxb[PIX_BYTES];
+    phrase_index(&pxb, pxs);
+    check("index counts letter-led words", load64(&pxb + PIX_COUNT) == 6);
+    check("index hit", index_has_phrase(&pxb, "my ip") == 1);
+    check("index rejects a letter no word starts with", index_has_phrase(&pxb, "uptime") == 0);
+    check("index rejects a second letter no word has", index_has_phrase(&pxb, "storage usage") == 0);
+    check("index honours the inner-dot rule", index_has_phrase(&pxb, "memory") == 0);
+    check("index: an uppercase-led phrase takes the scan", index_has_phrase(&pxb, "My ip") == 1);
+    check("index: an empty phrase", index_has_phrase(&pxb, "") == 0);
+    # opens_with_file_verb — measured once, compared exactly (not as a prefix).
+    check("file verb: delete", opens_with_file_verb(str_from("delete memory dump")) == 1);
+    check("file verb: case-insensitive", opens_with_file_verb(str_from("Find files named ram")) == 1);
+    check("file verb: a one-word line", opens_with_file_verb(str_from("cd")) == 1);
+    check("file verb: a longer word is not the verb", opens_with_file_verb(str_from("deleted memory")) == 0);
+    check("file verb: a shorter word is not the verb", opens_with_file_verb(str_from("del memory")) == 0);
+    check("file verb: not a verb", opens_with_file_verb(str_from("show memory")) == 0);
+    check("_first_word_eq exact", _first_word_eq(str_data(str_from("RM -rf")), 2, "rm") == 1);
+    check("_first_word_eq longer verb", _first_word_eq(str_data(str_from("re x")), 2, "read") == 0);
+    # trigger_claims — the file-verb rule for every specific trigger (ADR-007).
+    check("trigger claims a line with no file verb",
+      trigger_claims(str_from("show disk usage"), 0, 0) == 1);
+    check("a file verb makes the trigger its object",
+      trigger_claims(str_from("delete the disk usage report"), 0, 0) == 0);
+    check("a trigger that starts the line is the action",
+      trigger_claims(str_from("create user bob"), "create user", 0) == 1);
+    check("the second lead is honoured",
+      trigger_claims(str_from("remove user bob"), "delete user", "remove user") == 1);
+    check("a lead elsewhere in the line does not claim",
+      trigger_claims(str_from("copy the create user script"), "create user", 0) == 0);
 
     check("history flags include TRUNC",
       ((OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC | OPEN_NOFOLLOW) & OPEN_TRUNC) != 0);

@@ -13,7 +13,7 @@
 > **Cite a slot by arc and title** — `roadmap 1.10.x — NL exec` — never by patch number alone:
 > titles survive a renumber. References name functions and files, not line numbers.
 >
-> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 1.9.15, cyrius 6.6.6).
+> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 1.9.16, cyrius 6.6.6).
 > Every upstream gate was re-checked at the 6.6.6 pin (1.9.13); § Gated lists what is still open.
 
 ## How this file is organised
@@ -21,7 +21,7 @@
 | Section | Answers | Use it when |
 |---|---|---|
 | **Arc sequence** | *What ships next?* | Picking up work |
-| **1.9.x → 1.12.x** | *What is in each release, and when is it done?* | Planning a slice |
+| **1.10.x → 1.12.x** | *What is in each release, and when is it done?* | Planning a slice |
 | **Open decisions** | *What must be ruled before a slot can start?* | Before starting a slot that names one |
 | **Gated** | *Why isn't this moving?* | Asking why an item is not in an arc |
 | **Demand-gated backlog** / **2.0.0** | *What is deliberately not scheduled?* | Before adding something that looks missing |
@@ -31,8 +31,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **1.9.x** | Close-out: the input-classification decision | **1.9.16** — ADR-007 | a ruling (§ Open decisions) |
-| **1.10.x** | NL execution — the natural-language path runs what it proposes | **1.10.0** — NL exec, SAFE / READ_ONLY | ADR-007 (1.9.16) |
+| **1.10.x** | NL execution — the natural-language path runs what it proposes | **1.10.0** — NL exec, SAFE / READ_ONLY | a ruling (§ Open decisions — NL exec contract) |
 | **1.11.x** | Interactive shell — `cd`, an rc file, a line editor | **1.11.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **1.12.x** | hoosh / LLM — answer questions, suggest commands | **1.12.0** — hoosh client (host) | host: none; agnos: loopback TCP |
 
@@ -46,35 +45,6 @@ through 1.10.x's exec path, so that one slot does follow it.
 exist **only on agnos**. The Linux host's sole exec path is `run /abs/path` through `lib/process.cyr`.
 Read each slot's target notes before estimating — several are half the size on one target and gated
 on the other.
-
----
-
-## 1.9.x — Close-out
-
-One slot finishes the hardening arc: the decision that must precede NL execution.
-
-### 1.9.16 — ADR-007: where shell syntax ends and natural language begins
-
-A decision, then the slice it implies. Three open questions are one question:
-
-- **Dispatch ordering.** Broad keyword matchers run before specific ones (`parse_show_commands` 1st,
-  `parse_file_ops` 2nd, `parse_admin_ops` 5th, `parse_state_queries` 8th). 1.9.5 fixed four
-  shadowing bugs from that single property with guards bolted onto the broad parsers — one measured
-  **+31%** on `parse/list_files` before optimising to +5%.
-- **The pre-cascade discriminator.** SHELL_COMMAND is the terminal fall-through, so a plain shell line
-  pays ~79 keyword probes and is still ~4× the next-slowest parse. Recognising "this is not natural
-  language" before the cascade is a correctness change wearing a performance costume — it changes
-  which parser claims an input.
-- **The `>` scan is unanchored.** A natural-language sentence containing `>` is diverted into the
-  redirect path.
-
-⛔ **Why this precedes 1.10.x**: today a mis-claimed input prints a wrong proposal. After 1.10.0 it
-**runs** one. Decide before the NL path executes anything.
-
-**Done when** ADR-007 records the posture — specific-before-broad with every existing parse
-re-verified (the 49-row table in `docs/examples/common-commands.md` is machine-checkable), or
-guard-by-guard as a written choice — and the slice it implies has landed. Re-read
-`docs/guides/writing-intents.md` afterwards; its ordered-first-match contract may change.
 
 ---
 
@@ -97,8 +67,15 @@ executes before checkpointing exists.
 - Thread the child's exit code into the audit record with the exec-surface labels that already exist
   (`executed` / `failed` / `error`); leave the parse-time labels alone. Update the `proposed` note in
   `src/audit.cyr`, which cites this slot.
+- **Shell first on the host** ([ADR-007](../adr/007-input-classification.md), decisions 1–2): a line
+  whose first word resolves on `PATH` runs as that program, and a line with `|` or `>` is shell syntax —
+  an error, never natural language, when a stage is not a program. agnos already dispatches this way
+  (`/bin/<word>`); the host sends every line to the NL parser today. ⚠ About a third of the rows in
+  `docs/examples/common-commands.md` open with a word that is a program on a typical host (`git` ×13,
+  `find`, `kill`, `groups`): under the lookup they run it. The table's scope note already says so;
+  keep it true.
 - ⚠ **Open decision first** (§ Open decisions): which modes execute, what happens to the `-c` stdout
-  contract, and whether the host executes at all.
+  contract, and how the host's NL exec reaches a program.
 - Enabler new in cyrius 6.6.x: `proc_set_timeout_ms` (host only) gives NL exec a command timeout.
 
 **Done when** `agnsh -c "show files"` runs `ls` in the modes ADR'd to run it, and the audit record
@@ -258,8 +235,7 @@ transport. On agnos the client is § Gated on loopback TCP.
 
 | Decision | Needed by | The question |
 |---|---|---|
-| **ADR-007 — input classification** | 1.9.16 (it *is* the slot) | Specific-before-broad dispatch, a pre-cascade shell-line discriminator, and an anchored `>` — or guard-by-guard as the recorded posture. |
-| **NL exec contract** | 1.10.0 | (1) Which modes execute — `run` already confirms in `human`/`strict` and runs directly in `auto`/`assist` (`mode_needs_confirm`); reuse that, or say why NL differs. (2) The `-c` report is on **stdout** today and `scripting.md` documents piping it; moving it to stderr so child output stays clean is **breaking** — keep it, flag it, or make it 2.0.0. (3) Does the host execute at all, given it has only `run()`? |
+| **NL exec contract** | 1.10.0 | (1) Which modes execute — `run` already confirms in `human`/`strict` and runs directly in `auto`/`assist` (`mode_needs_confirm`); reuse that, or say why NL differs. (2) The `-c` report is on **stdout** today and `scripting.md` documents piping it; moving it to stderr so child output stays clean is **breaking** — keep it, flag it, or make it 2.0.0. (3) The host: ADR-007 gives it a `PATH` lookup for shell lines in this slot — does NL exec launch through the same lookup, or only by absolute path via `run()`? |
 | **Power verbs and confirmation** | 1.10.3 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
 | **Metacharacter pass-through in `human` mode** | any redirection-lane work | Let `;` `\|` `&` `$()` `<` `>` through in `human` only (user-flagged 2026-07-07). `is_shell_metachar` and its four wrappers are mode-blind with no mode parameter, so this threads one. On Linux it must warn: metachar → `execve` is a real injection vector (audit C2). |
 | **Install location** | the next zugot recipe bump | `scripts/install.sh` → `/usr/local/bin`; the zugot recipe (ark) → `/usr/bin`; agnos images → `/bin/agnsh`. The first two are FHS-correct as a pair (local build vs package), so the likely ruling is "no change" — but the recipe ships no man page, which is a real gap. |
@@ -363,7 +339,7 @@ one arch, and three gates had opened without anyone noticing.
 - **Open flags are per-arch — spell the symbol, never the number.** x86_64 and arm64 swap
   `O_NOFOLLOW` / `O_LARGEFILE` and `O_DIRECTORY` / `O_DIRECT`. Hardcoding x86's `O_NOFOLLOW` left the
   aarch64 release following symlinks for twelve releases, behind a unit test that pinned the bug. CI
-  runs both suites on aarch64 under qemu-user since 1.9.13; keep it that way.
+  runs every suite on aarch64 under qemu-user since 1.9.13; keep it that way.
 - **In this repo, only `scripts/agnos-qemu-test.py` exercises the agnos paths.** Typing there is about one keystroke a
   second, so scenarios are slow. A background-job test needs a sleeper that waits on a signal (the
   harness creates `/stop`) — a busy-count starved the keyboard and a fixed wall time expired before

@@ -9,15 +9,15 @@ cyrius build src/agnsh.cyr build/agnsh
 echo "Binary: $(wc -c < build/agnsh) bytes"
 echo ""
 
-echo "=== Running core unit tests ==="
-cyrius build tests/test_core.tcyr build/test_core
-./build/test_core
-echo ""
-
-echo "=== Running security unit tests ==="
-cyrius build tests/test_security.tcyr build/test_security
-./build/test_security
-echo ""
+# Every tests/test_*.tcyr suite, discovered the way CI discovers them — a new suite
+# cannot be left out of the local run (test_parse_corpus was, until 1.9.16).
+for t in tests/test_*.tcyr; do
+    n=$(basename "$t" .tcyr)
+    echo "=== Running $n ==="
+    cyrius build "$t" "build/$n"
+    "./build/$n"
+    echo ""
+done
 
 echo "=== Running smoke test ==="
 sh scripts/smoke-test.sh build/agnsh

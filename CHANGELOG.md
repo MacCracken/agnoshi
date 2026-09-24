@@ -6,6 +6,190 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.9.16] - 2026-09-23 — ADR-007: shell first, then specific before broad
+
+The last slot of the 1.9.x close-out, and the decision the natural-language path needed before it
+executes anything: where shell syntax ends and natural language begins, and which parser gets a line.
+Recorded in [ADR-007](docs/adr/007-input-classification.md); the 1.9.x arc is closed.
+
+### Changed — the parser tries specific phrases before broad keywords (ADR-007)
+
+`Interpreter_parse` now runs a **specific tier** first — `parse_admin_ops`, `parse_service_action`,
+`parse_service_query`, `parse_state_queries`, `parse_file_phrases` (`contents of`) and
+`parse_git_anchored` (`git <subcommand>`) — then the broad tier in its old order, then SHELL_COMMAND.
+Until now the broad parsers ran first (`parse_show_commands` 1st, `parse_file_ops` 2nd,
+`parse_admin_ops` 5th, `parse_state_queries` 8th), and 1.9.5 had to bolt a guard onto a broad parser
+for each specific phrase it swallowed.
+
+⛔ **Reordering alone breaks more than it fixes, and the tests caught it twice.**
+
+- With the 1.9.15 triggers, running the specific parsers first changed **13 of 161** phrases. Every
+  one was a regression and none was a fix, because the "specific" parsers matched by substring and
+  token prefix:
+  - `remove user_data.txt` → `userdel`;
+  - `delete firewall.log` → a ufw rule deletion;
+  - `find files named ram` → `free -h`.
+- The first fix bounded the triggers and made the bare query words (`memory`, `uptime`, `groups`, …)
+  decline a sentence that opens with a file verb. That still turned **104 of 189** file-verb sentences
+  into the admin action or query that their *object* mentioned:
+  - `copy the add user script` → `useradd`;
+  - `delete the change password doc` → `passwd`.
+
+The rule that shipped covers every specific trigger:
+
+- **Bounded words and phrases.** Triggers match with `input_has_phrase` semantics:
+  - whole words only, case-insensitive;
+  - sentence punctuation counts as a boundary (`what is my ip?`);
+  - `.` stays inside a word only when a word byte follows it (`firewall.log` is one word, but the
+    `.` in `show memory.` ends one).
+- **The file-verb rule** (`trigger_claims`). A sentence that opens with a file verb is that file
+  operation. A trigger claims it only when the trigger itself starts the line:
+  - `delete user bob`, `create group ops`, `change password alice` and `delete firewall rule 22` are
+    claimed;
+  - `delete the disk usage report` stays a deletion.
+- **Anchored git.** `git <subcommand>` is claimed ahead of the file verbs only where git has the
+  action: `delete git branch foo` deletes the branch, while `remove the git log` stays a file
+  operation. `delete` and `remove` set the branch-delete flag only as whole words. A token-prefix
+  match would read `git branch delete-old` as `git branch -d delete-old` and delete the branch it
+  names; in 1.9.15 that line never reached git, because it became `rm`.
+
+Against 1.9.15, **11 of 176 phrases classify differently, and all eleven are intended.** The 176
+are the documented table, the probes, and every literal parse in `test_core`.
+
+| input | 1.9.15 | 1.9.16 |
+|---|---|---|
+| `delete git branch foo`, `remove git branch foo` | REMOVE → `rm foo` | GIT_BRANCH → `git branch -d foo` |
+| `git branch delete foo` | REMOVE → `rm` | GIT_BRANCH → `git branch -d foo` |
+| `git branch remove-old`, `git branch delete-old` | REMOVE → `rm` | GIT_BRANCH (creates it) |
+| `is there enough ram?`, `show memory.` | SHELL_COMMAND | MEMORY_INFO → `free -h` |
+| `delete the firewall rules file` | FIREWALL_LIST → `ufw` | SHELL_COMMAND (never an `rm` of an admin word) |
+| `show the groups file` | LIST_FILES → `ls` | GROUP_LIST → `groups` |
+| `cat /etc/hostname`, `cat the active processes dump` (host) | the `owl` hint | SHOW_FILE → `cat` (next entry) |
+
+`show the groups file` is the ruling applied, not an accident. Verb position is anchored evidence; a
+noun is not. The broad `file` keyword no longer outranks a trigger.
+
+**The file-verb rule also corrects 1.9.15.** Of 189 sentences that pair a file verb with an object
+holding a query or admin trigger, 31 were answered with the object's action. Examples:
+
+- `delete the add user script` → `useradd`;
+- `find the disk usage report` → `df -h`;
+- `remove the firewall rules file` → `ufw`.
+
+None of the 31 is claimed by that action any more, and no sentence moved the other way.
+
+**Guards.** Two are retired, because the phrase they protected is now claimed first:
+`parse_show_commands`' `contents of` hand-off, and its memory/ram hand-off in the disk branch. One is
+kept as a backstop: `parse_file_ops`' refusal to `rm` a word that names an account, group or firewall
+rule, for admin phrasings no admin trigger claims (`remove the user bob`).
+
+### Changed — the Linux host no longer tells users "AGNOS reads files with owl"
+
+`sh_cat_owl_warning` ran on every target at both call sites: the interactive loop and `-c`. On the
+host, `cat FILE` printed an AGNOS-only hint about a program the host does not have. Both call sites
+are now agnos-only. On the host, `cat FILE` reaches the NL path like any other line, which today
+classifies it as SHOW_FILE → `cat` and does not execute it.
+
+### Added — `tests/test_parse_corpus.tcyr`: the documented table is CI-checked
+
+- **The table.** The suite reads `docs/examples/common-commands.md` at run time. Every row must parse
+  to its class and translate to its command, so a parser change that re-routes a documented phrase
+  fails CI, and so does a doc edit that no longer describes the binary. The table had been
+  "machine-checkable" since 1.9.10, but nothing ran it.
+- **Probes in both directions.** 43 probes cover both shadowing directions: a broad parser must not
+  claim a specific phrase, and a specific trigger must not claim a file operation that merely
+  mentions it (section D is the file-verb rule).
+- **The PhraseIndex (below) against the scan.** On every line the suite parses, plus 30 edge lines,
+  the index must agree with `input_has_phrase` for every trigger phrase. The edge lines cover inner
+  dots, punctuation, uppercase and non-ASCII bytes, and a line with more words than the index keeps.
+  **Mutation-tested**: dropping the inner-dot rule, the second-letter mask, the overflow fallback or
+  uppercase indexing each fails the suite.
+- **CI.** CI runs it on x86_64 and on aarch64 under qemu, like every `tests/test_*.tcyr`.
+  `tests/test.sh` now discovers suites the same way; it had a hard-coded list that missed this one.
+
+### Added — `docs/adr/007-input-classification.md`
+
+The decisions:
+
+1. **Shell first, on both targets.** A line whose first word is a program runs as that program.
+   agnos does this already (`/bin/<word>`), and the host adopts it with a `PATH` lookup in 1.10.0.
+2. **Operators are shell syntax.** A `|` or `>` line whose stage is not a program is an error, never
+   natural language. This is agnos behaviour already, and the agnos harness asserts it.
+3. **Specific before broad**, with anchored triggers.
+4. **Enforced by the corpus suite.**
+
+The ADR records its evidence and its cost. It also records what was rejected:
+
+- guard-by-guard;
+- the naive reorder;
+- a pre-cascade shell-line heuristic;
+- anchoring `>`;
+- a table-driven specific tier (deferred).
+
+### Performance — the specific tier costs every NL line; a PhraseIndex keeps it small
+
+Every line that is not claimed earlier now pays for the specific tier's ~50 phrase checks before
+the broad parsers see it. Asked by scanning the line once per phrase, they cost **4.3 µs** on
+`show me all files`, which is 76% of that parse. `parse/list_files` measured **+326%**, `parse/cd`
++174% and `parse/find_files` +248%.
+
+A **PhraseIndex** (`phrase_index` / `index_has_phrase`) walks the line once. It records where each
+letter-led word starts, plus masks of the words' first and second letters. A phrase whose first two
+letters no word has is rejected by an AND, and the rest are compared only where a word starts with
+their letter. It is an optimisation of `input_has_phrase` and nothing more, and the corpus suite
+holds the two to each other. With it the tier costs **~0.6 µs** a line.
+
+`opens_with_file_verb` now measures the first word once, instead of making 22 prefix checks that each
+re-measured the verb: 516 → 133 ns. Callers ask it only after a trigger matched.
+
+PERF_TABLE_PENDING
+
+The x86_64 DCE binary grows **8.3 KB**, from 201,744 to 210,216 bytes; 8.0 KB of that is code (the
+bounded triggers, the index and the verb rule). On aarch64 the file grows only 272 bytes, because
+64 KB segment alignment absorbs the code.
+
+### Fixed — docs
+
+- `docs/guides/writing-intents.md` § 2 now states the two-tier contract:
+  - what makes a trigger anchored;
+  - `trigger_claims`;
+  - lowercase, letter-led phrases;
+  - "add a table row, CI checks it".
+
+  Its worked example was already broken before this release. `UPTIME = 44` collided with
+  `MEMORY_INFO = 44`, and an `input_has_word("uptime")` rule in `parse_system_ops` could never fire,
+  because `parse_state_queries` claims `uptime` first. The example is now `show logged in users` →
+  `who` (tag 45, specific tier).
+- `docs/examples/common-commands.md` gains a scope note. The rows are the parser's answers, which a
+  line reaches only when it is not a shell line. On agnos, `find files named foo` runs kriya's `find`.
+- README:
+  - the ADR list stopped at 005, so 006 (missing since May) and 007 are added;
+  - the stat line is refreshed.
+
+  `tests/README.md`:
+  - counts refreshed (it said 301 unit checks);
+  - the corpus suite added.
+
+  CONTRIBUTING gains the corpus suite.
+- The roadmap:
+  - retires 1.9.16, which closes the 1.9.x arc;
+  - moves the host's shell-first adoption into 1.10.0;
+  - drops the ADR-007 open decision.
+
+  `docs/doc-health.md` rows are refreshed.
+- A `test_core` comment said the memory arm was safe *because* the file parser ran first. That is no
+  longer true; the comment now names the rule that makes it safe.
+
+### Verified
+
+- All CI gates pass.
+- Unit 738/738 (692 + 46 new), security 26/26, parse corpus 358/358 (new suite), smoke 94/94.
+- Host-reachable coverage is 194/194.
+- All three suites pass on aarch64 under qemu-user.
+- On agnos, `scripts/agnos-qemu-test.py` passes 30/30 on the final source. That run includes NL lines on
+  the new parser, and a missing pipeline binary is reported once and never retried as natural
+  language.
+
 ## [1.9.15] - 2026-09-23 — the binary stops describing things it does not do
 
 The second slot of the 1.9.x close-out: the last places agnsh's own output, or its silence, told the

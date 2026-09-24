@@ -58,6 +58,229 @@ fn input_has_word(input, word) {
     # Padded but single-token (e.g. " rm "): trimmed bounds, no re-derivation.
     return is_word_prefix_range(input, word, w_start, w_end);
 }
+# ── Specific-tier matching (ADR-007) ──
+# Can byte `c` continue a word? Letters, digits, '_', '-' and '/' (so a path or a snake_case
+# filename is one word). '.' is decided by the callers: it continues a word only when a word
+# byte follows it, so `firewall.log` is one word but a sentence-final `my ip.` ends one.
+fn _is_word_byte(c) {
+    if (c >= 97) { if (c <= 122) { return 1; } }    # a-z
+    if (c >= 65) { if (c <= 90) { return 1; } }     # A-Z
+    if (c >= 48) { if (c <= 57) { return 1; } }     # 0-9
+    if (c == 95) { return 1; }                      # _
+    if (c == 45) { return 1; }                      # -
+    if (c == 47) { return 1; }                      # /
+    return 0;
+}
+# Does a word start at offset `i` of `hd`? At the start of the line, or after a byte that
+# cannot continue a word — except a '.' that follows a word byte: `foo.memory` is one word.
+fn _word_starts_at(hd, i) {
+    if (i == 0) { return 1; }
+    var pc = load8(hd + i - 1);
+    if (_is_word_byte(pc) == 1) { return 0; }
+    if (pc == 46) { if (i > 1) { if (_is_word_byte(load8(hd + i - 2)) == 1) { return 0; } } }
+    return 1;
+}
+# Does `phrase` (cstring) match at offset `i` of `hd` (`hlen` bytes) case-insensitively and
+# end on a word boundary? `firewall.log` continues past the '.'; a sentence-final `my ip.`
+# does not. An empty phrase never matches.
+fn _phrase_at(hd, hlen, i, phrase) {
+    var j = 0;
+    while (1 == 1) {
+        var nc = load8(phrase + j);
+        if (nc == 0) { break; }
+        if (i + j >= hlen) { return 0; }
+        var hc = load8(hd + i + j);
+        if (hc >= 65) { if (hc <= 90) { hc = hc + 32; } }
+        if (nc >= 65) { if (nc <= 90) { nc = nc + 32; } }
+        if (hc != nc) { return 0; }
+        j = j + 1;
+    }
+    if (j == 0) { return 0; }
+    var e = i + j;
+    if (e >= hlen) { return 1; }
+    var ec = load8(hd + e);
+    if (_is_word_byte(ec) == 1) { return 0; }
+    if (ec != 46) { return 1; }
+    if (e + 1 >= hlen) { return 1; }
+    if (_is_word_byte(load8(hd + e + 1)) == 1) { return 0; }
+    return 1;
+}
+# 1 if `phrase` (cstring; one word or several separated by single spaces) occurs in `input`
+# (Str) case-insensitively with a word boundary on BOTH ends. Everything the specific tier
+# matches has these semantics, because every shadowing bug measured so far was a trigger that
+# matched too much: `input_has_word`'s phrase path is a substring match ("remove user" hits
+# `remove user_data.txt`) and its word path matches token PREFIXES ("firewall" hits
+# `firewall.log`). Unlike input_has_exact_word, sentence punctuation is a boundary here —
+# "what is my ip?" still matches `my ip` — because the phrases this tier replaced were
+# substring matches that tolerated it.
+#
+# This is the reference form: it walks the whole line. The tier itself asks a PhraseIndex
+# (below), which gives the same answer without re-walking the line for every phrase.
+fn input_has_phrase(input, phrase) {
+    var hlen = str_len(input);
+    var hd = str_data(input);
+    for (var i = 0; i < hlen; i = i + 1) {
+        if (_word_starts_at(hd, i) == 1) {
+            if (_phrase_at(hd, hlen, i, phrase) == 1) { return 1; }
+        }
+    }
+    return 0;
+}
+# A PhraseIndex answers input_has_phrase for one line without re-walking it per phrase. The
+# specific tier asks ~50 phrase questions of EVERY line, and asked by scanning they cost
+# 4.3 µs on `show me all files` — 76% of that parse (1.9.16 measurement). The index walks the
+# line once and records where each word that starts with a letter begins (every trigger phrase
+# starts with one), a mask of those first letters and a mask of the letters that come second.
+# A phrase is rejected by an AND unless some word shares its first two letters' masks, and
+# the rest are compared only where a word begins with its first letter.
+# The caller owns the PIX_BYTES buffer (Interpreter_parse keeps it on its stack).
+enum PhraseIx {
+    PIX_MASK = 0;       # bit (c - 'a') set when some word starts with the letter c
+    PIX_MASK2 = 8;      # bit (c - 'a') set when the letter c is some word's second byte
+    PIX_STR = 16;       # the Str that was indexed
+    PIX_COUNT = 24;     # letter-led words seen — may exceed PIX_WORDS
+    PIX_OFFS = 32;      # their byte offsets, one qword each, for the first PIX_WORDS
+    PIX_WORDS = 24;
+    PIX_BYTES = 224;    # PIX_OFFS + PIX_WORDS * 8
+}
+# Word starts are tracked with two flags rather than by calling _word_starts_at per byte —
+# `pw`: the previous byte continues a word; `pdot`: it is a '.' inside one (`foo.memory`) —
+# and the phrase-index tests hold this to input_has_phrase over the whole corpus.
+fn phrase_index(pix, input) {
+    var hlen = str_len(input);
+    var hd = str_data(input);
+    var mask = 0;
+    var mask2 = 0;
+    var n = 0;
+    var pw = 0;
+    var pdot = 0;
+    for (var i = 0; i < hlen; i = i + 1) {
+        var c = load8(hd + i);
+        if (pw == 0) {
+            if (pdot == 0) {
+                var lc = c;
+                if (lc >= 65) { if (lc <= 90) { lc = lc + 32; } }
+                if (lc >= 97) {
+                    if (lc <= 122) {
+                        mask = mask | (1 << (lc - 97));
+                        if (i + 1 < hlen) {
+                            var c1 = load8(hd + i + 1);
+                            if (c1 >= 65) { if (c1 <= 90) { c1 = c1 + 32; } }
+                            if (c1 >= 97) { if (c1 <= 122) { mask2 = mask2 | (1 << (c1 - 97)); } }
+                        }
+                        if (n < PIX_WORDS) { store64(pix + PIX_OFFS + n * 8, i); }
+                        n = n + 1;
+                    }
+                }
+            }
+        }
+        pdot = 0;
+        if (c == 46) { if (pw == 1) { pdot = 1; } }
+        pw = _is_word_byte(c);
+    }
+    store64(pix + PIX_MASK, mask);
+    store64(pix + PIX_MASK2, mask2);
+    store64(pix + PIX_STR, input);
+    store64(pix + PIX_COUNT, n);
+    return pix;
+}
+# input_has_phrase over an indexed line. Trigger phrases are lowercase; one that does not
+# start with a lowercase letter, or a line with more than PIX_WORDS words, falls back to the
+# full scan — slower, never different.
+fn index_has_phrase(pix, phrase) {
+    var p0 = load8(phrase);
+    if (p0 < 97) { return input_has_phrase(load64(pix + PIX_STR), phrase); }
+    if (p0 > 122) { return input_has_phrase(load64(pix + PIX_STR), phrase); }
+    if (((load64(pix + PIX_MASK) >> (p0 - 97)) & 1) == 0) { return 0; }
+    var p1 = load8(phrase + 1);
+    if (p1 >= 97) {
+        if (p1 <= 122) {
+            if (((load64(pix + PIX_MASK2) >> (p1 - 97)) & 1) == 0) { return 0; }
+        }
+    }
+    var input = load64(pix + PIX_STR);
+    var n = load64(pix + PIX_COUNT);
+    if (n > PIX_WORDS) { return input_has_phrase(input, phrase); }
+    var hd = str_data(input);
+    var hlen = str_len(input);
+    for (var k = 0; k < n; k = k + 1) {
+        var i = load64(pix + PIX_OFFS + k * 8);
+        var c = load8(hd + i);
+        if (c >= 65) { if (c <= 90) { c = c + 32; } }
+        if (c == p0) {
+            if (_phrase_at(hd, hlen, i, phrase) == 1) { return 1; }
+        }
+    }
+    return 0;
+}
+# Are the `wl` bytes at `hd` exactly the lowercase cstring `verb`, ignoring case?
+fn _first_word_eq(hd, wl, verb) {
+    for (var i = 0; i < wl; i = i + 1) {
+        var v = load8(verb + i);
+        if (v == 0) { return 0; }                   # the verb is shorter than the word
+        var c = load8(hd + i);
+        if (c >= 65) { if (c <= 90) { c = c + 32; } }
+        if (c != v) { return 0; }
+    }
+    if (load8(verb + wl) != 0) { return 0; }        # the verb is longer than the word
+    return 1;
+}
+# Does the sentence open with a FILE-operation verb — parse_file_ops' own triggers, plus the
+# shell spellings of the same actions? The specific tier asks through trigger_claims (below).
+#
+# The first word is measured once and each verb is one bounded compare that usually fails on
+# its first byte; 22 prefix checks that each re-measured the verb cost 516 ns.
+fn opens_with_file_verb(trimmed) {
+    var hd = str_data(trimmed);
+    var hlen = str_len(trimmed);
+    var wl = 0;
+    while (wl < hlen) {
+        var c = load8(hd + wl);
+        if (c == 32) { break; }
+        if (c == 9) { break; }
+        wl = wl + 1;
+    }
+    if (wl == 0) { return 0; }
+    if (_first_word_eq(hd, wl, "delete") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "remove") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "rm") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "copy") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "cp") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "duplicate") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "move") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "mv") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "rename") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "find") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "locate") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "search") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "grep") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "read") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "cat") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "open") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "create") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "make") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "go") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "cd") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "change") == 1) { return 1; }
+    if (_first_word_eq(hd, wl, "switch") == 1) { return 1; }
+    return 0;
+}
+# The file-verb rule (ADR-007). A sentence that opens with a file verb IS that file operation,
+# and a specific trigger later in it only names the operation's object: `delete the disk usage
+# report`, `copy the add user script`, `read the firewall rules file`, `find files named ram`.
+# With the triggers claiming such sentences, the specific-first order turned every one of them
+# into the query or admin action its object mentions. A trigger claims one only when the verb
+# is part of the trigger — when `lead1` or `lead2` (phrases, 0 for none) starts the line:
+# `delete user bob`, `create group ops`, `change password alice`. Callers ask only after a
+# trigger matched, so a line that matches none never pays for the verb check.
+fn trigger_claims(trimmed, lead1, lead2) {
+    if (opens_with_file_verb(trimmed) == 0) { return 1; }
+    var hd = str_data(trimmed);
+    var hlen = str_len(trimmed);
+    if (lead1 != 0) { if (_phrase_at(hd, hlen, 0, lead1) == 1) { return 1; } }
+    if (lead2 != 0) { if (_phrase_at(hd, hlen, 0, lead2) == 1) { return 1; } }
+    return 0;
+}
 fn extract_last_arg(input) {
     var len = str_len(input);
     var pos = len - 1;
@@ -102,23 +325,9 @@ fn parse_show_commands(trimmed) {
       || input_has_word(trimmed, "dir") == 1
       || input_has_word(trimmed, "folder") == 1
       || input_has_word(trimmed, "content") == 1) {
-        # ⛔ "content" HERE SHADOWED THE SHOW_FILE BRANCH THAT ALREADY EXISTS.
-        # parse_show_commands runs 1st in the dispatch; parse_file_ops runs 2nd
-        # and has a correct `contents of` -> SHOW_FILE arm. So
-        # `show contents of /etc/hosts` matched "content", became LIST_FILES,
-        # and — because LIST_FILES takes its path from `extract_after(" in ")`,
-        # which finds nothing here — emitted a BARE `ls`: the wrong command AND
-        # the filename silently dropped. Let the specific phrasing through.
-        # Gated on the SHORT needle first: both exclusions require "content", and
-        # the common input on this path ("show me all files", "list files in X")
-        # does not contain it. Testing the two long phrases unconditionally cost
-        # a measured +31% on parse/list_files — this brings that back to ~0 by
-        # paying one short scan instead of two long ones for inputs that can
-        # never match either.
-        if (input_has_word(trimmed, "content") == 1) {
-            if (input_has_word(trimmed, "contents of") == 1) { return 0; }
-            if (input_has_word(trimmed, "file content") == 1) { return 0; }
-        }
+        # `show contents of FILE` is claimed before this parser runs (ADR-007:
+        # parse_file_phrases, specific tier). Until 1.9.16 this branch carried a
+        # guard to hand that phrase on, because it ran first and "content" claimed it.
         var intent = Intent_new(IntentTag.LIST_FILES);
         var path = extract_after(trimmed, " in ");
         store64(intent + 8, path);
@@ -149,15 +358,9 @@ fn parse_show_commands(trimmed) {
     if (input_has_word(trimmed, "disk") == 1
       || input_has_word(trimmed, "space") == 1
       || input_has_word(trimmed, "usage") == 1) {
-        # ⛔ THE BARE "usage" KEYWORD CLAIMED EVERY KIND OF USAGE. parse_show_commands
-        # runs 1st and parse_state_queries runs 8th, so `show memory usage` matched
-        # here and emitted `df -h` — a DISK report for a MEMORY question — even
-        # though parse_state_queries has an explicit "memory usage" -> SYSTEM_INFO
-        # arm. The two disagreed and the broad one won by position.
-        # Only "disk"/"space" are genuine disk signals; hand anything memory-shaped
-        # to the specific parser.
-        if (input_has_exact_word(trimmed, "memory") == 1) { return 0; }
-        if (input_has_exact_word(trimmed, "ram") == 1) { return 0; }
+        # `show memory usage` never reaches this branch: parse_state_queries claims it
+        # first (ADR-007, specific tier). Before 1.9.5 the bare "usage" keyword here
+        # answered it with `df -h`; 1.9.5 to 1.9.15 carried a guard to hand it on.
         var intent = Intent_new(IntentTag.DISK_USAGE);
         store64(intent + 8, extract_after(trimmed, " in "));
         return intent;
@@ -179,11 +382,6 @@ fn parse_file_ops(trimmed) {
     if (input_has_word(trimmed, "read") == 1
       || input_has_word(trimmed, "cat") == 1
       || input_has_word(trimmed, "open") == 1) {
-        var intent = Intent_new(IntentTag.SHOW_FILE);
-        store64(intent + 8, extract_last_arg(trimmed));
-        return intent;
-    }
-    if (input_has_word(trimmed, "contents of") == 1 || input_has_word(trimmed, "file content") == 1) {
         var intent = Intent_new(IntentTag.SHOW_FILE);
         store64(intent + 8, extract_last_arg(trimmed));
         return intent;
@@ -265,18 +463,13 @@ fn parse_file_ops(trimmed) {
     if (input_has_word(trimmed, "remove") == 1
       || input_has_word(trimmed, "delete") == 1
       || input_has_word(trimmed, "rm") == 1) {
-        # ⛔ THIS BRANCH USED TO CLAIM EVERY "delete"/"remove" IN THE LANGUAGE.
-        # parse_file_ops runs 2nd in the dispatch and parse_admin_ops runs 5th,
-        # so `delete user bob` and `delete firewall rule 22` were both turned
-        # into `rm` — USER_DELETE and FIREWALL_DELETE were unreachable by their
-        # most natural phrasing, and the emitted command operated on a FILE
-        # named after the account or the rule.
-        #
-        # Fall through to the specific parser when the object is unambiguously
-        # an admin one. input_has_exact_word, NOT input_has_word: the latter
-        # matches token prefixes, so "user" would also fire on
-        # `remove user_data.txt` and route a plain file deletion into user
-        # management. Whole-token matching keeps that a REMOVE.
+        # ⛔ NEVER `rm` A WORD THAT NAMES AN ACCOUNT, A GROUP OR A FIREWALL RULE.
+        # Since 1.9.16 the admin parser runs FIRST (ADR-007) and claims `delete user
+        # bob` / `delete firewall rule 22` itself, so this is no longer the shadowing
+        # fix it was in 1.9.5. It stays as the backstop for admin-shaped phrasings the
+        # admin parser does not claim — `remove the user bob`, `remove group admins`
+        # (there is no GROUP_DELETE) — which would otherwise become `rm bob` /
+        # `rm admins`. Whole-token matching keeps `remove user_data.txt` a REMOVE.
         if (input_has_exact_word(trimmed, "user") == 1) { return 0; }
         if (input_has_exact_word(trimmed, "group") == 1) { return 0; }
         if (input_has_exact_word(trimmed, "firewall") == 1) { return 0; }
@@ -345,7 +538,12 @@ fn parse_git_ops(trimmed) {
         var intent = Intent_new(IntentTag.GIT_BRANCH);
         store64(intent + 8, extract_after(trimmed, "branch "));
         store64(intent + 40, 0);
-        if (input_has_word(trimmed, "delete") == 1) { store64(intent + 40, 1); }
+        # `delete` / `remove` as whole words: `remove git branch foo` must delete foo, not create
+        # it (1.9.16: the anchored git tier now claims that sentence), and a branch NAMED
+        # `delete-old`, `deleted` or `remove-old` is created, not deleted — a token-prefix match
+        # read `git branch delete-old` as `git branch -d delete-old`.
+        if (input_has_exact_word(trimmed, "delete") == 1) { store64(intent + 40, 1); }
+        if (input_has_exact_word(trimmed, "remove") == 1) { store64(intent + 40, 1); }
         return intent;
     }
     if (input_has_word(trimmed, "status") == 1) { return Intent_new(IntentTag.GIT_STATUS); }
@@ -376,8 +574,21 @@ fn parse_git_ops(trimmed) {
     }
     return 0;
 }
-fn parse_admin_ops(trimmed) {
-    if (input_has_word(trimmed, "firewall") == 1 || input_has_word(trimmed, "ufw") == 1) {
+# Specific tier (ADR-007). This parser runs BEFORE the broad file parser, so every trigger is a
+# whole word or bounded phrase (input_has_phrase semantics, asked through the line's
+# PhraseIndex), and a sentence that opens with a file verb is claimed only by a trigger that
+# starts it (trigger_claims). Measured before the triggers were tightened, running it first
+# turned `remove user_data.txt` into `userdel` (the old `remove user` substring match),
+# `delete firewall.log` into a ufw rule deletion (the old `firewall` prefix match) and
+# `remove the groups file` into `groups`.
+fn parse_admin_ops(trimmed, pix) {
+    # `delete firewall rule 22` is a firewall action; a file verb anywhere else makes the firewall
+    # words its object (`read the firewall rules file`, `delete the firewall rules file`).
+    var fw = 0;
+    if (index_has_phrase(pix, "firewall") == 1 || index_has_phrase(pix, "ufw") == 1) {
+        fw = trigger_claims(trimmed, "delete firewall", "delete ufw");
+    }
+    if (fw == 1) {
         if (input_has_word(trimmed, "allow") == 1) {
             var intent = Intent_new(IntentTag.FIREWALL_ALLOW);
             store64(intent + 8, extract_last_arg(trimmed));
@@ -400,34 +611,45 @@ fn parse_admin_ops(trimmed) {
             return intent;
         }
     }
-    if (input_has_word(trimmed, "useradd") == 1
-      || input_has_word(trimmed, "add user") == 1
-      || input_has_word(trimmed, "create user") == 1) {
-        var intent = Intent_new(IntentTag.USER_ADD);
-        store64(intent + 8, extract_last_arg(trimmed));
-        return intent;
+    # Each account phrase that starts with a file verb is its own lead: `create user bob` is
+    # an account action; `copy the add user script` is a copy.
+    if (index_has_phrase(pix, "useradd") == 1
+      || index_has_phrase(pix, "add user") == 1
+      || index_has_phrase(pix, "create user") == 1) {
+        if (trigger_claims(trimmed, "create user", 0) == 1) {
+            var intent = Intent_new(IntentTag.USER_ADD);
+            store64(intent + 8, extract_last_arg(trimmed));
+            return intent;
+        }
     }
-    if (input_has_word(trimmed, "userdel") == 1
-      || input_has_word(trimmed, "delete user") == 1
-      || input_has_word(trimmed, "remove user") == 1) {
-        var intent = Intent_new(IntentTag.USER_DELETE);
-        store64(intent + 8, extract_last_arg(trimmed));
-        return intent;
+    if (index_has_phrase(pix, "userdel") == 1
+      || index_has_phrase(pix, "delete user") == 1
+      || index_has_phrase(pix, "remove user") == 1) {
+        if (trigger_claims(trimmed, "delete user", "remove user") == 1) {
+            var intent = Intent_new(IntentTag.USER_DELETE);
+            store64(intent + 8, extract_last_arg(trimmed));
+            return intent;
+        }
     }
-    if (input_has_word(trimmed, "passwd") == 1 || input_has_word(trimmed, "change password") == 1) {
-        var intent = Intent_new(IntentTag.PASSWD);
-        store64(intent + 8, extract_last_arg(trimmed));
-        return intent;
+    if (index_has_phrase(pix, "passwd") == 1 || index_has_phrase(pix, "change password") == 1) {
+        if (trigger_claims(trimmed, "change password", 0) == 1) {
+            var intent = Intent_new(IntentTag.PASSWD);
+            store64(intent + 8, extract_last_arg(trimmed));
+            return intent;
+        }
     }
-    if (input_has_word(trimmed, "groupadd") == 1
-      || input_has_word(trimmed, "add group") == 1
-      || input_has_word(trimmed, "create group") == 1) {
-        var intent = Intent_new(IntentTag.GROUP_ADD);
-        store64(intent + 8, extract_last_arg(trimmed));
-        return intent;
+    if (index_has_phrase(pix, "groupadd") == 1
+      || index_has_phrase(pix, "add group") == 1
+      || index_has_phrase(pix, "create group") == 1) {
+        if (trigger_claims(trimmed, "create group", 0) == 1) {
+            var intent = Intent_new(IntentTag.GROUP_ADD);
+            store64(intent + 8, extract_last_arg(trimmed));
+            return intent;
+        }
     }
-    if (input_has_word(trimmed, "groups") == 1) {
-        return Intent_new(IntentTag.GROUP_LIST);
+    # A bare query word: `groups` / `list groups`, but not `remove the groups file`.
+    if (index_has_phrase(pix, "groups") == 1) {
+        if (trigger_claims(trimmed, 0, 0) == 1) { return Intent_new(IntentTag.GROUP_LIST); }
     }
     return 0;
 }
@@ -485,7 +707,7 @@ fn parse_service_action(trimmed) {
     store64(intent + 16, name);
     return intent;
 }
-fn parse_service_query(trimmed) {
+fn parse_service_query(trimmed, pix) {
     # "is X running" / "is X active" / "is X enabled" — interrogative form
     # only (input must start with "is "), so statements like "the
     # application is running" don't get hijacked into SERVICE_CONTROL.
@@ -513,7 +735,7 @@ fn parse_service_query(trimmed) {
     # "status of X" — interrogative or imperative ("status of nginx",
     # "show status of nginx") both work; the substring-anchored "status of"
     # only fires when the user is asking about a specific service.
-    if (input_has_word(trimmed, "status of") == 1) {
+    if (index_has_phrase(pix, "status of") == 1 && trigger_claims(trimmed, 0, 0) == 1) {
         var name = extract_after(trimmed, "status of ");
         if (name != 0) {
             var intent = Intent_new(IntentTag.SERVICE_CONTROL);
@@ -524,59 +746,97 @@ fn parse_service_query(trimmed) {
     }
     return 0;
 }
-fn parse_state_queries(trimmed) {
-    if (input_has_word(trimmed, "ip address") == 1
-      || input_has_word(trimmed, "my ip") == 1
-      || input_has_word(trimmed, "ip route") == 1
-      || input_has_word(trimmed, "network status") == 1
-      || input_has_word(trimmed, "network info") == 1) {
-        return Intent_new(IntentTag.NETWORK_INFO);
+# Specific tier (ADR-007). Every trigger here is a bounded word or phrase, and none claims a
+# sentence that opens with a file verb (trigger_claims): `read the uptime file`, `find files
+# named ram` and `delete the disk usage report` are file operations that mention a query word.
+# With looser triggers and no verb rule, moving this parser ahead of parse_file_ops turned
+# every one of those into a system query.
+fn parse_state_queries(trimmed, pix) {
+    var tag = 0 - 1;
+    if (index_has_phrase(pix, "ip address") == 1
+      || index_has_phrase(pix, "ip addresses") == 1
+      || index_has_phrase(pix, "my ip") == 1
+      || index_has_phrase(pix, "ip route") == 1
+      || index_has_phrase(pix, "network status") == 1
+      || index_has_phrase(pix, "network info") == 1
+      || index_has_phrase(pix, "network information") == 1) {
+        tag = IntentTag.NETWORK_INFO;
+    } elif (index_has_phrase(pix, "load average") == 1
+      || index_has_phrase(pix, "kernel version") == 1
+      || index_has_phrase(pix, "system info") == 1
+      || index_has_phrase(pix, "system information") == 1
+      || index_has_phrase(pix, "uptime") == 1
+      || index_has_phrase(pix, "hostname") == 1
+      || index_has_phrase(pix, "hostnames") == 1) {
+        tag = IntentTag.SYSTEM_INFO;
+    } elif (index_has_phrase(pix, "memory") == 1 || index_has_phrase(pix, "ram") == 1) {
+        # Memory questions get a memory answer (MEMORY_INFO, 1.9.10). ⚠ TWO CHECKS, NOT SIX:
+        # every memory phrasing ("memory usage", "free memory", "ram usage", "how much memory")
+        # contains `memory` or `ram` as a standalone word, so the two word checks subsume them;
+        # the six-check spelling measured +3.9% on parse/shell_cmd, the path every unrecognised
+        # line pays for.
+        tag = IntentTag.MEMORY_INFO;
+    } elif (index_has_phrase(pix, "disk space") == 1
+      || index_has_phrase(pix, "free space") == 1
+      || index_has_phrase(pix, "disk usage") == 1
+      || index_has_phrase(pix, "how full") == 1
+      || index_has_phrase(pix, "storage usage") == 1) {
+        tag = IntentTag.DISK_USAGE;
+    } elif (index_has_phrase(pix, "running process") == 1
+      || index_has_phrase(pix, "running processes") == 1
+      || index_has_phrase(pix, "what's running") == 1
+      || index_has_phrase(pix, "what is running") == 1
+      || index_has_phrase(pix, "whats running") == 1
+      || index_has_phrase(pix, "active process") == 1
+      || index_has_phrase(pix, "active processes") == 1
+      || index_has_phrase(pix, "current processes") == 1) {
+        tag = IntentTag.SHOW_PROCESSES;
     }
-    if (input_has_word(trimmed, "uptime") == 1
-      || input_has_word(trimmed, "load average") == 1
-      || input_has_word(trimmed, "kernel version") == 1
-      || input_has_word(trimmed, "system info") == 1
-      || input_has_word(trimmed, "system information") == 1
-      || input_has_word(trimmed, "hostname") == 1) {
-        return Intent_new(IntentTag.SYSTEM_INFO);
-    }
-    # Memory questions get a memory answer. These two keywords sat in the
-    # SYSTEM_INFO arm above and translated to `uname -a`, which reports the
-    # kernel and says nothing about memory. (Before 1.9.5 they were caught even
-    # earlier by the disk arm and answered with `df -h` — a disk report for a
-    # memory question.) The disk parser now explicitly bails on memory-shaped
-    # input and hands it here, so this arm is the one that must catch it.
-    # ⚠ TWO CHECKS, NOT SIX. The obvious spelling of this arm lists the phrases
-    # ("memory usage", "free memory", "ram usage", "how much memory") — but every
-    # one of them contains "memory" or "ram" as a standalone word, so the two
-    # word checks subsume all four and the phrase scans are dead weight on the
-    # FALL-THROUGH path, which every unrecognised line pays for. The six-check
-    # spelling measured +3.9% on parse/shell_cmd; this one is free, because the
-    # SYSTEM_INFO arm above gave up the same two checks it used to carry.
-    # (1.9.5 learned this the expensive way: two unconditional keyword guards
-    # cost +31% on parse/list_files before being gated behind a shorter needle.)
-    if (input_has_exact_word(trimmed, "memory") == 1
-      || input_has_exact_word(trimmed, "ram") == 1) {
-        return Intent_new(IntentTag.MEMORY_INFO);
-    }
-    if (input_has_word(trimmed, "disk space") == 1
-      || input_has_word(trimmed, "free space") == 1
-      || input_has_word(trimmed, "disk usage") == 1
-      || input_has_word(trimmed, "how full") == 1
-      || input_has_word(trimmed, "storage usage") == 1) {
-        var intent = Intent_new(IntentTag.DISK_USAGE);
+    if (tag < 0) { return 0; }
+    if (trigger_claims(trimmed, 0, 0) == 0) { return 0; }
+    var intent = Intent_new(tag);
+    if (tag == IntentTag.DISK_USAGE) {
         store64(intent + 8, extract_after(trimmed, " in "));
         if (load64(intent + 8) == 0) { store64(intent + 8, extract_after(trimmed, " on ")); }
+    }
+    return intent;
+}
+# Specific tier (ADR-007): the one file phrase specific enough to run ahead of the broad
+# parsers. It was parse_file_ops' second branch, where parse_show_commands' `content` keyword
+# shadowed it until 1.9.5 bolted a guard onto that parser; claiming it first retires the guard.
+fn parse_file_phrases(trimmed, pix) {
+    if (index_has_phrase(pix, "contents of") == 1
+      || index_has_phrase(pix, "file content") == 1
+      || index_has_phrase(pix, "file contents") == 1) {
+        var intent = Intent_new(IntentTag.SHOW_FILE);
+        store64(intent + 8, extract_last_arg(trimmed));
         return intent;
     }
-    if (input_has_word(trimmed, "running process") == 1
-      || input_has_word(trimmed, "running processes") == 1
-      || input_has_word(trimmed, "what's running") == 1
-      || input_has_word(trimmed, "what is running") == 1
-      || input_has_word(trimmed, "whats running") == 1
-      || input_has_word(trimmed, "active process") == 1
-      || input_has_word(trimmed, "current processes") == 1) {
-        return Intent_new(IntentTag.SHOW_PROCESSES);
+    return 0;
+}
+# Specific tier (ADR-007): a git subcommand named explicitly as `git <subcommand>`. The broad
+# tier keeps the loose git gate (any `git` or `commit`) in its old place; this anchored form
+# runs first so a file verb cannot claim an explicit git phrase — `delete git branch foo`
+# used to become `rm foo`.
+fn parse_git_anchored(trimmed, pix) {
+    if (index_has_phrase(pix, "git") == 0) { return 0; }     # one check for the common case
+    # A file verb in front of a git phrase is a git action only where git has one: a branch
+    # can be deleted (`delete git branch foo`). `remove the git log` names no git action, so
+    # it stays with the file parser rather than becoming `git log`.
+    if (opens_with_file_verb(trimmed) == 1) {
+        if (index_has_phrase(pix, "git branch") == 0) { return 0; }
+    }
+    if (index_has_phrase(pix, "git commit") == 1
+      || index_has_phrase(pix, "git diff") == 1
+      || index_has_phrase(pix, "git branch") == 1
+      || index_has_phrase(pix, "git status") == 1
+      || index_has_phrase(pix, "git log") == 1
+      || index_has_phrase(pix, "git push") == 1
+      || index_has_phrase(pix, "git pull") == 1
+      || index_has_phrase(pix, "git checkout") == 1
+      || index_has_phrase(pix, "git merge") == 1
+      || index_has_phrase(pix, "git stash") == 1) {
+        return parse_git_ops(trimmed);
     }
     return 0;
 }
@@ -602,6 +862,31 @@ fn Interpreter_parse(self, input) {
         store64(intent + 56, parts);
         return intent;
     }
+    # ── ADR-007: specific before broad. ──
+    # The SPECIFIC tier claims only on anchored evidence — bounded phrases and whole words
+    # (input_has_phrase semantics, asked through one PhraseIndex built here for the line), verb
+    # position, token count — never a sentence that opens with a file verb unless its trigger
+    # starts it (trigger_claims), and runs first. The BROAD tier's single keywords ("file",
+    # "delete", "usage", "open") match anything that mentions them and run after, in their
+    # historical order. Until 1.9.16 the broad parsers ran first and each
+    # shadowing bug got a guard bolted onto the broad side; tests/test_parse_corpus.tcyr now
+    # asserts both directions over the documented table, so a reordering or a new trigger that
+    # re-routes a phrase fails CI instead of shipping.
+    var pix[PIX_BYTES];
+    phrase_index(&pix, trimmed);
+    var s1 = parse_admin_ops(trimmed, &pix);
+    if (s1 != 0) { return s1; }
+    var s2 = parse_service_action(trimmed);
+    if (s2 != 0) { return s2; }
+    var s3 = parse_service_query(trimmed, &pix);
+    if (s3 != 0) { return s3; }
+    var s4 = parse_state_queries(trimmed, &pix);
+    if (s4 != 0) { return s4; }
+    var s5 = parse_file_phrases(trimmed, &pix);
+    if (s5 != 0) { return s5; }
+    var s6 = parse_git_anchored(trimmed, &pix);
+    if (s6 != 0) { return s6; }
+    # ── broad tier ──
     if (input_has_word(trimmed, "show") == 1
       || input_has_word(trimmed, "list") == 1
       || input_has_word(trimmed, "display") == 1) {
@@ -616,14 +901,6 @@ fn Interpreter_parse(self, input) {
         var r4 = parse_git_ops(trimmed);
         if (r4 != 0) { return r4; }
     }
-    var r5 = parse_admin_ops(trimmed);
-    if (r5 != 0) { return r5; }
-    var r_sa = parse_service_action(trimmed);
-    if (r_sa != 0) { return r_sa; }
-    var r_sq = parse_service_query(trimmed);
-    if (r_sq != 0) { return r_sq; }
-    var r6 = parse_state_queries(trimmed);
-    if (r6 != 0) { return r6; }
     if (input_has_word(trimmed, "what") == 1
       || input_has_word(trimmed, "how") == 1
       || input_has_word(trimmed, "why") == 1

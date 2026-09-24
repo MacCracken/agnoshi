@@ -46,7 +46,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.9.15";
+var VERSION_STR = "agnoshi 1.9.16";
 
 fn print_version() {
     println(VERSION_STR);
@@ -536,10 +536,14 @@ fn interactive_loop() {
         # verb with no /bin entry (owl is AGNOS's cat, kriya has none by design)
         # — nudge the user to owl rather than silently dropping `cat` on the NL
         # path. Everything else falls through to sh_try_bareword_launch.
+        # agnos-only: owl does not exist on the host, where `cat` is an ordinary
+        # line for the NL path (ADR-007). Until 1.9.16 the host printed the hint too.
+        #ifdef CYRIUS_TARGET_AGNOS
         if (sh_cat_owl_warning(&buf) == 1) {
             CommandHistory_add(history, &buf);
             continue;
         }
+        #endif
 
         # Bareword program launch (agnos): if the first word resolves to /bin/<word>,
         # run it from disk with its args; a non-binary first word (typo / real NL
@@ -670,8 +674,11 @@ fn main() {
         }
         #endif
         # File verbs are delegated to /bin/kriya via the bareword launcher below
-        # (1.5.0); `cat` -> owl nudge (no /bin/cat; owl is AGNOS's cat).
+        # (1.5.0); `cat` -> owl nudge (no /bin/cat; owl is AGNOS's cat). agnos-only,
+        # as in the interactive loop: the host has no owl (ADR-007).
+        #ifdef CYRIUS_TARGET_AGNOS
         if (sh_cat_owl_warning(c_cmd) == 1) { return 0; }
+        #endif
         # `run PATH` in one-shot mode (`agnsh -c "run /bin/klug"`). Same
         # validation + kernel gate as the interactive path.
         if (streq(c_cmd, "run") == 1) {

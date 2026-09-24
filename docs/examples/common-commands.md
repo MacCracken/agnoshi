@@ -2,6 +2,13 @@
 
 Natural language inputs and their translations.
 
+> **These are the NL parser's answers, and CI holds the parser to every row**
+> (`tests/test_parse_corpus.tcyr` reads this table). A line reaches the parser only when it is
+> not a shell line ([ADR-007](../adr/007-input-classification.md)): on AGNOS, a line whose first
+> word is a program in `/bin` runs that program instead — `find files named foo` runs kriya's
+> `find` — and a line with `|` or `>` is a pipeline or redirect. On the Linux host every line
+> reaches the parser today; 1.10.0 gives the host the same `PATH` lookup.
+
 ## Filesystem
 
 | You say | Classified as | Translates to |

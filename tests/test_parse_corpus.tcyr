@@ -1,0 +1,357 @@
+# test_parse_corpus.tcyr -- the natural-language classifier's executable spec (ADR-007).
+#
+# Three parts:
+#   1. docs/examples/common-commands.md, read AT RUNTIME. Every table row's phrase is parsed and
+#      translated, and its class and command must match the row. The user-facing table is the
+#      spec: a parser change that re-routes a documented phrase fails here, and so does a doc edit
+#      that no longer describes the binary. (The table was "machine-checkable" and verified by hand
+#      until 1.9.16; nothing ran it.)
+#   2. Shadowing probes, in BOTH directions: phrases where two parsers share a keyword. Three
+#      wrong commands shipped until 1.9.5 because a broad parser claimed a specific phrase, and a
+#      naive specific-first reorder measured in 1.9.16 broke 13 of 161 phrases the other way (a
+#      specific parser claimed a file operation that merely mentions its keyword). Both
+#      directions are asserted, so neither can come back — including the file-verb rule for
+#      multi-word triggers (section D), which the first cut of the reorder missed.
+#   3. The PhraseIndex agrees with input_has_phrase. The specific tier asks its phrase
+#      questions through the index (one pass over the line) rather than the scan (one pass per
+#      phrase); the index is purely an optimisation, so on every line parts 1 and 2 parse — and
+#      on the edge cases it treats specially — it must give the scan's answer for every trigger.
+#
+# Run from the repo root (as CI does): the table is opened by relative path.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/hashmap.cyr"
+include "lib/tagged.cyr"
+
+# Shared suite harness: check()/report(), the pass/fail tally, and the
+# agnsh.cyr / ui.cyr forward-ref stubs (see tests/harness.cyr).
+include "tests/harness.cyr"
+
+include "lib/process.cyr"
+include "src/sanitize.cyr"
+include "src/statepaths.cyr"
+include "src/mode.cyr"
+include "src/permissions.cyr"
+include "src/commands.cyr"
+include "src/intent.cyr"
+include "src/translate.cyr"
+include "src/interpreter.cyr"
+
+# The table's "Classified as" column names a tag; this is the name -> IntentTag map. A class
+# name the map does not know fails the row loudly rather than being skipped.
+fn _tag_named(name): i64 {
+    if (streq(name, "LIST_FILES") == 1) { return IntentTag.LIST_FILES; }
+    if (streq(name, "SHOW_FILE") == 1) { return IntentTag.SHOW_FILE; }
+    if (streq(name, "FIND_FILES") == 1) { return IntentTag.FIND_FILES; }
+    if (streq(name, "SEARCH_CONTENT") == 1) { return IntentTag.SEARCH_CONTENT; }
+    if (streq(name, "CHANGE_DIR") == 1) { return IntentTag.CHANGE_DIR; }
+    if (streq(name, "CREATE_DIR") == 1) { return IntentTag.CREATE_DIR; }
+    if (streq(name, "COPY") == 1) { return IntentTag.COPY; }
+    if (streq(name, "MOVE") == 1) { return IntentTag.MOVE; }
+    if (streq(name, "REMOVE") == 1) { return IntentTag.REMOVE; }
+    if (streq(name, "SHOW_PROCESSES") == 1) { return IntentTag.SHOW_PROCESSES; }
+    if (streq(name, "KILL_PROCESS") == 1) { return IntentTag.KILL_PROCESS; }
+    if (streq(name, "SYSTEM_INFO") == 1) { return IntentTag.SYSTEM_INFO; }
+    if (streq(name, "NETWORK_INFO") == 1) { return IntentTag.NETWORK_INFO; }
+    if (streq(name, "DISK_USAGE") == 1) { return IntentTag.DISK_USAGE; }
+    if (streq(name, "INSTALL_PACKAGE") == 1) { return IntentTag.INSTALL_PACKAGE; }
+    if (streq(name, "SHELL_COMMAND") == 1) { return IntentTag.SHELL_COMMAND; }
+    if (streq(name, "AUDIT_VIEW") == 1) { return IntentTag.AUDIT_VIEW; }
+    if (streq(name, "AGENT_INFO") == 1) { return IntentTag.AGENT_INFO; }
+    if (streq(name, "SERVICE_CONTROL") == 1) { return IntentTag.SERVICE_CONTROL; }
+    if (streq(name, "GIT_COMMIT") == 1) { return IntentTag.GIT_COMMIT; }
+    if (streq(name, "GIT_DIFF") == 1) { return IntentTag.GIT_DIFF; }
+    if (streq(name, "GIT_BRANCH") == 1) { return IntentTag.GIT_BRANCH; }
+    if (streq(name, "GIT_STATUS") == 1) { return IntentTag.GIT_STATUS; }
+    if (streq(name, "GIT_LOG") == 1) { return IntentTag.GIT_LOG; }
+    if (streq(name, "GIT_PUSH") == 1) { return IntentTag.GIT_PUSH; }
+    if (streq(name, "GIT_PULL") == 1) { return IntentTag.GIT_PULL; }
+    if (streq(name, "GIT_CHECKOUT") == 1) { return IntentTag.GIT_CHECKOUT; }
+    if (streq(name, "GIT_MERGE") == 1) { return IntentTag.GIT_MERGE; }
+    if (streq(name, "GIT_STASH") == 1) { return IntentTag.GIT_STASH; }
+    if (streq(name, "USER_ADD") == 1) { return IntentTag.USER_ADD; }
+    if (streq(name, "USER_DELETE") == 1) { return IntentTag.USER_DELETE; }
+    if (streq(name, "PASSWD") == 1) { return IntentTag.PASSWD; }
+    if (streq(name, "GROUP_ADD") == 1) { return IntentTag.GROUP_ADD; }
+    if (streq(name, "GROUP_LIST") == 1) { return IntentTag.GROUP_LIST; }
+    if (streq(name, "FIREWALL_ALLOW") == 1) { return IntentTag.FIREWALL_ALLOW; }
+    if (streq(name, "FIREWALL_DENY") == 1) { return IntentTag.FIREWALL_DENY; }
+    if (streq(name, "FIREWALL_LIST") == 1) { return IntentTag.FIREWALL_LIST; }
+    if (streq(name, "FIREWALL_STATUS") == 1) { return IntentTag.FIREWALL_STATUS; }
+    if (streq(name, "FIREWALL_ENABLE") == 1) { return IntentTag.FIREWALL_ENABLE; }
+    if (streq(name, "FIREWALL_DISABLE") == 1) { return IntentTag.FIREWALL_DISABLE; }
+    if (streq(name, "FIREWALL_DELETE") == 1) { return IntentTag.FIREWALL_DELETE; }
+    if (streq(name, "PIPELINE") == 1) { return IntentTag.PIPELINE; }
+    if (streq(name, "QUESTION") == 1) { return IntentTag.QUESTION; }
+    if (streq(name, "UNKNOWN") == 1) { return IntentTag.UNKNOWN; }
+    if (streq(name, "MEMORY_INFO") == 1) { return IntentTag.MEMORY_INFO; }
+    return 0 - 1;
+}
+
+# A fresh NUL-terminated copy of buf[start, end).
+fn _slice(buf, start, end): i64 {
+    var n = end - start;
+    var out = alloc(n + 1);
+    for (var i = 0; i < n; i = i + 1) { store8(out + i, load8(buf + start + i)); }
+    store8(out + n, 0);
+    return out;
+}
+
+# Index of byte `c` in buf at or after `from`, stopping at `end`; -1 if absent.
+fn _find_byte(buf, from, end, c): i64 {
+    var i = from;
+    while (i < end) {
+        if (load8(buf + i) == c) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Every phrase expect_parse has parsed; part 3 re-reads them.
+var _seen_lines = 0;
+
+# Parse `phrase` and assert its tag (and, when `want_cmd` is non-zero, the translated command).
+fn expect_parse(interp, phrase, want_tag, want_cmd): i64 {
+    vec_push(_seen_lines, phrase);
+    var intent = Interpreter_parse(interp, str_from(phrase));
+    var tag = load64(intent);
+    check(str_cat3_cstr("class of '", phrase, "'"), tag == want_tag);
+    if (want_cmd == 0) { return 0; }
+    var tr = Interpreter_translate(interp, intent);
+    var cmd = "(none)";
+    if (tr != 0) { cmd = load64(tr); }
+    check(str_cat3_cstr("command of '", phrase, "'"), streq(cmd, want_cmd) == 1);
+    return 0;
+}
+
+# Module scope: 8 KB (module-scope `var X[N]` is 8N bytes; see CONTRIBUTING.md).
+var corpus_buf[1024];
+
+# Every `| \`phrase\` | CLASS | \`command ...\` |` row of the table -> one expect_parse.
+# Returns the number of rows checked.
+fn check_table(interp): i64 {
+    var n = file_read_all("docs/examples/common-commands.md", &corpus_buf, 8191);
+    if (n <= 0) { return 0; }
+    store8(&corpus_buf + n, 0);
+    var buf = &corpus_buf;
+    var rows = 0;
+    var pos = 0;
+    while (pos < n) {
+        var eol = _find_byte(buf, pos, n, 10);
+        if (eol < 0) { eol = n; }
+        # A table row opens with "| `".
+        if (eol - pos > 4) {
+            if (load8(buf + pos) == 124) {
+                if (load8(buf + pos + 2) == 96) {
+                    var p0 = pos + 3;
+                    var p1 = _find_byte(buf, p0, eol, 96);             # end of the phrase
+                    var c0 = _find_byte(buf, p1 + 1, eol, 124) + 2;    # class column
+                    var c1 = _find_byte(buf, c0, eol, 32);
+                    var t0 = _find_byte(buf, c1, eol, 96) + 1;         # translation column
+                    var t1 = t0;
+                    while (t1 < eol) {
+                        var tc = load8(buf + t1);
+                        if (tc == 32) { break; }
+                        if (tc == 96) { break; }
+                        t1 = t1 + 1;
+                    }
+                    if (p1 > p0) {
+                        if (c1 > c0) {
+                            var phrase = _slice(buf, p0, p1);
+                            var cls = _slice(buf, c0, c1);
+                            var want = _tag_named(cls);
+                            check(str_cat3_cstr("table class '", cls, "' is a known tag"), want >= 0);
+                            expect_parse(interp, phrase, want, _slice(buf, t0, t1));
+                            rows = rows + 1;
+                        }
+                    }
+                }
+            }
+        }
+        pos = eol + 1;
+    }
+    return rows;
+}
+
+# ---- part 3 data ----
+# Split a '|'-separated literal and append each piece to `out` as a cstring (`||` adds "").
+fn _ix_add(out, list): i64 {
+    var n = strlen(list);
+    var start = 0;
+    for (var i = 0; i <= n; i = i + 1) {
+        var c = 0;
+        if (i < n) { c = load8(list + i); }
+        if (i == n || c == 124) {
+            vec_push(out, _slice(list, start, i));
+            start = i + 1;
+        }
+    }
+    return out;
+}
+
+# Every trigger phrase the specific tier asks (admin, service query, state, file, git), then
+# phrases that take the index's other paths: uppercase-led, not letter-led, one letter, empty
+# (the `||`), and a dotted word.
+fn _ix_phrases(): i64 {
+    var v = vec_new();
+    _ix_add(v, "firewall|ufw|useradd|add user|create user|userdel|delete user|remove user|passwd");
+    _ix_add(v, "change password|groupadd|add group|create group|groups|status of");
+    _ix_add(v, "ip address|ip addresses|my ip|ip route|network status|network info|network information");
+    _ix_add(v, "load average|kernel version|system info|system information|uptime|hostname|hostnames");
+    _ix_add(v, "memory|ram|disk space|free space|disk usage|how full|storage usage");
+    _ix_add(v, "running process|running processes|what's running|what is running|whats running");
+    _ix_add(v, "active process|active processes|current processes|contents of|file content|file contents");
+    _ix_add(v, "git|git commit|git diff|git branch|git status|git log|git push|git pull|git checkout");
+    _ix_add(v, "git merge|git stash");
+    _ix_add(v, "Memory|My IP|_ram|1ram|/tmp|a|x||memory.txt");
+    return v;
+}
+
+# Lines that exercise the word-start rules the index re-implements with two flags.
+fn _ix_edge_lines(): i64 {
+    var v = vec_new();
+    _ix_add(v, "foo.memory|memory.|memory..|.memory|..memory|a.memory|(memory)|[ram]|\"my ip\"");
+    _ix_add(v, "what is my ip?!|ram-disk|ram_disk|/ram|ram/|1ram|ram1|MEMORY USAGE|x.y.z memory");
+    _ix_add(v, "git.branch|git-branch|what's running|whats running|status of nginx|firewall.");
+    _ix_add(v, "café memory|a|ram|memory usage.|show   memory|tab\tmemory");
+    return v;
+}
+
+# More words than the index keeps offsets for (PIX_WORDS), with its one trigger at the end.
+fn _ix_long_line(): i64 {
+    return str_cat3_cstr("one two three four five six seven eight nine ten eleven twelve thirteen ",
+      "fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone twentytwo ",
+      "twentythree twentyfour twentyfive twentysix how much memory is free");
+}
+
+# One check per line: the index and the scan agree on every phrase. A disagreement names the
+# first phrase it happened on.
+fn ix_agrees(line, phrases): i64 {
+    var s = str_from(line);
+    var pix[PIX_BYTES];
+    phrase_index(&pix, s);
+    var first = 0;
+    for (var i = 0; i < vec_len(phrases); i = i + 1) {
+        var p = vec_get(phrases, i);
+        if (index_has_phrase(&pix, p) != input_has_phrase(s, p)) {
+            if (first == 0) { first = p; }
+        }
+    }
+    var name = str_cat3_cstr("phrase index agrees with the scan on '", line, "'");
+    if (first != 0) { name = str_cat3_cstr(name, " — first disagreement: ", first); }
+    check(name, first == 0);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    println("=== agnoshi parse corpus ===");
+    var interp = Interpreter_new();
+    _seen_lines = vec_new();
+
+    # ---- 1. the documented table ----
+    var rows = check_table(interp);
+    # Vacuity floor: a format change that made this read zero rows must FAIL, not pass silently.
+    check("the common-commands table was read (>= 45 rows)", rows >= 45);
+
+    # ---- 2. shadowing probes ----
+    # A. A broad parser must not claim a specific phrase (the four 1.9.5 bugs, and kin).
+    expect_parse(interp, "delete user bob", IntentTag.USER_DELETE, "userdel");
+    expect_parse(interp, "delete firewall rule 22", IntentTag.FIREWALL_DELETE, "ufw");
+    expect_parse(interp, "show contents of /etc/hosts", IntentTag.SHOW_FILE, "cat");
+    expect_parse(interp, "show memory usage", IntentTag.MEMORY_INFO, "free");
+    expect_parse(interp, "show free memory", IntentTag.MEMORY_INFO, "free");
+
+    # B. A specific parser must not claim a file operation that merely MENTIONS its keyword.
+    # Every one of these broke under a naive specific-first reorder (measured 1.9.16).
+    expect_parse(interp, "remove user_data.txt", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "delete memory dump", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "remove the groups file", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "copy the groups list to /tmp", IntentTag.COPY, "cp");
+    expect_parse(interp, "delete firewall.log", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "find files named ram", IntentTag.FIND_FILES, "find");
+    expect_parse(interp, "search for hostname in /etc", IntentTag.SEARCH_CONTENT, "grep");
+    expect_parse(interp, "grep uptime in /var/log/syslog", IntentTag.SEARCH_CONTENT, "grep");
+    expect_parse(interp, "read the uptime file", IntentTag.SHOW_FILE, "cat");
+    expect_parse(interp, "open the memory report", IntentTag.SHOW_FILE, "cat");
+    expect_parse(interp, "move groups.txt to /tmp", IntentTag.MOVE, "mv");
+    expect_parse(interp, "list files in /var/lib/groups", IntentTag.LIST_FILES, "ls");
+
+    # C. The specific tier's own rules (ADR-007, 1.9.16).
+    # An explicit `git <subcommand>` is claimed before a file verb can take it...
+    expect_parse(interp, "delete git branch foo", IntentTag.GIT_BRANCH, "git");
+    expect_parse(interp, "remove git branch foo", IntentTag.GIT_BRANCH, "git");
+    check("`remove git branch foo` deletes the branch",
+      load64(Interpreter_parse(interp, str_from("remove git branch foo")) + 40) == 1);
+    check("a branch named remove-old is not a deletion",
+      load64(Interpreter_parse(interp, str_from("git branch remove-old")) + 40) == 0);
+    check("a branch named delete-old is not a deletion",
+      load64(Interpreter_parse(interp, str_from("git branch delete-old")) + 40) == 0);
+    check("`git branch delete foo` still deletes foo",
+      load64(Interpreter_parse(interp, str_from("git branch delete foo")) + 40) == 1);
+    # ...but only where git has a matching action: a file verb in front of any other git phrase
+    # is still a file operation.
+    expect_parse(interp, "remove the git log", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "remove git.log", IntentTag.REMOVE, "rm");
+    # Sentence punctuation is a word boundary: these phrasings reach their parser.
+    expect_parse(interp, "what is my ip?", IntentTag.NETWORK_INFO, 0);
+    expect_parse(interp, "is there enough ram?", IntentTag.MEMORY_INFO, "free");
+    expect_parse(interp, "show memory.", IntentTag.MEMORY_INFO, "free");
+    expect_parse(interp, "show hostnames", IntentTag.SYSTEM_INFO, "uname");
+    # Admin-shaped phrasings the admin parser does not claim must never become `rm`.
+    expect_parse(interp, "remove group admins", IntentTag.SHELL_COMMAND, 0);
+    expect_parse(interp, "remove the user bob", IntentTag.SHELL_COMMAND, 0);
+
+    # D. The file-verb rule covers every specific trigger, not just the bare words. A sentence
+    # that opens with a file verb is that file operation; a trigger later in it is the object.
+    # Before the rule was general, 104 of 189 such sentences became the query or admin action
+    # their object mentions — `copy the add user script` proposed `useradd` (measured 1.9.16).
+    expect_parse(interp, "delete the disk usage report", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "copy the add user script to /tmp", IntentTag.COPY, "cp");
+    expect_parse(interp, "read the firewall rules file", IntentTag.SHOW_FILE, "cat");
+    # `delete` leads only `delete firewall …`; here it deletes a file, so the admin words are
+    # never an `rm` target either (parse_file_ops' guard) and the line is not understood.
+    expect_parse(interp, "delete the firewall rules file", IntentTag.SHELL_COMMAND, 0);
+    expect_parse(interp, "open the system info file", IntentTag.SHOW_FILE, "cat");
+    expect_parse(interp, "move the network status file to /tmp", IntentTag.MOVE, "mv");
+    expect_parse(interp, "remove the change password doc", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "delete the status of nginx log", IntentTag.REMOVE, "rm");
+    expect_parse(interp, "find the kernel version file", IntentTag.FIND_FILES, "find");
+    expect_parse(interp, "cat the active processes dump", IntentTag.SHOW_FILE, "cat");
+    # ...and a trigger that STARTS with the verb is the action itself.
+    expect_parse(interp, "create user bob", IntentTag.USER_ADD, "useradd");
+    expect_parse(interp, "remove user bob", IntentTag.USER_DELETE, "userdel");
+    expect_parse(interp, "create group ops", IntentTag.GROUP_ADD, "groupadd");
+    expect_parse(interp, "change password alice", IntentTag.PASSWD, "passwd");
+    # A noun is not anchored evidence: the broad `file` keyword no longer outranks a trigger, so
+    # this is a question about groups (1.9.15 listed files, because the broad parser ran first).
+    expect_parse(interp, "show the groups file", IntentTag.GROUP_LIST, "groups");
+    # A trigger past the index's PIX_WORDS offsets is still found (part 3 checks the fallback).
+    var long_line = _ix_long_line();
+    expect_parse(interp, long_line, IntentTag.MEMORY_INFO, "free");
+
+    # ---- 3. the phrase index answers exactly what the scan answers ----
+    var phrases = _ix_phrases();
+    var lines = _seen_lines;
+    var edges = _ix_edge_lines();
+    var nl = vec_len(lines);
+    for (var ei = 0; ei < vec_len(edges); ei = ei + 1) { vec_push(lines, vec_get(edges, ei)); }
+    for (var li = 0; li < vec_len(lines); li = li + 1) { ix_agrees(vec_get(lines, li), phrases); }
+    check("part 3 covered every parsed line plus the edge lines", vec_len(lines) >= nl + 20);
+    # The long line must actually overflow the index, or the fallback went untested.
+    var lpix[PIX_BYTES];
+    phrase_index(&lpix, str_from(long_line));
+    check("the long line has more words than the index keeps", load64(&lpix + PIX_COUNT) > PIX_WORDS);
+
+    return report();
+}
+# Bare top-level call + SYS_EXIT -- the canonical entry form (see test_core.tcyr).
+fn _entry(): i64 { var rr = main(); syscall(SYS_EXIT, rr); return 0; }
+_entry();

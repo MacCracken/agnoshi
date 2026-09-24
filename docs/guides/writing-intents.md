@@ -1,16 +1,17 @@
 # Writing a New Intent
 
 This guide walks through adding a natural language intent to agnsh.
-We'll add an example: "show uptime" → `uptime`.
+We'll add an example: "show logged in users" → `who`.
 
 ## 1. Add the intent tag
 
-Edit `src/intent.cyr` and append to the `IntentTag` enum:
+Edit `src/intent.cyr` and append to the `IntentTag` enum — the next free number
+(`MEMORY_INFO = 44` is the last one today):
 
 ```cyrius
 enum IntentTag {
     # ... existing tags ...
-    UPTIME = 44;
+    LOGGED_IN_USERS = 45;
 }
 ```
 
@@ -21,50 +22,87 @@ You'll hit the dispatch-split point (ADR-004) before the enum limit.
 
 ## 2. Add a parse rule
 
-⚠ **Parse arms are ordered, and the first match wins.** Before adding a keyword,
-check what already claims it — a broad earlier arm silently shadows a specific
-later one. Four such shadowing bugs shipped before 1.9.5 found them, and the
-memory/disk cross (a memory question answered with `df -h`) survived two
-releases because each fix only moved it to the next wrong arm. Adding an
-end-to-end anchor for the *neighbouring* intents, not just yours, is what stops
-a re-cross: 1.9.10 pins memory, disk and system together for exactly this reason.
+⚠ **Parsing runs in two tiers, and the first match wins**
+([ADR-007](../adr/007-input-classification.md)). The **specific tier** runs first —
+`parse_admin_ops`, `parse_service_action`, `parse_service_query`,
+`parse_state_queries`, `parse_file_phrases`, `parse_git_anchored` — then the
+**broad tier** in its historical order (show/list/display, file ops, system ops,
+the loose git gate, question words), and SHELL_COMMAND last. Until 1.9.16 the
+broad parsers ran first, and every specific phrase a broad keyword could reach
+needed a guard bolted onto the broad parser.
 
-⚠ **Prefer the narrowest check that covers your phrases.** Every arm in a
-fall-through parser is paid for by every unrecognised line. If your phrases all
-contain the same distinctive word, key on the word — `MEMORY_INFO`'s four
-phrases collapse to two `input_has_exact_word` checks, and the six-check
-spelling measured **+3.9% on `parse/shell_cmd`**. Benchmark before and after;
-`parse/shell_cmd` is the one that falls through everything.
+A rule belongs in the **specific tier** only if its trigger is *anchored*:
 
-Edit `src/interpreter.cyr`. Find the appropriate parse function —
-for uptime, `parse_system_ops`:
+- **A bounded word or phrase, asked through the line's PhraseIndex** —
+  `index_has_phrase(pix, "logged in")`. It has `input_has_phrase`'s semantics:
+  whole words only, case-insensitive, sentence punctuation as a boundary. ⛔ Never
+  `input_has_word` for a specific trigger: it matches token *prefixes* and phrase
+  *substrings* (`remove user` hits `remove user_data.txt`), and this tier runs
+  before the file parser, so a loose trigger here steals file operations.
+- **Or a verb position / token count** — `input_starts_with`, `token_count`.
+- **And it obeys the file-verb rule**: a sentence that opens with a file verb is
+  that file operation, so a trigger later in it is only the object —
+  `delete the logged in report` is a deletion. `trigger_claims(trimmed, lead1,
+  lead2)` answers it; pass as a lead any phrase of yours that itself starts with
+  a file verb (`create user`, `change password`). `parse_state_queries` already
+  applies it to every trigger it holds; in another parser, ask it after your
+  trigger matches, so lines without your trigger never pay for it.
+- Write triggers in lowercase, starting with a letter: the index rejects a phrase
+  by its first two letters, and anything else takes the full scan (correct, slower).
+
+Anything else — a single keyword that should claim whatever mentions it — goes in
+the **broad tier**, with `input_has_word`.
+
+⚠ **Every trigger is asked of every line that gets that far.** The specific tier
+costs ~0.6 µs a line through the index, and `parse/shell_cmd` falls through
+everything. Prefer the narrowest check that covers your phrases: if they all
+contain one distinctive word, key on the word — `MEMORY_INFO`'s phrasings collapse
+to two word checks, and the six-check spelling measured **+3.9% on
+`parse/shell_cmd`**. Benchmark before and after.
+
+Edit `src/interpreter.cyr`. Logged-in users are system state, so the rule goes in
+`parse_state_queries`, which picks the query and then applies the file-verb rule
+once for all of them. (Note the example phrase does not *start* with `who`: under
+shell-first dispatch a line that opens with a program's name runs that program and
+never reaches the parser — ADR-007.)
 
 ```cyrius
-fn parse_system_ops(trimmed) {
-    # ... existing rules ...
-    if (input_has_word(trimmed, "uptime") == 1) {
-        return Intent_new(IntentTag.UPTIME);
+fn parse_state_queries(trimmed, pix) {
+    var tag = 0 - 1;
+    # ... existing groups ...
+    } elif (index_has_phrase(pix, "logged in") == 1) {
+        tag = IntentTag.LOGGED_IN_USERS;
     }
-    # ... rest ...
+    if (tag < 0) { return 0; }
+    if (trigger_claims(trimmed, 0, 0) == 0) { return 0; }
+    # ... build the intent ...
 }
 ```
 
-If none of the existing parse functions fit, call your new handler
-from `Interpreter_parse`.
+If none of the existing parse functions fit, add one to the tier your trigger
+belongs to in `Interpreter_parse`; a specific-tier parser takes `(trimmed, pix)`.
+
+**Then add a row for your phrase to `docs/examples/common-commands.md`** — the
+table is the spec. `tests/test_parse_corpus.tcyr` reads it and fails CI when a row
+stops classifying or translating as written (add your tag's name to `_tag_named`
+there, or the row fails loudly). If your trigger shares a word with another
+intent, add probes in **both** directions to that test: the neighbour must not
+claim your phrase, and your trigger must not claim the neighbour's sentences —
+including a file verb whose object merely mentions your words.
 
 ## 3. Add a translator
 
 Edit `src/translate.cyr`:
 
 ```cyrius
-fn translate_uptime(intent) {
+fn translate_logged_in_users(intent) {
     var args = vec_new();
     return Translation_new(
-        "uptime",
+        "who",
         args,
-        "Show system uptime",
+        "Show who is logged in",
         PermissionLevel.READ_ONLY,
-        "uptime shows how long the system has been running"
+        "who lists the users logged in to this machine"
     );
 }
 ```
@@ -144,7 +182,7 @@ Edit `src/interpreter.cyr` — add the tag to `translate_extended` (or
 fn translate_extended(tag, intent) {
     match tag {
         # ... existing arms ...
-        44 => { return translate_uptime(intent); }
+        45 => { return translate_logged_in_users(intent); }
         _ => { return 0; }
     }
 }
@@ -158,19 +196,19 @@ third dispatch function per ADR-004.
 Add a unit test in `tests/test_core.tcyr`:
 
 ```cyrius
-var intent = Intent_new(IntentTag.UPTIME);
-check("intent uptime", load64(intent) == IntentTag.UPTIME);
+var intent = Intent_new(IntentTag.LOGGED_IN_USERS);
+check("intent logged-in users", load64(intent) == IntentTag.LOGGED_IN_USERS);
 
-var t = translate_uptime(intent);
-check("translate uptime cmd", streq(load64(t), "uptime") == 1);
-check("translate uptime perm", load64(t + 24) == PermissionLevel.READ_ONLY);
+var t = translate_logged_in_users(intent);
+check("translate logged-in users cmd", streq(load64(t), "who") == 1);
+check("translate logged-in users perm", load64(t + 24) == PermissionLevel.READ_ONLY);
 ```
 
 Add a smoke test in `scripts/smoke-test.sh`:
 
 ```sh
-out=$("$BIN" -c "show uptime" 2>&1)
-check "parse uptime" "Intent:" "$out"
+out=$("$BIN" -c "show logged in users" 2>&1)
+check "parse logged in users" "Intent:" "$out"
 ```
 
 ## 6. Verify
