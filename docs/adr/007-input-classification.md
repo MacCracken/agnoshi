@@ -103,10 +103,11 @@ re-routes a documented phrase fails CI.
 - **Every NL line now pays the specific tier first.** Asked by scanning, its ~50 phrase checks cost
   4.3 µs a line (`parse/list_files` +326%). A PhraseIndex — one pass that records where each
   letter-led word starts, plus masks of first and second letters, so most phrases are rejected by an
-  AND — brings the tier to ~0.6 µs. Net against 1.9.15, median of five alternating runs:
-  `parse/list_files` 1.237 → 1.880 µs (+52%), `parse/cd` 1.187 → 1.499 µs (+26%),
-  `parse/find_files` 1.594 → 2.071 µs (+30%); `parse/git_status` 2.285 → 1.496 µs (−35%),
-  `parse/shell_cmd` 5.991 → 3.256 µs (−46%). The five together: −17%. The x86_64 binary grows 8.3 KB.
+  AND — brings the tier to 0.35–0.66 µs on the benchmarked lines. Net against 1.9.15, median of
+  five alternating runs on a quiet host: `parse/list_files` 1.281 → 1.945 µs (+52%), `parse/cd`
+  1.237 → 1.591 µs (+29%), `parse/find_files` 1.658 → 2.149 µs (+30%); `parse/git_status`
+  2.354 → 1.560 µs (−34%), `parse/shell_cmd` 6.178 → 3.419 µs (−45%). The five together: −16%.
+  The x86_64 binary grows 8.3 KB.
 - Triggers are spelled exactly: `ip address` and `ip addresses` are two phrases.
 
 **Neutral**
@@ -126,7 +127,7 @@ re-routes a documented phrase fails CI.
 - **The naive reorder** — the 1.9.15 triggers, specific first: 13 regressions, 0 fixes. Rejected.
 - **A "this is a shell line" heuristic in front of the cascade.** It would decide which parser gets
   a line on a guess; the dispatch layer's program lookup (decision 1) answers the same question with
-  a fact. The `parse/shell_cmd` cost it was meant to cut fell 46% with the index anyway. Rejected.
+  a fact. The `parse/shell_cmd` cost it was meant to cut fell 45% with the index anyway. Rejected.
 - **Anchoring `>`** so a sentence containing it stays NL. Rejected by decision 2.
 - **A table-driven specific tier** (phrases as data, matched word by word) would cut the remaining
   ~50 calls per line, at the price of moving every trigger away from the code it drives. Deferred

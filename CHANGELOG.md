@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — 1.9.16's entry shipped without its benchmark table
+
+The 1.9.16 entry went out with a literal `PERF_TABLE_PENDING` where its `### Performance` table
+belonged. The release was tagged while the host was still too loaded to benchmark (a loaded run
+reads about 2× slow). The table is now filled in place from the quiet-host measurement of the tagged
+code: five alternating runs, plus `bench-history.csv` row `401e838`.
+
+ADR-007 had cited numbers from an intermediate build of the same slice. They are replaced with the
+tagged code's numbers, which agree within 3 points on every benchmark (`parse/cd` +26% → +29%,
+`parse/shell_cmd` −46% → −45%). The tier cost it states is now the measured spread across the
+benchmarked lines, 0.35–0.66 µs, instead of the single-line "~0.6 µs"; `writing-intents.md` follows.
+
 ## [1.9.16] - 2026-09-23 — ADR-007: shell first, then specific before broad
 
 The last slot of the 1.9.x close-out, and the decision the natural-language path needed before it
@@ -137,12 +149,23 @@ A **PhraseIndex** (`phrase_index` / `index_has_phrase`) walks the line once. It 
 letter-led word starts, plus masks of the words' first and second letters. A phrase whose first two
 letters no word has is rejected by an AND, and the rest are compared only where a word starts with
 their letter. It is an optimisation of `input_has_phrase` and nothing more, and the corpus suite
-holds the two to each other. With it the tier costs **~0.6 µs** a line.
+holds the two to each other. With it the tier adds **0.35–0.66 µs** to each benchmarked line.
 
 `opens_with_file_verb` now measures the first word once, instead of making 22 prefix checks that each
 re-measured the verb: 516 → 133 ns. Callers ask it only after a trigger matched.
 
-PERF_TABLE_PENDING
+| benchmark | 1.9.15 | 1.9.16 | change |
+|---|---|---|---|
+| `parse/list_files` | 1.281 µs | 1.945 µs | **+51.8%** |
+| `parse/cd` | 1.237 µs | 1.591 µs | **+28.6%** |
+| `parse/find_files` | 1.658 µs | 2.149 µs | **+29.6%** |
+| `parse/git_status` | 2.354 µs | 1.560 µs | **−33.7%** |
+| `parse/shell_cmd` | 6.178 µs | 3.419 µs | **−44.7%** |
+| the five together | 12.708 µs | 10.664 µs | **−16.1%** |
+
+These are medians of five alternating runs of the 1.9.15 and 1.9.16 bench binaries on a quiet host
+(1-minute load about 1.1), and no benchmark's before and after ranges overlap. The six non-parse
+benchmarks are unchanged within noise. `bench-history.csv` row `401e838`.
 
 The x86_64 DCE binary grows **8.3 KB**, from 201,744 to 210,216 bytes; 8.0 KB of that is code (the
 bounded triggers, the index and the verb rule). On aarch64 the file grows only 272 bytes, because

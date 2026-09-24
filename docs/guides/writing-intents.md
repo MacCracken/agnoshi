@@ -53,12 +53,12 @@ A rule belongs in the **specific tier** only if its trigger is *anchored*:
 Anything else — a single keyword that should claim whatever mentions it — goes in
 the **broad tier**, with `input_has_word`.
 
-⚠ **Every trigger is asked of every line that gets that far.** The specific tier
-costs ~0.6 µs a line through the index, and `parse/shell_cmd` falls through
-everything. Prefer the narrowest check that covers your phrases: if they all
-contain one distinctive word, key on the word — `MEMORY_INFO`'s phrasings collapse
-to two word checks, and the six-check spelling measured **+3.9% on
-`parse/shell_cmd`**. Benchmark before and after.
+⚠ **Every trigger is asked of every line that gets that far.** Even through the
+index, the specific tier adds 0.35–0.66 µs to each benchmarked line, and
+`parse/shell_cmd` falls through everything. Prefer the narrowest check that
+covers your phrases: if they all contain one distinctive word, key on the word —
+`MEMORY_INFO`'s phrasings collapse to two word checks, and the six-check spelling
+measured **+3.9% on `parse/shell_cmd`**. Benchmark before and after.
 
 Edit `src/interpreter.cyr`. Logged-in users are system state, so the rule goes in
 `parse_state_queries`, which picks the query and then applies the file-verb rule
