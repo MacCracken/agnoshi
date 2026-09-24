@@ -10,6 +10,12 @@ if [ ! -x "$BIN" ]; then
     echo "Error: $BIN not found or not executable"
     exit 1
 fi
+# Absolute, because some checks `cd` into a scratch folder before running it: CI passes the
+# relative `build/agnsh`, which stops resolving after the cd.
+case "$BIN" in
+    /*) ;;
+    *) BIN="$(pwd)/$BIN" ;;
+esac
 
 PASS=0
 FAIL=0
@@ -195,7 +201,7 @@ check "an NL read-only line runs" "agnsh-nl-marker" "$out"
 check "...with the program's status" "^0$" "$ec"
 check "...and no report on stdout" "^[^I]*$" "$(echo "$out" | grep -c 'Intent:')"
 check "its report records the execution" "result: executed, exit 0" "$(cat "$NL_STATE/agnoshi/reports/latest.txt" 2>/dev/null)"
-nl_log=$(cat "$NL_DIR/.agnsh_audit.log" 2>/dev/null)
+nl_log=$(cat "$NL_DIR/.agnsh_audit.log" 2>/dev/null || true)
 check "the audit keeps the parse-time record" '"input":"show me all files","action":"ls","approved":1,"result":"proposed"' "$nl_log"
 check "...and adds the exec records with the exit code" '"result":"executed","exit_code":0' "$nl_log"
 ec=0
