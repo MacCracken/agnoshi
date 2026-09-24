@@ -26,11 +26,12 @@
 #   DO ship on agnos, and no host test can reach them, so silently dropping
 #   them would hide exactly the gap that let the agnos audit log overwrite
 #   itself until 1.9.14. They are reported separately and loudly instead;
-#   scripts/agnos-qemu-test.py is what runs them (QEMU, manual, not CI).
+#   scripts/agnos-qemu-test.py is this repo's test of them (QEMU, manual, not CI).
 #
 # Excluded from the denominator (entry scaffolding, not library code):
 #   main / _entry / _agnos_entry / print_* / interactive_loop / read_line
-#   and the ui_show_* + chrono_now_rfc3339 shims in src/agnsh.cyr.
+#   and the chrono_now_rfc3339 shim in src/agnsh.cyr (the ui_show_* stubs were
+#   deleted in 1.9.15).
 #
 # Usage: sh scripts/check-coverage.sh [threshold-percent]   (default 80)
 
@@ -62,7 +63,7 @@ FN_TABLE=$(awk '
     }
 ' $IN_BINARY_FILES 2>/dev/null)
 
-EXCLUDE_RE='^(main|_entry|_agnos_entry|print_usage|print_version|print_intent_result|interactive_loop|read_line|ui_show_error|ui_show_warning|chrono_now_rfc3339)$'
+EXCLUDE_RE='^(main|_entry|_agnos_entry|print_usage|print_version|print_intent_result|interactive_loop|read_line|chrono_now_rfc3339)$'
 
 # ⛔ A MENTION IN A COMMENT IS NOT A TEST. The scan below used to grep the raw
 # test files, so writing "# verb_read_yes routes through read_line" in a comment

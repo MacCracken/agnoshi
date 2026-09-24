@@ -43,12 +43,12 @@ Intent: 0  Command: ls
 [ASSIST] > install vim
 Intent: 14  Command: apt
   Risk: [HIGH]
-  Approval required (interactive prompt in shell mode)
+  Approval required -- not executed (no approval prompt in this build)
 
 [ASSIST] > rm -rf /tmp/foo
 Intent: 8  Command: rm
   Risk: [CRIT]
-  WARNING: BLOCKED -- would not execute without explicit override
+  WARNING: BLOCKED -- not executed, and there is no override
 
 [ASSIST] > mode strict
 Mode -> STRICT

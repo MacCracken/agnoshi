@@ -183,7 +183,11 @@ As of 1.9.4 both are created **0600 at open** (not chmod'd afterwards — that
 sequence was itself a race), opened `O_NOFOLLOW`, and the audit log's mode is
 **re-asserted on every open** rather than only at creation: a log made under a
 looser umask, restored from a backup, or copied into place used to keep whatever
-mode it had, indefinitely.
+mode it had, indefinitely. The history save repairs an existing file's mode the
+same way. Since 1.9.15 both repairs go through the **open descriptor**
+(`fchmod`): a path chmod issued after the `O_NOFOLLOW` open followed a symlink
+swapped in between the two calls, re-permissioning whatever it pointed at.
+agnos has no permission bits, so there is nothing to repair there.
 
 ⚠ **The audit log's path is overridable in-process, by design.**
 `audit_path_override_set` (`src/statepaths.cyr`, 1.9.10) redirects it. It exists

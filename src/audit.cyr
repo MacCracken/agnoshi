@@ -72,6 +72,23 @@ fn AuditEntry_to_json(self) {
     return str_builder_build(builder);
 }
 struct AuditLogger { file_path; }
+# Set once the first audit write fails, so the warning below is printed once per process.
+# Tests reset it to exercise the warning again.
+var audit_write_warned = 0;
+# Every failure to record an action lands here. Until 1.9.15 they were all SILENT: a
+# refused symlink, a full disk, a read-only home or (agnos) a failed seek dropped the
+# record and the shell said nothing, while the history save warned about the same
+# conditions. An audit trail that can stop without a word is not one an operator can
+# rely on. Once per process is enough — repeating it on every command would be noise,
+# and the first one is the signal.
+fn _audit_write_failed() {
+    if (audit_write_warned == 0) {
+        audit_write_warned = 1;
+        var w = "agnsh: warning: an audit record could not be written (later failures are not reported)\n";
+        sys_write(2, w, strlen(w));
+    }
+    return 0 - 1;
+}
 fn AuditLogger_new(file_path) {
     var p = alloc(8);
     store64(p, file_path);
@@ -102,7 +119,7 @@ fn AuditLogger_log(self, entry) {
     var line = AuditEntry_to_json(entry);
     var fd = file_open(load64(self),
       OPEN_WRONLY | OPEN_CREAT | OPEN_APPEND | OPEN_NOFOLLOW, STATE_FILE_MODE);
-    if (fd < 0) { return 0 - 1; }
+    if (fd < 0) { return _audit_write_failed(); }
     # ⛔ agnos IGNORES AO_APPEND. Its ext2_open starts every file at position 0 and keeps no
     # open flags, so until 1.9.14 each record on agnos was written at offset 0 over the last.
     # Measured in QEMU on agnos 1.57.5 (scripts/agnos-qemu-test.py): a session's whole trail
@@ -113,7 +130,7 @@ fn AuditLogger_log(self, entry) {
     #ifdef CYRIUS_TARGET_AGNOS
     if (xlseek(fd, 0, 2) < 0) {
         file_close(fd);
-        return 0 - 1;
+        return _audit_write_failed();
     }
     #endif
     # ⛔ REPAIR THE MODE, DO NOT ASSUME IT. The 0600 above applies only when THIS
@@ -129,7 +146,17 @@ fn AuditLogger_log(self, entry) {
     # state an operator needs told about, and it is rare enough that a warning
     # per write is not noise: if it fires every invocation, something really is
     # wrong with the log's ownership.
+    # ⛔ ON THE OPEN FD, NOT THE PATH (1.9.15). A path chmod follows a symlink swapped in
+    # between the O_NOFOLLOW open and this call, re-permissioning whatever it points at;
+    # fchmod on the descriptor can only reach the file actually opened. agnos has no
+    # permission bits — its peer's sys_chmod is a stub that returns 0 — and no fchmod
+    # (⛔ syscall 91, fchmod on Linux x86_64, is gpu_blit_bb on agnos), so it keeps the stub.
+    #ifdef CYRIUS_TARGET_AGNOS
     var arc = sys_chmod(load64(self), STATE_FILE_MODE);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var arc = sys_fchmod(fd, STATE_FILE_MODE);
+    #endif
     if (arc != 0) {
         var awarn = "agnsh: warning: could not enforce 0600 on the audit log\n";
         sys_write(2, awarn, strlen(awarn));
@@ -141,8 +168,8 @@ fn AuditLogger_log(self, entry) {
     var w1 = file_write(fd, str_data(line), len);
     var w2 = file_write(fd, "\n", 1);
     file_close(fd);
-    if (w1 != len) { return 0 - 1; }
-    if (w2 != 1) { return 0 - 1; }
+    if (w1 != len) { return _audit_write_failed(); }
+    if (w2 != 1) { return _audit_write_failed(); }
     return 0;
 }
 struct AuditFilter {

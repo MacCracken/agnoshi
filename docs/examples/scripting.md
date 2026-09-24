@@ -100,8 +100,8 @@ Agnsh `-c` output is line-oriented text:
 ```
 Intent: <tag>  Command: <cmd>
   Risk: [LOW|MED|HIGH|CRIT]
-  [WARNING: BLOCKED -- would not execute without explicit override]
-  [Approval required (interactive prompt in shell mode)]
+  [WARNING: BLOCKED -- not executed, and there is no override]
+  [Approval required -- not executed (no approval prompt in this build)]
   [Hint: <recovery hint when translation isn't directly runnable>]
 ```
 

@@ -13,9 +13,8 @@
 > **Cite a slot by arc and title** — `roadmap 1.10.x — NL exec` — never by patch number alone:
 > titles survive a renumber. References name functions and files, not line numbers.
 >
-> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 1.9.14, cyrius 6.6.6).
-> Every upstream gate was re-checked at this pin. Three had quietly opened and moved into arcs:
-> agnos verification (QEMU, not iron), agnos `AO_NOFOLLOW`, and the host LLM client.
+> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 1.9.15, cyrius 6.6.6).
+> Every upstream gate was re-checked at the 6.6.6 pin (1.9.13); § Gated lists what is still open.
 
 ## How this file is organised
 
@@ -32,7 +31,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **1.9.x** | Close-out: honest surfaces, the input-classification decision | **1.9.15** — honest surfaces | — |
+| **1.9.x** | Close-out: the input-classification decision | **1.9.16** — ADR-007 | a ruling (§ Open decisions) |
 | **1.10.x** | NL execution — the natural-language path runs what it proposes | **1.10.0** — NL exec, SAFE / READ_ONLY | ADR-007 (1.9.16) |
 | **1.11.x** | Interactive shell — `cd`, an rc file, a line editor | **1.11.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **1.12.x** | hoosh / LLM — answer questions, suggest commands | **1.12.0** — hoosh client (host) | host: none; agnos: loopback TCP |
@@ -52,36 +51,7 @@ on the other.
 
 ## 1.9.x — Close-out
 
-Two slots finish the hardening arc: the last places the binary misdescribes itself, and the decision
-that must precede NL execution.
-
-### 1.9.15 — Honest surfaces, and the state-file tail
-
-Small and independent. Run `scripts/agnos-qemu-test.py` for the audit-writer changes — they touch
-the agnos path.
-
-- **The binary claims a prompt that does not exist.** `print_intent_result` prints `Approval required
-  (interactive prompt in shell mode)` for HIGH risk, and the interactive loop routes NL input through
-  the same function — no prompt appears in either mode (`ApprovalManager_request` has no caller). Say
-  what happens instead. `scripts/smoke-test.sh` matches only `Approval required`; `SECURITY.md`,
-  `getting-started.md` and `scripting.md` quote the whole line and change with it.
-- **The audit trail stops without a word.** When the log cannot be opened — a refused symlink, a full
-  disk, a read-only home — or, on agnos, the seek to its end fails (1.9.14 writes nothing rather than
-  overwrite), `AuditLogger_log` returns -1 and nothing reports it, while the history save does warn.
-  Warn on stderr (once per process is enough).
-- **Re-chmod by path follows a late swap.** Both writers re-assert 0600 with `sys_chmod(path, …)` after
-  the `O_NOFOLLOW` open, and a path chmod follows a symlink swapped in between the two calls. `fchmod`
-  on the open fd closes the window. **Linux-only**: agnos has no permission bits — its peer's
-  `sys_chmod` is a stub returning 0 — and ⛔ syscall 91, Linux x86_64's `fchmod`, is `gpu_blit_bb` on
-  agnos. Use the per-arch `SYS_FCHMOD` (91 x86_64, 52 aarch64) under `#ifndef CYRIUS_TARGET_AGNOS`,
-  never a raw number.
-- **Dead stubs.** `ui_show_error` / `ui_show_warning` in `src/agnsh.cyr` are `return 0` no-ops: their
-  only callers are outside the include graph today, but the first in-graph caller would silently lose
-  its message. Delete them or give them stderr bodies — before 1.11.0 wires `session.cyr`, which calls
-  them. ⛔ Do **not** wire `ui.cyr` in instead: the banner, `help`, `mode`, `history` and `clear` live
-  natively in `agnsh.cyr` and are more current than `ui.cyr`'s v1.0 text.
-- **Stale comments**: `agnsh.cyr`'s note that `ui.cyr` is "queued for the v1.2.1 interactive-shell
-  wire-up", and `print_intent_result`'s "Pipeline auto-exec arrives with the exec wire-up".
+One slot finishes the hardening arc: the decision that must precede NL execution.
 
 ### 1.9.16 — ADR-007: where shell syntax ends and natural language begins
 
@@ -204,7 +174,8 @@ proposal, and never changes directory.
   today), and exports `PWD` through the env blob `sh_build_env_blob` hands to `#37` / `#43`. Children
   currently inherit kybernet's `PWD=/`. ⚠ Check whether kriya and owl resolve relative operands against
   `$PWD` before promising `cd` semantics to them.
-- Needs 1.9.15's stub fix first if `session.cyr` code is reused.
+- If `session.cyr` code is reused, its `ui_show_*` calls need real bodies first: agnsh has no stubs
+  for them (the two dead `return 0` ones were deleted in 1.9.15), so the build fails until they exist.
 
 ### 1.11.1 — `.agnshrc`
 
@@ -365,8 +336,8 @@ one arch, and three gates had opened without anyone noticing.
    the bench row format (`scripts/bench-history.sh` parses ` avg ` lines); every "consumers must".
 4. All CI gates on a clean `git archive` copy first — CI's own starting state — then on the tree,
    including the aarch64 suites under qemu-user and the agnos build. Then
-   `python3 scripts/agnos-qemu-test.py`: CI builds the agnos target, and this is the only thing that
-   runs it.
+   `python3 scripts/agnos-qemu-test.py`: CI builds the agnos target but cannot run it, and this is the
+   repo's only test that does.
 5. **Re-verify every gate in § Gated and every upstream claim in the arcs.** A pin bump is when a
    blocker quietly disappears.
 6. Benchmarks: five alternating runs per toolchain behind any claim; one `bench-history.csv` row each.
@@ -393,7 +364,7 @@ one arch, and three gates had opened without anyone noticing.
   `O_NOFOLLOW` / `O_LARGEFILE` and `O_DIRECTORY` / `O_DIRECT`. Hardcoding x86's `O_NOFOLLOW` left the
   aarch64 release following symlinks for twelve releases, behind a unit test that pinned the bug. CI
   runs both suites on aarch64 under qemu-user since 1.9.13; keep it that way.
-- **agnos paths run only in `scripts/agnos-qemu-test.py`.** Typing there is about one keystroke a
+- **In this repo, only `scripts/agnos-qemu-test.py` exercises the agnos paths.** Typing there is about one keystroke a
   second, so scenarios are slow. A background-job test needs a sleeper that waits on a signal (the
   harness creates `/stop`) — a busy-count starved the keyboard and a fixed wall time expired before
   the ninth job was typed; both were tried. An agnos syscall clobbers `rcx, rdx, rsi, rdi, r8–r11`.

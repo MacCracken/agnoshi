@@ -6,13 +6,94 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [1.9.14] - 2026-09-23 — agnsh runs on agnos under test, and its audit log stops overwriting itself
+## [1.9.15] - 2026-09-23 — the binary stops describing things it does not do
 
-The first slot of the 1.9.x close-out. CI builds agnsh for agnos on every push and has never been
-able to run it, so ~19 agnos-only functions — the pipeline, redirect and background-job launchers
-and the audit records they write — had never executed anywhere a result was read back. The new
-`scripts/agnos-qemu-test.py` boots agnsh on the real agnos kernel in QEMU and checks what the shell
-did against what it recorded. Its first run found both defects below.
+The second slot of the 1.9.x close-out: the last places agnsh's own output, or its silence, told the
+user something untrue.
+
+### Changed — two output lines described a prompt and an override that do not exist
+
+| intent | 1.9.14 | 1.9.15 |
+|---|---|---|
+| HIGH risk | `Approval required (interactive prompt in shell mode)` | `Approval required -- not executed (no approval prompt in this build)` |
+| BLOCKED | `WARNING: BLOCKED -- would not execute without explicit override` | `WARNING: BLOCKED -- not executed, and there is no override` |
+
+The interactive loop routes natural-language input through the same `print_intent_result` as `-c`,
+and no prompt exists in any mode — `ApprovalManager_request` has no caller. No override path exists
+either. The `Approval required` and `WARNING: BLOCKED` prefixes are unchanged, so scripts matching on
+them still match; ⚠ a script matching the old full text needs the new one. `scripts/smoke-test.sh`
+now asserts the new wording (it fails against 1.9.14's binary).
+
+### Fixed — a failed audit write was silent
+
+`AuditLogger_log` returned -1 without a word whenever a record could not be written: a refused
+symlink, a full disk, a read-only home, or on agnos a failed seek (1.9.14's write-nothing-rather-than-
+overwrite path). The history save warned about the same conditions. It now prints `agnsh: warning:
+an audit record could not be written (later failures are not reported)` on stderr, once per process
+— the first failure is the signal, and repeating it on every command would be noise. Tests: an
+unwritable path warns; two refused writes produce exactly one warning; the helper returns -1 every
+time. 1.9.14's source fails all three.
+
+### Security — the mode repair followed a symlink swapped in after the open (Linux, macOS)
+
+Both state-file writers re-assert 0600 after opening, so a file that existed with a looser mode is
+repaired. They did it with a **path** chmod — the history save even after closing the file — and a
+path chmod follows a symlink swapped in between the `O_NOFOLLOW` open and the chmod, re-permissioning
+whatever it points at. Both now use `fchmod` on the open descriptor (the stdlib's `sys_fchmod`, over
+each peer's own `SYS_FCHMOD`), the history save before it closes. Traced under qemu-user on x86_64
+and aarch64: `fchmod(3,0600)` for both files and no path chmod; a pre-existing 0644 file of each kind
+comes back 0600. The window was narrow — a writer racing agnsh between two syscalls — but a guard that
+follows a symlink is the thing `O_NOFOLLOW` is there to prevent. agnos is unchanged: it has no
+permission bits (its peer's `sys_chmod` is a stub that returns 0), and no `fchmod` — ⛔ syscall 91,
+`fchmod` on Linux x86_64, is `gpu_blit_bb` there, so the call is compiled only off agnos.
+⚠ The new history test (an existing 0644 file comes back 0600) guards the repair through the
+restructure; it would pass on the old path chmod too. The fd-versus-path difference rests on the
+traces, not on a unit test.
+
+### Removed — two dead stubs
+
+`fn ui_show_error(m) { return 0; }` and `fn ui_show_warning(m) { return 0; }` in `src/agnsh.cyr`.
+Their only callers, `src/aliases.cyr` and `src/session.cyr`, are outside the include graph, so the
+first one wired in would have dropped its message without a word. Wiring either now fails to compile
+until the UI calls have real bodies — `session.cyr` calls seven more `ui_show_*` that never had stubs
+anyway. `tests/harness.cyr` keeps its own stubs for the test binaries; `scripts/check-coverage.sh` no
+longer excludes the deleted names.
+
+### Fixed — docs, including a wrong claim in 1.9.14's entry
+
+- ⛔ **1.9.14's entry said agnsh's agnos-only code "had never executed anywhere a result was read
+  back" and that CI "has never been able to run it" — the first half is false.** agnsh has been
+  agnos's shell since the first agnos builds: kybernet execs it on every boot, and agnos's own QEMU
+  harnesses and iron burns exercise it. What 1.9.14 added was agnoshi's first test of its own on
+  agnos, and the first check in either repo that read agnsh's audit log back. Corrected in that entry,
+  `scripts/agnos-qemu-test.py`, `CONTRIBUTING.md`, the roadmap, `scripts/check-coverage.sh` and
+  `docs/doc-health.md`.
+- Stale comments in `src/agnsh.cyr`: `ui.cyr` "queued for the v1.2.1 interactive-shell wire-up", and
+  "Pipeline auto-exec arrives with the exec wire-up" (a real `/bin` pipeline on agnos is launched
+  before input reaches `print_intent_result`).
+- `SECURITY.md`, `docs/guides/getting-started.md`, `docs/examples/scripting.md` quote the new output
+  lines; `SECURITY.md` and `docs/guides/security-model.md` describe the descriptor-based mode repair.
+
+### Verified
+
+All CI gates; unit 692/692 (686 + 6 new), security 26/26, smoke 94/94 (+2), host-reachable coverage
+183/183; both suites on aarch64 under qemu-user. The new checks fail against 1.9.14's source: 3 unit,
+2 smoke. On agnos (the audit writer's agnos path gained the warning): `scripts/agnos-qemu-test.py`
+30/30.
+
+### Performance — unchanged
+
+No benchmarked path changed; `bench-history.csv` row `94abfdc-dirty` sits within run-to-run noise of
+the 1.9.13 and 1.9.14 rows.
+
+## [1.9.14] - 2026-09-23 — agnoshi's own test on agnos, and the audit log stops overwriting itself
+
+The first slot of the 1.9.x close-out. agnsh has been agnos's shell since the first agnos builds —
+kybernet execs it on every boot, and agnos's own QEMU harnesses and iron burns exercise it. What
+agnoshi's repo lacked was any test of its own on agnos: CI builds the agnos target and cannot run it,
+and nothing in either repo read agnsh's audit log back. `scripts/agnos-qemu-test.py` is that test —
+it boots agnsh on the agnos kernel in QEMU and checks what the shell did against what it recorded.
+Its first run found both defects below.
 
 ### Fixed — ⛔ on agnos, every audit record overwrote the one before it
 

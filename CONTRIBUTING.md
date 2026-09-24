@@ -34,10 +34,10 @@ sh scripts/smoke-test.sh build/agnsh
 # Open flags differ per arch; an x86_64-only run cannot see that class (1.9.13).
 cyrius build --aarch64 tests/test_core.tcyr build/test_core_a64 && qemu-aarch64 build/test_core_a64
 
-# agnsh on the real agnos kernel, in QEMU — the only place the agnos-only launch paths
-# (pipelines, `>`, `&`) and their audit records actually run. Manual, not CI: needs
-# ../agnos (build/agnos + build/rootfs) and ../gnoboot built. Run it for any change that
-# touches an agnos path. It only reads the agnos repo.
+# This repo's own test on the agnos kernel, in QEMU: it drives the agnos-only launch paths
+# (pipelines, `>`, `&`) and checks the audit records they write — CI builds the agnos target
+# but cannot run it. Manual: needs ../agnos (build/agnos + build/rootfs) and ../gnoboot
+# built. Run it for any change that touches an agnos path. It only reads the agnos repo.
 python3 scripts/agnos-qemu-test.py
 ```
 

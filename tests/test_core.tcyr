@@ -1954,10 +1954,27 @@ fn main() {
     # --- AuditLogger_log reports failure instead of pretending ---
     # A record that could not be written must not return success: the caller
     # would otherwise believe the action was logged when nothing was.
+    # 1.9.15: and it says so on stderr (it used to fail silently). Captured, so the
+    # warning is asserted here instead of leaking into the test run's output.
     var badlog = AuditLogger_new("/proc/definitely/not/writable/agnsh.log");
-    check("AuditLogger_log reports an unwritable path",
-      AuditLogger_log(badlog, AuditEntry_new(str_from("u"), str_from("m"),
-          str_from("i"), str_from("a"), 1, str_from("proposed"))) == 0 - 1);
+    var badcap = tmp_state_path("agnsh_selftest_badcap");
+    audit_write_warned = 0;
+    _t_capture_begin(2, 9, badcap);
+    var badrc = AuditLogger_log(badlog, AuditEntry_new(str_from("u"), str_from("m"),
+        str_from("i"), str_from("a"), 1, str_from("proposed")));
+    _t_capture_end(2, 9);
+    check("AuditLogger_log reports an unwritable path", badrc == 0 - 1);
+    check("an unwritable audit log is reported on stderr",
+      _t_file_has(badcap, "audit record could not be written") == 1);
+    # The helper itself: -1 every time, a warning only the first time.
+    audit_write_warned = 0;
+    _t_capture_begin(2, 9, badcap);
+    var awf1 = _audit_write_failed();
+    var awf2 = _audit_write_failed();
+    _t_capture_end(2, 9);
+    check("_audit_write_failed returns -1 every time", awf1 == 0 - 1 && awf2 == 0 - 1);
+    check("_audit_write_failed warns only the first time", _t_count_nl(badcap) == 1);
+    xunlink(badcap);
 
     # --- AuditViewer ---
     # Documented as a v1.2.x stub that returns empty until the stdlib alignment
@@ -2203,6 +2220,13 @@ fn main() {
     var hst[144];
     check("the history file is 0600",
       xstat(hpath, &hst) == 0 && (load32(&hst + STAT_MODE) % 512) == 384);
+    # 1.9.15: the mode is repaired through the OPEN fd (fchmod), not the path — so an
+    # EXISTING file with a looser mode must still come back 0600 after a save. (A new
+    # file is created 0600 at open, which is why the check above cannot see this path.)
+    sys_chmod(hpath, 420);                                    # 0644
+    CommandHistory_save(hh);
+    check("save repairs an existing history file to 0600",
+      xstat(hpath, &hst) == 0 && (load32(&hst + STAT_MODE) % 512) == 384);
 
     # Round-trip: what was saved must load back.
     # ⛔ THIS TEST FAILED THE FIRST TIME IT WAS WRITTEN, and the bug was in the
@@ -2396,13 +2420,22 @@ fn main() {
     check("the test can plant a symlink", sys_symlink(sl_target, sl_link) == 0);
 
     # The audit writer APPENDS, then re-asserts 0600 by path.
+    # 1.9.15: a refused audit write is no longer silent — it warns on stderr, once per
+    # process. Two refused writes in the capture window must produce ONE warning line.
+    audit_write_warned = 0;
     audit_path_override_set(sl_link);
+    _t_capture_begin(2, 9, cappath);
     audit_one_shot("planted", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    audit_one_shot("planted again", "ls", PermissionLevel.SAFE, "auto", IntentTag.LIST_FILES, "d");
+    _t_capture_end(2, 9);
     audit_path_override_set(0);
     check("the audit writer does not write through a symlinked log",
       _t_file_has(sl_target, "planted") == 0);
     check("the audit writer leaves the symlink target's length alone",
       _t_count_nl(sl_target) == 1);
+    check("a refused audit write says so on stderr",
+      _t_file_has(cappath, "audit record could not be written") == 1);
+    check("...once per process, not once per command", _t_count_nl(cappath) == 1);
 
     # The history save TRUNCATES: through a symlink it rewrites the target, capped
     # at the history size — the destructive half of the bug. Its refusal goes to

@@ -249,21 +249,28 @@ fn CommandHistory_save(self) {
     # pointed at a permissions problem that did not exist.
     var hlen = str_len(content);
     var hw = file_write(hfd, str_data(content), hlen);
+    # Re-assert 0600 ON THE OPEN FD, before closing it (1.9.15). This used to be a path chmod
+    # after file_close, and a path chmod follows a symlink swapped in after the O_NOFOLLOW
+    # open — re-permissioning whatever it points at. fchmod can only reach the file actually
+    # written. agnos has no permission bits (its peer's sys_chmod is a stub that returns 0)
+    # and no fchmod (⛔ syscall 91 is gpu_blit_bb there), so it keeps the stub.
+    #ifndef CYRIUS_TARGET_AGNOS
+    var chmod_rc = sys_fchmod(hfd, STATE_FILE_MODE);
+    #endif
     file_close(hfd);
+    #ifdef CYRIUS_TARGET_AGNOS
+    var chmod_rc = sys_chmod(load64(self + 24), STATE_FILE_MODE);
+    #endif
     if (hw != hlen) {
         var hshort = "agnsh: warning: history file write was short or failed\n";
         sys_write(2, hshort, strlen(hshort));
         return 0 - 1;
     }
-    # Use the lib/io.cyr `sys_chmod` wrapper — aarch64 has no bare
-    # SYS_CHMOD (the generic syscall table only exposes fchmodat).
-    # Check the return: if chmod fails, the history file stays at
-    # the umask default (typically 0644 = world-readable). On a
-    # multi-user system that leaks every shell command the user has
-    # ever typed. Surface the failure via stderr; the file write
-    # itself already succeeded so we don't return an error from
-    # save() — but the operator can react.
-    var chmod_rc = sys_chmod(load64(self + 24), 384);
+    # Check the chmod: if it fails, a history file that already existed keeps its
+    # old mode (typically 0644 = world-readable). On a multi-user system that leaks
+    # every shell command the user has ever typed. Surface the failure via stderr;
+    # the write itself succeeded so save() does not return an error — but the
+    # operator can react.
     if (chmod_rc != 0) {
         # strlen(), not a hand-counted literal: this read 52 bytes from a
         # 50-byte literal, emitting 2 bytes of adjacent .rodata to stderr.

@@ -91,10 +91,15 @@ check "risk MED for user-write" "Risk: \[MED\]" "$out"
 out=$("$BIN" -c "install vim" 2>&1)
 check "risk HIGH for admin" "Risk: \[HIGH\]" "$out"
 check "high-risk approval hint" "Approval required" "$out"
+# 1.9.15: the line says what happened. It used to promise "(interactive prompt in shell
+# mode)", and no prompt exists in any mode.
+check "high-risk line says nothing ran" "Approval required -- not executed" "$out"
 
 out=$("$BIN" -c "rm -rf /tmp/foo" 2>&1)
 check "risk CRIT for blocked" "Risk: \[CRIT\]" "$out"
 check "blocked warning line" "WARNING: BLOCKED" "$out"
+# 1.9.15: it used to say "would not execute without explicit override" — no override exists.
+check "blocked line claims no override" "not executed, and there is no override" "$out"
 
 # Command field populated -- the cstring/Str print mismatch that left
 # this blank pre-v1.2.1 is now fixed.

@@ -8,11 +8,12 @@
 # `poweroff`, from the disk image itself (debugfs). The agnos repo is only READ: its kernel and
 # rootfs are copied, never modified or restaged.
 #
-# ⛔ WHY THIS EXISTS. CI builds agnsh for agnos on every push and can run none of it, so ~19
-# agnos-only functions -- the pipeline, redirect and background-job launchers and the whole exec
-# audit surface -- had never executed anywhere a result was read back. Its first run (1.9.14)
-# found the audit log overwriting itself: agnos ignores AO_APPEND, and a session's whole trail
-# came back as its last record plus the torn tails of longer ones.
+# ⛔ WHY THIS EXISTS. agnsh is agnos's shell -- kybernet execs it on every boot, and agnos's own
+# harnesses (agnos/scripts/harness/) exercise its launch paths. What this repo lacked was a test of
+# its own there: CI builds the agnos target and cannot run it, and nothing in either repo read the
+# audit log agnsh writes on agnos back. Its first run (1.9.14) found that log overwriting itself:
+# agnos ignores AO_APPEND, and a session's whole trail came back as its last record plus the torn
+# tails of longer ones.
 #
 # Usage:
 #   python3 scripts/agnos-qemu-test.py                 # build agnsh from this tree, then test it

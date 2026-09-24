@@ -21,15 +21,16 @@ include "lib/chrono.cyr"
 # used only by the host build's fork/exec path.
 include "lib/process.cyr"
 
-# `ui_show_*` are minimal stand-ins because src/ui.cyr isn't pulled
-# into this entry's include graph yet (queued for the v1.2.1
-# interactive-shell wire-up). `chrono_now_rfc3339` now reaches into
-# lib/chrono.cyr's iso8601_now (real wall-clock time) instead of the
-# v1.0-era fixed-string stub; the wrap converts iso8601_now's cstring
-# buffer to a Str so audit's json_escape (Str-typed) reads a valid
-# length header.
-fn ui_show_error(m) { return 0; }
-fn ui_show_warning(m) { return 0; }
+# `chrono_now_rfc3339` reaches into lib/chrono.cyr's iso8601_now (real wall-clock
+# time) instead of the v1.0-era fixed-string stub; the wrap converts iso8601_now's
+# cstring buffer to a Str so audit's json_escape (Str-typed) reads a valid length
+# header.
+# ⚠ No `ui_show_*` stand-ins here since 1.9.15. Two `return 0` stubs used to sit here
+# for callers that are all outside the include graph (src/aliases.cyr,
+# src/session.cyr), so the first caller wired in would have dropped its message
+# without a word. Wiring either module now fails to compile until its UI calls get
+# real bodies — session.cyr calls seven more `ui_show_*` that never had stubs anyway.
+# tests/harness.cyr keeps its own stubs for the test binaries.
 fn chrono_now_rfc3339() { return str_from(iso8601_now()); }
 
 include "src/sanitize.cyr"
@@ -45,7 +46,7 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 
-var VERSION_STR = "agnoshi 1.9.14";
+var VERSION_STR = "agnoshi 1.9.15";
 
 fn print_version() {
     println(VERSION_STR);
@@ -102,13 +103,19 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
     str_print(str_from("  Risk: "));
     println(risk_icon(risk));
 
-    # BLOCKED commands (Risk: CRITICAL) cannot be auto-executed —
-    # surface this in `-c` output so scripts and call-sites can see the
-    # decision without parsing a permission integer.
+    # BLOCKED commands (Risk: CRITICAL) never execute — surface the decision in
+    # `-c` output so scripts can see it without parsing a permission integer.
+    # Say what HAPPENS. Until 1.9.15 these read "would not execute without explicit
+    # override" (no override exists) and "Approval required (interactive prompt in
+    # shell mode)" — but the interactive loop routes NL input through this same
+    # function and no prompt exists anywhere (ApprovalManager_request has no
+    # caller). The NL path executes nothing yet (roadmap 1.10.x — NL exec). The
+    # `WARNING: BLOCKED` and `Approval required` prefixes are unchanged; scripts
+    # and scripts/smoke-test.sh match on them.
     if (perm == PermissionLevel.BLOCKED) {
-        println("  WARNING: BLOCKED -- would not execute without explicit override");
+        println("  WARNING: BLOCKED -- not executed, and there is no override");
     } elif (risk == RiskLevel.HIGH) {
-        println("  Approval required (interactive prompt in shell mode)");
+        println("  Approval required -- not executed (no approval prompt in this build)");
     }
 
     # Error-recovery hints. Three "parse succeeded but translation isn't
@@ -118,8 +125,9 @@ fn print_intent_result(input_cstr, mode_label_cstr) {
     #
     # 1. QUESTION (tag 42) — LLM-routed; streaming not wired yet.
     # 2. PIPELINE (tag 41) — no translate_pipeline arm; falls to
-    #    translate_unknown. Pipeline auto-exec arrives with the exec
-    #    wire-up.
+    #    translate_unknown. On agnos a real `cmd1 | cmd2` of /bin programs is
+    #    launched before input ever reaches here; the hint says why this one
+    #    was not (host build, or a stage that is not a /bin program).
     # 3. Safety-rejected translation — any tag whose translate_X called
     #    is_safe_path_str / is_safe_arg_str on a parser-extracted field
     #    and rejected (path traversal, shell metachars, leading dash,

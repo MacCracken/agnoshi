@@ -36,9 +36,11 @@ Classification uses **basename extraction** so `/usr/bin/dd`, `./rm`,
 
 **What ships today**: every translated command is classified into a permission
 tier and its risk is reported. A HIGH-risk command prints
-`Approval required (interactive prompt in shell mode)` and a BLOCKED one prints
-`WARNING: BLOCKED`. **Neither prompts, and neither blocks execution** — the
-natural-language path does not execute at all yet (see *Execution*, below).
+`Approval required -- not executed (no approval prompt in this build)` and a
+BLOCKED one prints `WARNING: BLOCKED -- not executed, and there is no override`.
+**Neither prompts** — the natural-language path does not execute anything yet
+(see *Execution*, below). Until 1.9.15 the HIGH-risk line promised an
+"interactive prompt in shell mode" that no mode had.
 
 **What does not ship**: `ApprovalManager_request` and the escape-stripped
 approval display (`print_str_safe`, the H5 mitigation) live in
@@ -93,10 +95,14 @@ protection is a future property, not a current one.
 
 ### File permissions
 
-- History file: mode **0600 at open** (not chmod'd afterwards — that sequence
-  was itself a race), opened `O_NOFOLLOW`
+- History file: mode **0600 at open**, opened `O_NOFOLLOW`; a file that already
+  existed with a looser mode is repaired through the **open descriptor**
+  (`fchmod`, since 1.9.15 — before that a path chmod after close, which a
+  symlink swapped in after the open could redirect)
 - Audit log: mode 0600, opened `O_NOFOLLOW`, and its mode is **re-asserted on
-  every open** so a file restored from a backup cannot stay world-readable
+  every open**, through the open descriptor since 1.9.15, so a file restored
+  from a backup cannot stay world-readable. On agnos there are no permission
+  bits to set.
 - Checkpoint directory: mode 0700 — *in the unwired module; see above*
 
 ⚠ When `$HOME` is unset both fall back to `/tmp/<name>.<uid>`. The uid qualifier
