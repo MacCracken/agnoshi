@@ -53,7 +53,7 @@ agnoshi
 │   ├── uninstall.sh        -- clean removal
 │   ├── smoke-test.sh       -- 127 end-to-end binary tests
 │   ├── agnos-qemu-test.py  -- agnsh on the agnos kernel in QEMU (manual)
-│   ├── agnos-qemu-bench.py -- how agnsh waits there: idle gate, round trips (manual)
+│   ├── agnos-qemu-bench.py -- how agnsh waits there, and its -c exit statuses (manual)
 │   └── bench-history.sh    -- benchmark CSV tracker
 └── docs/
     ├── agnsh.1             -- man page

@@ -12,7 +12,7 @@ is Cyrius and builds with `cyrius build` — no external test runner.
 | `test_security.tcyr` | regression | command classification, path/username/branch/commit-message sanitizers, permission gates (26 checks) |
 | `test_parse_corpus.tcyr` | spec | the NL classifier against `docs/examples/common-commands.md` (read at run time), shadowing probes in both directions, and the PhraseIndex held to `input_has_phrase` — [ADR-007](../docs/adr/007-input-classification.md) (358 checks) |
 | `bench_core.bcyr` | benchmarks | parse / translate / permission / sanitize hot paths |
-| `agnos_hostsh.cyr` | agnos driver | **Not a suite** and agnos-only: hosts agnsh on a pipe for `scripts/agnos-qemu-bench.py`, which seeds it as `/bin/agnsh` so it runs at boot. Build with `cyrius build --agnos`; a host build only prints that it is agnos-only. |
+| `agnos_hostsh.cyr` | agnos driver | **Not a suite** and agnos-only: hosts agnsh on a pipe for `scripts/agnos-qemu-bench.py`, which seeds it as `/bin/agnsh` so it runs at boot, and runs `agnsh -c` through every agnos launcher against ADR-008 § 4's exit statuses (19 checks, gated by the bench). Build with `cyrius build --agnos`; a host build only prints that it is agnos-only. |
 | `test.sh` | runner | builds the shell, then runs every `test_*.tcyr` suite → smoke → bench |
 
 ## Running

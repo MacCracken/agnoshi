@@ -50,7 +50,7 @@ sudo sh scripts/install.sh
 later — its waits are the kernel's blocking `waitpid` and its pipeline stages spawn with
 `SPAWN_F_CLEANFD` — and 1.57.8 for a PTY-hosted shell to wait in the kernel rather than poll.
 `scripts/agnos-qemu-test.py` runs it on the agnos kernel in QEMU; `scripts/agnos-qemu-bench.py`
-measures how it waits there.
+measures how it waits there and checks each launcher's `agnsh -c` exit status.
 
 ## Usage
 

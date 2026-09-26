@@ -44,6 +44,8 @@ python3 scripts/agnos-qemu-test.py
 
 # How agnsh WAITS on agnos (2.0.1): boots a driver that hosts agnsh on a pipe -- a PTY-hosted
 # shell's shape -- and reports its idle CPU (gated: 0 %) and foreground / pipeline round trips.
+# It also runs `agnsh -c` through every agnos launcher and gates the exit statuses on ADR-008 § 4
+# (the typed session above cannot see one). Run it for a change to a launcher's return, too.
 # A/B a change against a baseline agnos build from the same boot:
 AGNSH_BASELINE=/path/to/old/agnsh_agnos python3 scripts/agnos-qemu-bench.py
 ```

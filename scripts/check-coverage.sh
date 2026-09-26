@@ -26,7 +26,8 @@
 #   DO ship on agnos, and no host test can reach them, so silently dropping
 #   them would hide exactly the gap that let the agnos audit log overwrite
 #   itself until 1.9.14. They are reported separately and loudly instead;
-#   scripts/agnos-qemu-test.py is this repo's test of them (QEMU, manual, not CI).
+#   scripts/agnos-qemu-test.py and scripts/agnos-qemu-bench.py are this repo's
+#   tests of them (QEMU, manual, not CI).
 #
 # Excluded from the denominator (entry scaffolding, not library code):
 #   main / _entry / _agnos_entry / print_* / interactive_loop / read_line
@@ -126,7 +127,8 @@ if [ "$AGNOS_TOTAL" -gt 0 ]; then
     echo "  agnos-only fns (absent from a host build, NOT gated): $AGNOS_TOTAL"
     echo "    of which not named by any host test: $AGNOS_UNTESTED_N"
     echo "    No host test can reach these. Run them on agnos in QEMU with"
-    echo "    scripts/agnos-qemu-test.py (manual, not CI: needs ../agnos and ../gnoboot built)."
+    echo "    scripts/agnos-qemu-test.py and scripts/agnos-qemu-bench.py"
+    echo "    (manual, not CI: both need ../agnos and ../gnoboot built)."
 fi
 
 if [ "$PERCENT" -lt "$THRESHOLD" ]; then

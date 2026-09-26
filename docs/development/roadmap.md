@@ -59,11 +59,6 @@ The natural-language path does what it proposes, one permission tier at a time, 
 place before anything destructive runs. 2.0.0 shipped SAFE and READ_ONLY (see the CHANGELOG); the
 slots below are ordered so that nothing destructive executes before checkpointing exists. Standing
 from 2.0.0: `proc_set_timeout_ms` (host only) could give NL exec a command timeout — unscheduled.
-Standing from 2.0.1: the agnos launchers in `run_agnos.cyr` still exit **1** where ADR-008 § 4 says
-126 or 127 — `sh_run_program_bg`'s refusals and launch failure, and `sh_run_pipeline` /
-`sh_run_redirect`'s `pipe()`, arm, open and launch failures (empty stages and a missing `>` target are
-usage errors and keep 1). Converting them wants a harness that can read an agnos `-c` status first:
-the typed session cannot, and the `agnos_hostsh` driver could spawn `agnsh -c` through `SPAWN_F_ARGV`.
 
 ### 2.0.2 — Wire `security.cyr`
 
@@ -304,8 +299,8 @@ one arch, and three gates had opened without anyone noticing.
    the bench row format (`scripts/bench-history.sh` parses ` avg ` lines); every "consumers must".
 4. All CI gates on a clean `git archive` copy first — CI's own starting state — then on the tree,
    including the aarch64 suites under qemu-user and the agnos build. Then
-   `python3 scripts/agnos-qemu-test.py`: CI builds the agnos target but cannot run it, and this is the
-   repo's only test that does.
+   `python3 scripts/agnos-qemu-test.py` and `python3 scripts/agnos-qemu-bench.py`: CI builds the agnos
+   target but cannot run it, and these are the repo's only tests that do.
 5. **Re-verify every gate in § Gated and every upstream claim in the arcs.** A pin bump is when a
    blocker quietly disappears.
 6. Benchmarks: five alternating runs per toolchain behind any claim; one `bench-history.csv` row each.
@@ -332,10 +327,13 @@ one arch, and three gates had opened without anyone noticing.
   `O_NOFOLLOW` / `O_LARGEFILE` and `O_DIRECTORY` / `O_DIRECT`. Hardcoding x86's `O_NOFOLLOW` left the
   aarch64 release following symlinks for twelve releases, behind a unit test that pinned the bug. CI
   runs every suite on aarch64 under qemu-user since 1.9.13; keep it that way.
-- **In this repo, only `scripts/agnos-qemu-test.py` exercises the agnos paths.** Typing there is about one keystroke a
-  second, so scenarios are slow. A background-job test needs a sleeper that waits on a signal (the
+- **In this repo, only the two QEMU scripts exercise the agnos paths.** `scripts/agnos-qemu-test.py`
+  types into the interactive shell: about one keystroke a second, so scenarios are slow, and it cannot
+  see a `-c` exit status. A background-job test there needs a sleeper that waits on a signal (the
   harness creates `/stop`) — a busy-count starved the keyboard and a fixed wall time expired before
   the ninth job was typed; both were tried. An agnos syscall clobbers `rcx, rdx, rsi, rdi, r8–r11`.
+  `scripts/agnos-qemu-bench.py` boots a driver (`tests/agnos_hostsh.cyr`) that spawns agnsh itself,
+  so an agnos `-c` exit-status case is one `hs_c` line there, gated by the bench.
 - **Honour ADR-006** at every new Str/cstring boundary: `_in_str` suffix, per-arch syscall wrappers,
   `str_clone` for static-buffer escape, every cstring path NUL-terminated.
 - **The lint shield's next free category is I** (A–H are taken; H is the 1.9.10 audit-path seam). Its

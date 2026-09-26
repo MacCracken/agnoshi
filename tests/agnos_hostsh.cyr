@@ -9,13 +9,17 @@
 #                                                 its state at the end (6 = BLOCKED). Round 1 only.
 #   HS-RUN <shell> n=<N> us=<t> exit=<e>          N queued `echo hs` lines through one agnsh, spawn to reap
 #   HS-PIPE <shell> n=<N> us=<t> exit=<e>         N queued `echo hs | wc` pipelines, the same way
-# then `HS-DONE`. The lines queued before the spawn are the shell's whole stdin, so it exits at EOF; its stdout
-# goes to a file, because agnos's console prints well under a kilobyte a second and would be what we measured.
+# then, once per shell, the `agnsh -c` exit-status checks (HS-C, below), and `HS-DONE`. The lines queued before
+# the spawn are the shell's whole stdin, so it exits at EOF; its stdout goes to a file, because agnos's console
+# prints well under a kilobyte a second and would be what we measured.
 #
 # Why these numbers (2.0.1): until 2.0.1 agnsh reaped every foreground child and both pipeline stages with a
 # non-blocking waitpid + sched_yield#44 poll, and since agnos 1.57.9 a #44 with nothing else READY parks until
 # the next timer tick. HS-RUN and HS-PIPE time the reaps; HS-IDLE is issue 2's gate — a pipe- or PTY-hosted
 # agnsh must idle at 0 %, which on agnos >= 1.57.8 the kernel's blocking pipe read gives both builds.
+# Why HS-C: under ADR-008 § 4 the agnos launchers' refusals and launch failures exit 126 / 127 (through 2.0.1
+# several exited 1), and the typed session in scripts/agnos-qemu-test.py cannot see a `-c` status at all. The
+# fixtures HS-C needs — /bin/notelf (not an ELF), /hs-link (a symlink) — are seeded by scripts/agnos-qemu-bench.py.
 
 include "lib/string.cyr"
 include "lib/syscalls.cyr"
@@ -201,6 +205,221 @@ fn hs_measure(path, round) {
     return 0;
 }
 
+# ---- `agnsh -c` exit statuses (ADR-008 § 4) ----
+#
+# Each check spawns `<shell> -c <line>` through spawn_path#43's SPAWN_F_ARGV form (agnos 1.57.6: a1 is an argv
+# blob, `argv0\0argv1\0...\0`, so the line is ONE argv entry, spaces and all — the line form would split it),
+# reaps it with WAIT_BLOCK and prints
+#   HS-C <shell> <tag> exit=<e> want=<w> msg=<m> :: <line>
+# where m = 1 when the shell's stderr held the message that line must produce, and `HS-CMSG <shell> <tag>
+# <first stderr line>` after any check that failed; then `HS-CEND <shell> n=<checks>`. The message is what
+# keeps a status honest: `pipe-nofds` wants 127 from a pipe() that failed, and a probe failing first would
+# also exit 127. The shell's stdin is an empty file, so a confirm prompt would read EOF and decline rather
+# than wait on the console; its stdout and stderr go to files.
+var hs_av[128];         # 1024 B: the SPAWN_F_ARGV blob (the kernel's cap, SPAWN_ARGV_MAX)
+var hs_eb[64];          # 512 B: the shell's stderr, read back
+var hs_fill[32];        # 256 B: the fds hs_fill_fds holds open (agnos fd tables have 32 slots)
+var hs_cn = 0;          # checks run for the current shell
+var hs_lc[32];          # 256 B: bg-toolong's line, built at run time (hs_long_bg)
+
+# Append `s` and its NUL to the argv blob at `off`: the new offset, or -1 once it would pass 1024 bytes.
+fn hs_av_put(off, s) {
+    if (off < 0) { return 0 - 1; }
+    var n = strlen(s);
+    if (off + n + 1 > 1024) { return 0 - 1; }
+    var i = 0;
+    while (i < n) {
+        store8(&hs_av + off + i, load8(s + i));
+        i = i + 1;
+    }
+    store8(&hs_av + off + n, 0);
+    return off + n + 1;
+}
+
+# Take every free slot of our fd table (read-only opens of `name`), then give one back. A child spawned WITHOUT
+# SPAWN_F_CLEANFD gets a copy of the table (vfs_fd_inherit), so it starts with exactly one free slot, and
+# pipe()#25 needs two. Returns how many are still held.
+fn hs_fill_fds(name) {
+    var n = 0;
+    while (n < 32) {
+        var fd = syscall(7, name, strlen(name), AO_RDONLY, 0);
+        if (fd < 0) { break; }
+        store64(&hs_fill + n * 8, fd);
+        n = n + 1;
+    }
+    if (n > 0) {
+        n = n - 1;
+        syscall(6, load64(&hs_fill + n * 8), 0, 0, 0);
+    }
+    return n;
+}
+
+fn hs_fill_close(n) {
+    var i = 0;
+    while (i < n) {
+        syscall(6, load64(&hs_fill + i * 8), 0, 0, 0);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Does `hay` contain `needle`? An empty needle matches only an empty hay: it is the "nothing on stderr" check.
+fn hs_has(hay, needle) {
+    var hl = strlen(hay);
+    var nl = strlen(needle);
+    if (nl == 0) {
+        if (hl == 0) { return 1; }
+        return 0;
+    }
+    var i = 0;
+    while (i + nl <= hl) {
+        var j = 0;
+        while (j < nl) {
+            if (load8(hay + i + j) != load8(needle + j)) { break; }
+            j = j + 1;
+        }
+        if (j == nl) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The file `name` into hs_eb, at most 511 bytes, NUL-terminated.
+fn hs_slurp(name) {
+    store8(&hs_eb, 0);
+    var fd = syscall(7, name, strlen(name), AO_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var got = 0;
+    while (got < 511) {
+        var r = syscall(5, fd, &hs_eb + got, 511 - got, 0);    # read#5
+        if (r <= 0) { break; }
+        got = got + r;
+    }
+    syscall(6, fd, 0, 0, 0);
+    store8(&hs_eb + got, 0);
+    return got;
+}
+
+# `echo ` + n x's + ` &` in hs_lc (n <= 240). "/bin/echo " + 130 = 140 bytes is over spawn_path's 127-byte line
+# form; a literal that long would not fit lint's 120 columns.
+fn hs_long_bg(n) {
+    var i = 0;
+    while (i < 5) {
+        store8(&hs_lc + i, load8("echo " + i));
+        i = i + 1;
+    }
+    while (i < 5 + n) {
+        store8(&hs_lc + i, 120);                                 # 'x'
+        i = i + 1;
+    }
+    store8(&hs_lc + i, 32);
+    store8(&hs_lc + i + 1, 38);                                  # ' &'
+    store8(&hs_lc + i + 2, 0);
+    return &hs_lc;
+}
+
+# Spawn the blob in hs_av (`a2` = its length | SPAWN_F_* flags) with stdin <- ifd, stdout -> ofd and stderr ->
+# efd. -1 when an arm fails (the set is cleared, never left armed).
+fn hs_spawn_argv(a2, ifd, ofd, efd) {
+    if (syscall(62, 0, ifd, 0, 0) < 0) { return 0 - 1; }
+    if (syscall(62, 0x100 | 1, ofd, 0, 0) < 0) {
+        syscall(62, 0x200, 0, 0, 0);
+        return 0 - 1;
+    }
+    if (syscall(62, 0x100 | 2, efd, 0, 0) < 0) {
+        syscall(62, 0x200, 0, 0, 0);
+        return 0 - 1;
+    }
+    return syscall(43, &hs_av, a2, 0, 0);
+}
+
+# One check: `<path> -c <line>` must exit `want` with `msg` on its stderr. fill = 1 spawns it after hs_fill_fds
+# and without SPAWN_F_CLEANFD, so it inherits a table with one slot free.
+fn hs_c(path, tag, line, want, msg, fill) {
+    var n = hs_av_put(0, path);
+    n = hs_av_put(n, "-c");
+    n = hs_av_put(n, line);
+    var ifd = syscall(7, "/hs-c.in", 8, AO_RDONLY, 0);
+    var ofd = hs_open_out("/hs-c.out");
+    var efd = hs_open_out("/hs-c.err");
+    var held = 0;
+    var pid = 0 - 1;
+    if (n > 0 && ifd >= 0 && ofd >= 0 && efd >= 0) {
+        var a2 = n | 0x10000;                                    # SPAWN_F_ARGV
+        if (fill == 1) {
+            held = hs_fill_fds("/hs-c.in");
+        } else {
+            a2 = a2 | 0x20000;                                   # SPAWN_F_CLEANFD
+        }
+        pid = hs_spawn_argv(a2, ifd, ofd, efd);
+        hs_fill_close(held);
+    }
+    if (ifd >= 0) { syscall(6, ifd, 0, 0, 0); }
+    if (ofd >= 0) { syscall(6, ofd, 0, 0, 0); }
+    if (efd >= 0) { syscall(6, efd, 0, 0, 0); }
+    var code = hs_reap(pid);
+    hs_slurp("/hs-c.err");
+    var mok = hs_has(&hs_eb, msg);
+    hs_cn = hs_cn + 1;
+    hs_line("HS-C", path);
+    hs_out(" ");
+    hs_out(tag);
+    hs_kv("exit", code);
+    hs_kv("want", want);
+    hs_kv("msg", mok);
+    if (pid < 0) { hs_kv("spawn", pid); }
+    if (fill == 1) { hs_kv("held", held); }
+    hs_out(" :: ");
+    hs_out(line);
+    hs_out("\n");
+    if (code != want || mok == 0) {
+        hs_line("HS-CMSG", path);
+        hs_out(" ");
+        hs_out(tag);
+        hs_out(" ");
+        var i = 0;
+        while (i < 160) {
+            var c = load8(&hs_eb + i);
+            if (c == 0 || c == 10) { break; }
+            i = i + 1;
+        }
+        syscall(1, 1, &hs_eb, i, 0);
+        hs_out("\n");
+    }
+    return 0;
+}
+
+# The table. Controls first — each launcher's success path, and the statuses 2.0.0 and 2.0.1 already fixed —
+# then the usage errors that keep 1, then the launchers' refusals and launch failures that exited 1 through 2.0.1.
+fn hs_c_all(path) {
+    hs_cn = 0;
+    var t = hs_open_out("/hs-c.in");                             # the empty stdin
+    if (t >= 0) { syscall(6, t, 0, 0, 0); }
+    hs_c(path, "fg-ok", "echo hs", 0, "", 0);
+    hs_c(path, "bg-ok", "echo hs &", 0, "", 0);
+    hs_c(path, "pipe-ok", "echo hs | wc", 0, "", 0);
+    hs_c(path, "redir-ok", "echo hs > /hs-c.tmp", 0, "", 0);
+    hs_c(path, "fg-launch", "notelf", 127, "failed to launch program", 0);
+    hs_c(path, "fg-unsafe", "ls $HOME", 126, "unsafe path", 0);
+    hs_c(path, "pipe-missing", "nosuchprog | wc", 127, "no such command in pipeline stage 1", 0);
+    hs_c(path, "redir-audit", "echo hs > /.agnsh_audit.log", 126, "over the shell's audit log", 0);
+    hs_c(path, "pipe-empty1", "| wc", 1, "empty pipeline stage before", 0);
+    hs_c(path, "pipe-empty2", "echo hs |", 1, "empty pipeline stage after", 0);
+    hs_c(path, "redir-nocmd", "> /hs-c.tmp", 1, "empty command before", 0);
+    hs_c(path, "redir-nofile", "echo hs >", 1, "no file after", 0);
+    hs_c(path, "bg-toolong", hs_long_bg(130), 127, "command too long for a background job", 0);
+    hs_c(path, "bg-launch", "notelf &", 127, "failed to launch background job", 0);
+    hs_c(path, "pipe-nofds", "echo hs | wc", 127, "pipe() failed", 1);
+    hs_c(path, "pipe-launch1", "notelf | wc", 127, "failed to launch pipeline stage 1", 0);
+    hs_c(path, "pipe-launch2", "echo hs | notelf", 127, "failed to launch pipeline stage 2", 0);
+    hs_c(path, "redir-open", "echo hs > /hs-link", 127, "cannot open redirect target", 0);
+    hs_c(path, "redir-launch", "notelf > /hs-c.tmp", 127, "failed to launch program", 0);
+    hs_line("HS-CEND", path);
+    hs_kv("n", hs_cn);
+    hs_out("\n");
+    return 0;
+}
+
 fn main(): i64 {
     hs_out("HS-START\n");
     if (hs_us() < 0) {
@@ -214,6 +433,8 @@ fn main(): i64 {
         hs_measure("/bin/agnsh-b", round);
         round = round + 1;
     }
+    if (have_a == 1) { hs_c_all("/bin/agnsh-a"); }
+    hs_c_all("/bin/agnsh-b");
     hs_out("HS-DONE\n");
     return 0;
 }

@@ -14,6 +14,12 @@
 #   run    N queued `echo hs` lines through one agnsh, spawn to exit: the foreground launch-and-reap
 #          round trip (agnsh's parse, audit and history work included, identically for both shells).
 #   pipe   N queued `echo hs | wc` pipelines, the same way: both stages' reaps.
+# And what it checks, once per shell after the timings: `agnsh -c <line>`'s exit status against ADR-008 § 4
+# (126 refused, 127 nothing to run or not launched, 1 usage) for each agnos launcher -- plain, `&`, `|` and `>` --
+# spawned with SPAWN_F_ARGV so the line keeps its spaces. The typed session in scripts/agnos-qemu-test.py
+# cannot read a `-c` status, so this is the only place one is checked on agnos. A check also wants the
+# shell's own stderr message, so a right status for the wrong reason fails. Fixtures: /bin/notelf (not an
+# ELF: every launch of it fails with NOEXEC) and /hs-link (a symlink `>` must refuse to open).
 #
 # Usage:
 #   python3 scripts/agnos-qemu-bench.py                                  # this tree only
@@ -22,7 +28,8 @@
 # Env: AGNOS_ROOT (default ../agnos), GNOBOOT_ROOT (default ../gnoboot), AGNOS_QEMU_TCG=1 forces TCG.
 # ⚠ Timing under QEMU: compare a and b from the SAME boot only (they alternate for that reason), and
 # check /proc/loadavg first -- a loaded host reads slow. Exit 0 when every shell idled at <= 5 ticks
-# in state 6 and every batch exited 0; the timings are reported, not gated.
+# in state 6, every batch exited 0 and every `-c` check of b (this tree) held; the timings, and a
+# baseline's `-c` statuses, are reported, not gated.
 import os, re, shutil, statistics, subprocess, sys, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -96,6 +103,14 @@ for src, dst in seeded:
 if baseline:
     shutil.copyfile(baseline, os.path.join(SEED, "bin/agnsh-a"))
     os.chmod(os.path.join(SEED, "bin/agnsh-a"), 0o755)
+# The `-c` checks' fixtures: a program that passes agnsh's existence probe and fails every launch with
+# NOEXEC (agnos pipeline-smoke's /bin/notelf), and a symlink that `>` must refuse to open (AO_NOFOLLOW).
+with open(os.path.join(SEED, "bin/notelf"), "w") as f:
+    f.write("not an ELF: every launch of it must fail\n")
+os.chmod(os.path.join(SEED, "bin/notelf"), 0o755)
+with open(os.path.join(SEED, "hs-target.txt"), "w") as f:
+    f.write("HS-TARGET-ORIGINAL\n")
+os.symlink("/hs-target.txt", os.path.join(SEED, "hs-link"))
 for stale in (".agnsh_audit.log", ".agnsh_history"):
     try:
         os.unlink(os.path.join(SEED, stale))
@@ -179,11 +194,30 @@ if "HS-DONE" not in out:
     die("the driver did not finish (serial log: " + SER + ")")
 
 rows = {}                                   # (kind, shell) -> [dict]
+cchk = {}                                   # (shell, tag) -> (dict, the -c line)
+cmsg = {}                                   # (shell, tag) -> the first line of a failed check's stderr
+cend = {}                                   # shell -> the checks its driver says it ran
+ctags = []                                  # tags in the driver's order
 for line in out.split("\n"):
     m = re.match(r"\s*HS-(IDLE|RUN|PIPE) (\S+)((?: \w+=-?\d+)*)\s*$", line)
     if m:
         kv = {k: int(v) for k, v in re.findall(r"(\w+)=(-?\d+)", m.group(3))}
         rows.setdefault((m.group(1), m.group(2)), []).append(kv)
+        continue
+    m = re.match(r"\s*HS-C (\S+) (\S+)((?: \w+=-?\d+)*) :: (.*?)\s*$", line)
+    if m:
+        kv = {k: int(v) for k, v in re.findall(r"(\w+)=(-?\d+)", m.group(3))}
+        cchk[(m.group(1), m.group(2))] = (kv, m.group(4))
+        if m.group(2) not in ctags:
+            ctags.append(m.group(2))
+        continue
+    m = re.match(r"\s*HS-CMSG (\S+) (\S+) ?(.*?)\s*$", line)
+    if m:
+        cmsg[(m.group(1), m.group(2))] = m.group(3)
+        continue
+    m = re.match(r"\s*HS-CEND (\S+) n=(\d+)\s*$", line)
+    if m:
+        cend[m.group(1)] = int(m.group(2))
 
 ok = True
 shells = [s for s in ("/bin/agnsh-a", "/bin/agnsh-b") if ("IDLE", s) in rows]
@@ -206,6 +240,41 @@ for s in shells:
     ok = ok and held
     p(f"{s[5:]:<14}{idle.get('ticks', -1):>11}{idle.get('state', -1):>7}   {cols[0]:<38}{cols[1]}"
       + ("" if held else "   <- FAIL"))
+
+# `-c` exit statuses (ADR-008 § 4). b is gated; a baseline is shown beside it, so an a/b run against an
+# older build reads as before / after. A status whose stderr lacked the expected message shows as `127?`.
+B = "/bin/agnsh-b"
+have_ca = any(s == "/bin/agnsh-a" for s, _ in cchk)
 p("")
-p("agnos-qemu-bench: " + ("PASS (idle gate held; timings reported)" if ok else "FAIL"))
+p("agnsh -c exit status (ADR-008 § 4: 126 refused, 127 nothing to run or not launched, 1 usage)")
+p(f"  {'check':<14}" + (f"{'a':>6}" if have_ca else "") + f"{'b':>6}{'want':>6}   -c line")
+
+
+def cell(shell, tag):
+    got = cchk.get((shell, tag))
+    if got is None:
+        return "-"
+    return str(got[0].get("exit", "?")) + ("" if got[0].get("msg") == 1 else "?")
+
+
+c_held = 0
+for tag in ctags:
+    got = cchk.get((B, tag))
+    want = got[0].get("want") if got else None
+    line = (got or cchk.get(("/bin/agnsh-a", tag)))[1]
+    shown = line if len(line) <= 40 else line[:22] + "..." + line[-12:]
+    held = got is not None and got[0].get("exit") == want and got[0].get("msg") == 1
+    c_held += held
+    p(f"  {tag:<14}" + (f"{cell('/bin/agnsh-a', tag):>6}" if have_ca else "") + f"{cell(B, tag):>6}"
+      + f"{'-' if want is None else want:>6}   {shown}" + ("" if held else "   <- FAIL"))
+    if not held and (B, tag) in cmsg:
+        p(f"  {'':<14}   b said: {cmsg[(B, tag)]}")
+c_rows = sum(1 for s, _ in cchk if s == B)
+if c_rows == 0 or cend.get(B) != c_rows or c_held != len(ctags):
+    ok = False
+    if cend.get(B) != c_rows:
+        p(f"  b: the driver reported {cend.get(B)} checks and printed {c_rows}")
+p("")
+p("agnos-qemu-bench: " + (f"PASS (idle gate held; {c_held}/{len(ctags)} -c statuses held; timings reported)"
+                          if ok else "FAIL"))
 sys.exit(0 if ok else 1)

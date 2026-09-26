@@ -434,8 +434,11 @@ fn job_reap_poll(): i64 {
 }
 
 # Background launch: spawn `cmd` ("/bin/<word> [args..]") via spawn_path(#43, non-blocking)
-# and record the pid. Returns 0 on launch (the child runs concurrently), 1 on refusal/failure.
-# Mirrors sh_run_program's mode gate (HUMAN/STRICT confirm; AUTO/ASSIST run directly).
+# and record the pid. Returns 0 on launch (the child runs concurrently); EXIT_NOT_RUN (126) when
+# declined or the job table is full; EXIT_NOTHING_TO_RUN (127) when it cannot be launched — over the
+# 127-byte line form, or refused by spawn_path — or, in a branch that cannot fire, cannot be recorded
+# (ADR-008 § 4; every one but the decline was 1 through 2.0.1). Mirrors sh_run_program's mode gate
+# (HUMAN/STRICT confirm; AUTO/ASSIST run directly).
 fn sh_run_program_bg(cmd, mode): i64 {
     if (shell_launch_gate(str_cat3_cstr("run ", cmd, " &"), shell_line_blocked(cmd), mode) == 0) {
         audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
@@ -446,7 +449,7 @@ fn sh_run_program_bg(cmd, mode): i64 {
     if (len > 127) {
         eprintln_cstr("run: command too long for a background job (max 127)");
         audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # ⛔ CHECK CAPACITY BEFORE SPAWNING. The order used to be spawn-then-record,
     # and job_add's refusal was ignored: a 9th background request spawned a real
@@ -454,10 +457,12 @@ fn sh_run_program_bg(cmd, mode): i64 {
     # reaped, never shown by the job list, and never audited on completion,
     # because nothing knows it exists. Refusing before the spawn means the
     # failure costs nothing.
+    # ⚠ Unreachable from `-c`: each `agnsh -c` is a new process with an empty table, so only the
+    # interactive loop, which discards the status, can fill it.
     if (job_full() == 1) {
         eprintln_cstr("run: too many background jobs (max 8)");
         audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOT_RUN;
     }
     # Literal 43 = spawn_path (the literal-37 execwait precedent below): lib/ is the
     # gitignored, `cyrius update`-regenerated stdlib snapshot, so an enum added THERE is
@@ -471,7 +476,7 @@ fn sh_run_program_bg(cmd, mode): i64 {
     if (pid < 0) {
         eprintln_cstr("run: failed to launch background job");
         audit_exec_ctx(cmd, "error", pid);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # job_add can still refuse (table full). Audit what actually happened rather
     # than assuming success: an unrecorded child is exactly the case that must
@@ -481,7 +486,7 @@ fn sh_run_program_bg(cmd, mode): i64 {
     # enough to be worth an explicit branch rather than a silent discard.
     if (job_add(pid, cmd) < 0) {
         audit_exec_ctx(cmd, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     audit_exec_ctx(cmd, "launched", AUDIT_NO_EXIT);
     return 0;
@@ -737,7 +742,9 @@ fn _sh_pipe_spawn(cmd): i64 {
 }
 
 # Run a 2-stage pipeline. Returns cmd2's exit code (>=0); EXIT_NOT_RUN when a stage is refused or the
-# line is declined, EXIT_NOTHING_TO_RUN when a stage is not a program, 1 for an empty stage.
+# line is declined; EXIT_NOTHING_TO_RUN when a stage is not a program or the pipeline cannot be started —
+# pipe(), either arm, either launch, or stage 2's reap failing (ADR-008 § 4; each of those was 1 through
+# 2.0.1); 1 for an empty stage, a usage error.
 fn sh_run_pipeline(line, mode): i64 {
     var pi = _sh_find_pipe(line);
     if (pi < 0) { return 0 - 1; }                   # no ' | ' → not a pipeline (caller falls through)
@@ -804,7 +811,7 @@ fn sh_run_pipeline(line, mode): i64 {
     if (sh_pipe(&fds) != 0) {
         eprintln_cstr("run: pipe() failed");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     var rfd = load64(&fds);
     var wfd = load64(&fds + 8);
@@ -824,7 +831,7 @@ fn sh_run_pipeline(line, mode): i64 {
         sys_close(wfd);
         sys_close(rfd);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     var pid1 = _sh_pipe_spawn(cmd1);
     if (pid1 < 0) {
@@ -832,7 +839,7 @@ fn sh_run_pipeline(line, mode): i64 {
         sys_close(wfd);
         sys_close(rfd);
         audit_exec_ctx(line, "error", pid1);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # ⛔ CLOSE OUR WRITE END NOW, BEFORE STAGE 2 EXISTS. The kernel decides EOF by scanning for ANY
     # open write end anywhere on the box; stage 1 holds its own copy, so this drops only the SHELL's
@@ -851,7 +858,7 @@ fn sh_run_pipeline(line, mode): i64 {
         sys_close(rfd);
         sh_wait_child(pid1);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     var pid2 = _sh_pipe_spawn(cmd2);
     if (pid2 < 0) {
@@ -859,7 +866,7 @@ fn sh_run_pipeline(line, mode): i64 {
         sys_close(rfd);
         sh_wait_child(pid1);
         audit_exec_ctx(line, "error", pid2);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # ⛔ AND CLOSE IT AS SOON AS STAGE 2 EXISTS (2.0.1). The arm was applied into stage 2's own fd
     # table at the spawn, so this drops only the shell's claim. Until 2.0.1 it was held until after
@@ -875,8 +882,9 @@ fn sh_run_pipeline(line, mode): i64 {
     # did not claim the line, fall through" — so a reap failure was indistinguish-
     # able from "not a pipeline", and the line was silently retried down the
     # bareword and NL paths after both stages had already run. Collapse the
-    # failure to a handled 1; the audit line above carries the real code.
-    if (rc2 < 0) { return 1; }
+    # failure to a handled EXIT_NOTHING_TO_RUN (a 1 through 2.0.1); the audit line
+    # above carries the real code.
+    if (rc2 < 0) { return EXIT_NOTHING_TO_RUN; }
     return rc2;
 }
 
@@ -927,8 +935,10 @@ fn _sh_bin_probe(cmd): i64 {
     return 1;
 }
 
-# Run `cmd > file`. Returns cmd's exit code (>=0); EXIT_NOT_RUN when refused or declined,
-# EXIT_NOTHING_TO_RUN when cmd is not a program, 1 for a line with nothing before or after the '>'.
+# Run `cmd > file`. Returns cmd's exit code (>=0); EXIT_NOT_RUN when refused or declined;
+# EXIT_NOTHING_TO_RUN when cmd is not a program, or the target cannot be opened, the redirect armed or
+# cmd launched (ADR-008 § 4; those three were 1 through 2.0.1); 1 for a line with nothing before or
+# after the '>', a usage error.
 fn sh_run_redirect(line, mode): i64 {
     var ri = _sh_find_redirect(line);
     if (ri < 0) { return 0 - 1; }                    # no '>' → not a redirect (caller falls through)
@@ -1020,7 +1030,7 @@ fn sh_run_redirect(line, mode): i64 {
     if (fd < 0) {
         eprintln_cstr("run: cannot open redirect target");
         audit_exec_ctx(line, "error", fd);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     # Arm stdout -> FILE, then run cmd to completion (#37 applies the arm into the child's table).
     # The arm's return is checked: unarmed, the command would run with its output
@@ -1030,7 +1040,7 @@ fn sh_run_redirect(line, mode): i64 {
         eprintln_cstr("run: failed to arm redirect");
         sys_close(fd);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     var rc = sh_exec_line(cmd);
     sys_close(fd);
@@ -1040,11 +1050,11 @@ fn sh_run_redirect(line, mode): i64 {
     # sh_try_redirect_launch, where the dispatcher read it as "not a redirect"
     # and fell through — so a redirect that FAILED to launch was retried as a
     # bareword and then as natural language, with the target file already
-    # truncated. Collapse to a handled 1 — and say so: until 2.0.1 this path was the one
-    # launch failure that printed nothing at all.
+    # truncated. Collapse to a handled EXIT_NOTHING_TO_RUN (a 1 through 2.0.1) — and say so:
+    # until 2.0.1 this path was the one launch failure that printed nothing at all.
     if (rc < 0) {
         eprintln_cstr("run: failed to launch program");
-        return 1;
+        return EXIT_NOTHING_TO_RUN;
     }
     return rc;
 }

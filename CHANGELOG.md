@@ -6,6 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **agnos: the `&`, `|` and `>` launchers exit 126 / 127 where ADR-008 § 4 says, not 1**
+  (`src/run_agnos.cyr`). 2.0.0 put `run` and barewords on the § 4 table, and 2.0.1 its unsafe-path
+  refusals. These three launchers still exited 1 for their refusals and launch failures, so on agnos
+  `agnsh -c` could not tell a script "refused" or "could not start" from a usage error. Now:
+  - `sh_run_program_bg`: `too many background jobs` → **126**; `command too long for a background
+    job`, `failed to launch background job` and a `job_add` refusal → **127**.
+  - `sh_run_pipeline`: `pipe() failed`, either stage's redirect arm failing, either stage failing to
+    launch, and stage 2's reap failing → **127**.
+  - `sh_run_redirect`: `cannot open redirect target`, `failed to arm redirect` and a failed launch →
+    **127**.
+
+  Usage errors keep 1: an empty pipeline stage, nothing before `>`, no target after it. So does
+  running out of memory. The audit records are unchanged (`denied` / `error`). A script that read 1
+  from these now reads what ADR-008 has promised since 2.0.0. The roadmap's 2.0.x standing note on
+  them is gone.
+
+### Added
+
+- **`agnsh -c` exit-status checks on agnos** (`tests/agnos_hostsh.cyr`,
+  `scripts/agnos-qemu-bench.py`). `scripts/agnos-qemu-test.py` types into an interactive agnsh, which
+  drops every launcher's status, so until now nothing read an agnos `-c` status.
+  - **How it runs**: the bench's boot driver now spawns `/bin/agnsh-b -c <line>` itself, through
+    `spawn_path` #43 with `SPAWN_F_ARGV` (agnos ≥ 1.57.6). The line is then one argv entry, spaces
+    included. The driver reaps it with `WAIT_BLOCK` and compares the status with § 4.
+  - **What it checks**, 19 lines: each launcher's success path, the 126 / 127 statuses that 2.0.0 and
+    2.0.1 already fixed, the four usage errors that keep 1, and the seven conversions above that can
+    be forced.
+  - **The message too**: each check also wants the shell's own stderr message, so a right status for
+    the wrong reason fails.
+  - **Fixtures**: `/bin/notelf` (not an ELF, so every launch of it fails with NOEXEC) and `/hs-link`
+    (a symlink, which `>` refuses to open).
+  - **Forcing `pipe()` to fail**: the driver leaves agnsh exactly one free fd. It takes every free
+    slot in its own 32-slot table but one, then spawns without `SPAWN_F_CLEANFD`, so agnsh inherits a
+    copy of that table, and `pipe()` needs two slots.
+  - **Gating**: the bench gates this tree's shell on the checks. A baseline's (`AGNSH_BASELINE`) are
+    printed beside them, so an A/B run against an older build reads as before and after.
+  - `CLAUDE.md`, `CONTRIBUTING.md`, `README.md`, the architecture overview, the roadmap and
+    `check-coverage.sh`'s message now name the bench beside `agnos-qemu-test.py` as an agnos test.
+
+### Verified
+
+- All CI gates on the tree; unit 897/897, security 26/26, parse corpus 358/358, smoke 127/127; the
+  same suites on aarch64 under qemu-user; host-reachable coverage 228/228, with 20 agnos-only
+  functions reported, not gated.
+- **Host binaries unchanged**: x86_64 (plain, and DCE at 232,248 bytes) and aarch64 (678,528
+  bytes) are byte-identical to 2.0.1's, because every change is inside the agnos-only block. So no
+  host benchmark could move, and none was recorded. The agnos binary stays 366,592 bytes.
+- **`scripts/agnos-qemu-bench.py`** on agnos 1.57.9 under KVM, `-smp 1`:
+  - The unfixed tree fails: 12 of 19 checks hold, and the seven conversions all exit 1, each with its
+    expected message.
+  - The fixed tree passes **19/19**.
+  - An A/B from one boot (a = unfixed, b = fixed) shows 1 → 127 for all seven. Both idle at 0 ticks
+    (state 6). Round trips are unchanged: 70,026 / 70,132 µs per `echo hs` line and 134,251 /
+    134,309 per pipeline.
+- **`scripts/agnos-qemu-test.py`** on the same agnos build: **49/49 at `-smp 1` and 49/49 at
+  `-smp 4`**, with 64 complete audit records on disk, as at 2.0.1: the audit labels did not change.
+- **Converted by review**: six conversions cannot be forced without a kernel fault.
+  - `exec_redirect` fails only on an out-of-range fd, which rules out all three arm failures.
+  - Stage 2's reap fails only when it is not the shell's child.
+  - `job_add` refuses only after the capacity check it follows.
+  - Each `agnsh -c` is a new process with an empty job table, so `too many background jobs` is
+    reachable only in the interactive loop, which does not report the status.
+
 ## [2.0.1] - 2026-09-26 — pipelines let go of their pipe ends, and agnsh's waits block
 
 An unplanned release answering the two issues agnos 1.57.9 filed against 2.0.0

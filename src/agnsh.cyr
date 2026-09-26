@@ -650,7 +650,8 @@ fn main() {
                 return 1;
             }
             # Refused by the safety checks: 126, ADR-008 § 4 (it was 1 until 2.0.1 — one of the refusals
-            # 2.0.0's move to 126 / 127 missed; the roadmap's 2.0.x standing note lists the agnos rest).
+            # 2.0.0's move to 126 / 127 missed; the agnos `&`, `|` and `>` launchers were the rest, and
+            # followed after 2.0.1).
             if (is_safe_path(rpath) == 0) {
                 eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
