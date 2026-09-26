@@ -70,7 +70,7 @@ on stdout, exactly what `-c` printed before 2.0.0. It files the report too.
 | outcome | status |
 |---|---|
 | the program ran | its exit status (128 + N if signal N killed it) |
-| understood, not run: approval required, BLOCKED, declined at a prompt, refused arguments | 126 |
+| understood, not run: approval required, BLOCKED, declined at a prompt, refused arguments, a restricted session (root on a Linux host, 2.0.2) | 126 |
 | nothing to run: not understood, a question, no such program, it could not be launched | 127 |
 | usage error | 1 |
 

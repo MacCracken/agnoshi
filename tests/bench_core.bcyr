@@ -12,6 +12,7 @@ include "lib/hashmap.cyr"
 include "lib/tagged.cyr"
 include "lib/fnptr.cyr"
 include "lib/bench.cyr"
+include "lib/process.cyr"
 
 # Shared harness — pulled in for its agnsh.cyr / ui.cyr forward-ref stubs.
 # The benchmarks don't use check()/report(); DCE prunes them from the binary.
@@ -25,6 +26,7 @@ include "src/commands.cyr"
 include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/history.cyr"
+include "src/security.cyr"
 
 var _interp = 0;
 var _s_list = 0;
@@ -96,6 +98,10 @@ fn work_safe_path() {
     return 0;
 }
 
+# security/context_new — the start-up work security_init adds to every host agnsh since 2.0.2: three id
+# syscalls and the two sudo probes. The username is looked up on first use, so no /etc/passwd read.
+fn work_security_ctx() { SecurityContext_new(0); return 0; }
+
 var N = 10000;
 
 fn main() {
@@ -162,6 +168,10 @@ fn main() {
     var b11 = bench_new("history/add_at_cap");
     bench_run(b11, &work_history_add, N);
     vec_push(all, b11);
+
+    var b12 = bench_new("security/context_new");
+    bench_run(b12, &work_security_ctx, N);
+    vec_push(all, b12);
 
     bench_report_all(all);
     return 0;

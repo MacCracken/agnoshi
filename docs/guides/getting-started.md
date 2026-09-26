@@ -158,6 +158,10 @@ Since 2.0.0 ([ADR-008](../adr/008-nl-exec-contract.md)):
   refused.
 - A typed line the classifier calls BLOCKED (`rm -rf`, `dd`, …) asks `[y/N]`
   first, in every mode.
+- **As root on a Linux host, no natural-language line runs** (2.0.2). The shell
+  says so before its first prompt and reports each such line with `Restricted --
+  not executed`; `-c` exits 126. Your own shell lines still run. Run agnsh as an
+  ordinary user to have it execute natural language.
 
 Every launch is validated, mode-gated and audited. With `-c`, stdout is the
 program's and agnsh files its report in the report folder

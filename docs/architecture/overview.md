@@ -15,7 +15,7 @@ agnoshi
 │   ├── translate.cyr       -- 40+ per-intent translators
 │   ├── commands.cyr        -- command-line parsing, builtin detection
 │   ├── approval.cyr        -- risk assessment, human approval UI
-│   ├── security.cyr        -- SecurityContext, privilege escalation
+│   ├── security.cyr        -- who agnsh runs as: root on a Linux host is restricted (2.0.2)
 │   ├── session.cyr         -- shell session lifecycle
 │   ├── checkpoint.cyr      -- destructive op rollback
 │   ├── audit.cyr           -- JSON audit log + audit-record construction
@@ -35,23 +35,24 @@ agnoshi
 │
 │   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, report,
 │     mode, permissions, intent, commands, translate, interpreter, approval,
-│     audit, history, run_agnos, run_host, nlexec — plus agnsh.cyr itself.
-│     NOT COMPILED: security, session, checkpoint, completion, prompt, config,
-│     aliases, output, ui, main. Features they implement (approval prompts,
-│     undo, sudo, tab completion, git-branch prompt) do NOT exist at runtime.
+│     audit, history, run_agnos, run_host, security (2.0.2), nlexec — plus
+│     agnsh.cyr itself. security's sudo path is compiled in with no caller.
+│     NOT COMPILED: session, checkpoint, completion, prompt, config, aliases,
+│     output, ui, main. Features they implement (approval prompts, undo, tab
+│     completion, git-branch prompt) do NOT exist at runtime, and nor does sudo.
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 897 unit tests
+│   ├── test_core.tcyr      -- 939 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
 │   ├── test_parse_corpus.tcyr -- 358 classifier checks against docs/examples
 │   ├── agnos_hostsh.cyr    -- agnos-only driver for scripts/agnos-qemu-bench.py
-│   ├── bench_core.bcyr     -- 11 criterion-style benchmarks
+│   ├── bench_core.bcyr     -- 12 criterion-style benchmarks
 │   └── test.sh             -- run all test suites
 ├── scripts/
 │   ├── install.sh          -- install to /usr/local/bin
 │   ├── uninstall.sh        -- clean removal
-│   ├── smoke-test.sh       -- 127 end-to-end binary tests
+│   ├── smoke-test.sh       -- 137 end-to-end binary tests
 │   ├── agnos-qemu-test.py  -- agnsh on the agnos kernel in QEMU (manual)
 │   ├── agnos-qemu-bench.py -- how agnsh waits there, and its -c exit statuses (manual)
 │   └── bench-history.sh    -- benchmark CSV tracker
@@ -97,7 +98,9 @@ User Input (stdin)
     |                                                   / blocked / rejected_safety
     |
     |                                                 |
-    |                          SAFE / READ_ONLY only (2.0.0, ADR-008):
+    |                          SAFE / READ_ONLY only (2.0.0, ADR-008), and never
+    |                          in a restricted session — root on a Linux host
+    |                          (security.cyr, 2.0.2): reported, audited `denied`:
     |                                                 v
     |                                         [nl_launch] -> the same launcher
     |                                           as `run` (below); -c files the

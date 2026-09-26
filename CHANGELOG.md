@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-09-26 — no natural language runs as root, and agnos's launchers exit as ADR-008 says
+
+The roadmap's 2.0.2 slot — wiring `src/security.cyr` into the binary — together with 2.0.1's
+standing note on the agnos launchers' exit statuses, and a harness that can read an agnos `-c`
+status to prove them.
+
+### Security
+
+- **As root on a Linux host, no natural-language line runs** (`src/security.cyr`,
+  `src/nlexec.cyr`, `src/agnsh.cyr`; [ADR-008](docs/adr/008-nl-exec-contract.md) § 1, amended).
+  `security.cyr` joined the binary. `main` builds the session's context once (`security_init`, host
+  only), and a session running as root — uid or euid 0 — is *restricted*: `nl_verdict` reports every
+  natural-language line and runs none of them, whatever the tier and the mode.
+  - The report block says `Restricted -- not executed: agnsh is running as root`; `-c` exits **126**
+    with the reason `running as root (restricted)`; the interactive shell warns once, before its
+    first prompt.
+  - The audit trail keeps the parse-time `proposed` and adds an exec `denied`, as a declined prompt
+    does. `--dry-run` refuses nothing, so it adds no `denied`.
+  - The user's own shell lines — `run`, a program's name — still run, BLOCKED confirmation included.
+  - This is the "AI features disabled for safety" check that CHANGELOG 1.8.4 kept for Linux hosts.
+    `security.cyr`'s only includer was the legacy `src/main.cyr`, the build entry before 1.0.0, so
+    no 1.x or 2.0.x binary contained it, and nothing had ever read the flag it set.
+  - agnos is never restricted: it has no Unix uid model (`getuid` is 0 for everyone) and no sudo, so
+    it builds no context.
+  - ⚠ **Behaviour change for root.** `agnsh -c "<natural language>"` run as root on a Linux host —
+    in a container that runs as root by default, too — exits 126 instead of running the translation,
+    and `--dry-run` exits 126 for it. Run agnsh as an ordinary user to execute natural language.
+    Shell lines are unaffected.
+  - The escalation half — `execute_with_privileges` (`sudo -n`) and `verify_sudo_path` — is compiled
+    in with no caller until approval-gated exec (roadmap 2.0.x). Nothing in the binary invokes sudo.
+
+### Changed
+
+- `SecurityContext_new` no longer writes to stderr. Its root warning is now
+  `security_warn_restricted`, printed by the interactive shell only: as a constructor side effect it
+  would have reached every `agnsh -c` a root script made, where the refusal already names the reason.
+  The text says what is now true — `WARNING: agnsh is running as root -- natural-language lines are
+  reported, not run` — where it used to announce "AI features disabled" that nothing disabled.
+- The session's username is looked up on first use (`SecurityContext_username`), not at
+  construction. Nothing in the binary shows it, and reading and splitting `/etc/passwd` into a 64 KB
+  buffer measured ~15.3 µs per start on the dev host (a 1,767-byte file) for a field nobody read.
+  `is_safe_username` still guards the name when something asks.
+- On agnos, `security.cyr` compiles without its Unix calls. The agnos peer has no `sys_getgid` and
+  its `sys_stat` takes `(path, len, buf)`, so the gid is 0 and `verify_sudo_path` answers 0 there. The
+  compiler type-checks functions nothing calls, so the agnos build needed this even though agnos
+  never builds a context.
+
 ### Fixed
 
 - **agnos: the `&`, `|` and `>` launchers exit 126 / 127 where ADR-008 § 4 says, not 1**
@@ -23,6 +70,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   running out of memory. The audit records are unchanged (`denied` / `error`). A script that read 1
   from these now reads what ADR-008 has promised since 2.0.0. The roadmap's 2.0.x standing note on
   them is gone.
+- Docs that no longer matched the binary:
+  - `docs/guides/security-model.md` § 7b said a host child gets an empty environment. That has been
+    false since 2.0.0: it inherits agnsh's (ADR-008 § 3).
+  - `docs/examples/server-hardening.md`'s banner said `--strict` exits 0 (it exits 1, so a login shell
+    ends at once) and that strict mode prompts for nothing (it confirms every launch since 2.0.0).
+    The banner is re-verified against 2.0.2.
 
 ### Added
 
@@ -46,30 +99,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     printed beside them, so an A/B run against an older build reads as before and after.
   - `CLAUDE.md`, `CONTRIBUTING.md`, `README.md`, the architecture overview, the roadmap and
     `check-coverage.sh`'s message now name the bench beside `agnos-qemu-test.py` as an agnos test.
+- **Tests for restricted sessions and the security context.**
+  - 42 unit checks (939). `SecurityContext_new` is checked against the real ids, so the suite holds
+    when it runs as root too. The lazy username, `security_init` / `security_restricted` /
+    `security_warn_restricted`, and the restricted verdict, `-c`, `--dry-run` and interactive paths
+    with their audit records are covered. The escalation path is checked only for its refusals: no
+    test reaches sudo.
+  - 10 smoke checks (137). Nine run under `unshare -r`, which gives uid 0 in a user namespace without
+    any privilege; where the kernel forbids unprivileged namespaces, they are skipped and the run says
+    so. The smoke test now refuses to run as root, where its NL checks would fail for a reason that
+    is not a defect.
+  - Benchmark `security/context_new`, the start-up work the context adds.
 
 ### Verified
 
-- All CI gates on the tree; unit 897/897, security 26/26, parse corpus 358/358, smoke 127/127; the
-  same suites on aarch64 under qemu-user; host-reachable coverage 228/228, with 20 agnos-only
-  functions reported, not gated.
-- **Host binaries unchanged**: x86_64 (plain, and DCE at 232,248 bytes) and aarch64 (678,528
-  bytes) are byte-identical to 2.0.1's, because every change is inside the agnos-only block. So no
-  host benchmark could move, and none was recorded. The agnos binary stays 366,592 bytes.
-- **`scripts/agnos-qemu-bench.py`** on agnos 1.57.9 under KVM, `-smp 1`:
+- All CI gates on the tree; unit 939/939, security 26/26, parse corpus 358/358, smoke 137/137; the
+  same suites on aarch64 under qemu-user; host-reachable coverage 243/243, with 20 agnos-only
+  functions reported, not gated. `docs/agnsh.1` renders warning-free under `groff -man -ww`.
+- **The new checks catch what they claim.** With `nl_verdict`'s restricted check disabled, the 13
+  restricted-path unit checks fail and the other 926 pass. Against the 2.0.1 binary, the 8 root smoke
+  checks fail and the 2 controls pass (a root shell line still runs; an ordinary user is not warned).
+- **The launcher exit statuses**, measured with `scripts/agnos-qemu-bench.py` on agnos 1.57.9 under
+  KVM, `-smp 1`, before `security.cyr` joined:
   - The unfixed tree fails: 12 of 19 checks hold, and the seven conversions all exit 1, each with its
     expected message.
   - The fixed tree passes **19/19**.
   - An A/B from one boot (a = unfixed, b = fixed) shows 1 → 127 for all seven. Both idle at 0 ticks
     (state 6). Round trips are unchanged: 70,026 / 70,132 µs per `echo hs` line and 134,251 /
     134,309 per pipeline.
-- **`scripts/agnos-qemu-test.py`** on the same agnos build: **49/49 at `-smp 1` and 49/49 at
-  `-smp 4`**, with 64 complete audit records on disk, as at 2.0.1: the audit labels did not change.
-- **Converted by review**: six conversions cannot be forced without a kernel fault.
-  - `exec_redirect` fails only on an out-of-range fd, which rules out all three arm failures.
-  - Stage 2's reap fails only when it is not the shell's child.
-  - `job_add` refuses only after the capacity check it follows.
-  - Each `agnsh -c` is a new process with an empty job table, so `too many background jobs` is
-    reachable only in the interactive loop, which does not report the status.
+  - **Converted by review**: six conversions cannot be forced without a kernel fault.
+    `exec_redirect` fails only on an out-of-range fd, which rules out all three arm failures. Stage
+    2's reap fails only when it is not the shell's child. `job_add` refuses only after the capacity
+    check it follows. Each `agnsh -c` is a new process with an empty job table, so `too many
+    background jobs` is reachable only in the interactive loop, which does not report the status.
+- **The release tree on agnos 1.57.9** (QEMU, KVM), all three runs on the same agnos binary:
+  - `scripts/agnos-qemu-test.py`: **49/49 at `-smp 1` and 49/49 at `-smp 4`**, 64 complete audit
+    records on disk.
+  - `scripts/agnos-qemu-bench.py`: 19/19 `-c` statuses and the idle gate (0 ticks, state 6).
+  - An A/B from one boot against the 2.0.1 agnos build: both hold 19/19, and the round trips are
+    within noise — 72,887 → 72,767 µs per `echo hs` line, 139,240 → 140,431 per pipeline, with
+    overlapping ranges. Host load was 3.4 by then, above the quiet threshold, so only the comparison
+    means anything. agnos builds no security context: its only new work is `nl_verdict`'s check.
+
+### Performance
+
+- `security/context_new`: **3.25 µs** per start (median of five runs, 3.23–3.30) — three id
+  syscalls and the two sudo probes. The eager username lookup it no longer makes measured ~15.3 µs.
+- Binaries: x86_64 DCE 232,248 → 232,472 bytes (+224), aarch64 678,528 → 678,760 (+232), agnos
+  366,592 → 370,912 (+4,320). The agnos build keeps every function, and all of `security.cyr` is
+  unreachable there.
+- The other eleven benchmarks time code this release does not touch (`nl_verdict`'s one new check
+  has no benchmark). Five alternating runs of the 2.0.1 and 2.0.2 bench binaries at host load 0.62
+  put every median within −2.2 % to +1.7 % of 2.0.1's: noise, not a claim. One
+  `bench-history.csv` row (`4a8c847-dirty`).
 
 ## [2.0.1] - 2026-09-26 — pipelines let go of their pipe ends, and agnsh's waits block
 

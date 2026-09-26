@@ -60,6 +60,12 @@ Since 2.0.0 ([ADR-008](docs/adr/008-nl-exec-contract.md)):
   `|`, `>` or `&` line on the host is refused, never read as natural language.
 - **Natural language.** A SAFE or READ_ONLY translation runs through the same
   launcher as a typed `run` of the same command. Nothing else runs.
+- **Restricted sessions** (2.0.2). agnsh running as root on a Linux host (uid or
+  euid 0) reports every natural-language line and runs **none** of them, whatever
+  the tier or mode: `-c` exits 126 (`running as root (restricted)`), the
+  interactive shell warns before its first prompt, and the audit log records the
+  refusal as `denied`. The user's own shell lines still run. AGNOS, which has no
+  Unix uid model, is never restricted.
 - **Every launch** is an argument vector — never `/bin/sh -c` — after the line
   passes `is_safe_path` (no traversal, no shell metacharacter). `human` and
   `strict` confirm first, and **a typed line the classifier calls BLOCKED asks
@@ -102,11 +108,14 @@ affected.
 
 ### Privilege escalation — ⚠ NOT IN THE SHIPPED BINARY YET
 
-There is **no privilege-escalation path in the binary at all**: nothing invokes
-`sudo`. The `euid == 0` restricted-mode check, the sudo path/root-ownership
-re-verification (`verify_sudo_path`) and the environment whitelist
-(`build_safe_env`) exist in `src/security.cyr` / `src/sanitize.cyr` but have no
-caller in the include graph — `build_safe_env` has no caller anywhere.
+There is **no privilege-escalation path in the binary**: nothing invokes `sudo`.
+Since 2.0.2 `src/security.cyr` is compiled in, and one part of it is live: the
+root check that makes a Linux-host session running as root *restricted* (above).
+The escalation half — `execute_with_privileges` (`sudo -n`) and the sudo
+path/root-ownership re-verification at escalation time (`verify_sudo_path`) — is
+compiled in with **no caller** until approval-gated execution (roadmap 2.0.x). The
+environment whitelist (`build_safe_env`, `src/sanitize.cyr`) has no caller
+anywhere.
 
 ⚠ **Children inherit agnsh's environment on AGNOS, by design** — the opposite of
 a whitelist (`sh_build_env_blob`, `src/run_agnos.cyr`). Any `LD_PRELOAD`-style

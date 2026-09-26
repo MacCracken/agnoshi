@@ -29,6 +29,8 @@ cyrius build tests/test_core.tcyr build/test_core && ./build/test_core
 cyrius build tests/test_security.tcyr build/test_security && ./build/test_security
 cyrius build tests/test_parse_corpus.tcyr build/test_parse_corpus && ./build/test_parse_corpus
 cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core
+# Run it as an ordinary user: as root agnsh runs no natural-language line (2.0.2), so it refuses.
+# Its root checks use `unshare -r` and are skipped where unprivileged user namespaces are not allowed.
 sh scripts/smoke-test.sh build/agnsh
 
 # The same suites on aarch64, as CI runs them (needs qemu-user's qemu-aarch64).

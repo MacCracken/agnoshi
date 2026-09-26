@@ -11,7 +11,7 @@ ADRs document the why behind significant architectural decisions.
 - [ADR-005: Explicit String Type Discipline](005-string-type-discipline.md) — 2026-04-13
 - [ADR-006: Cyrius cstring/Str Dispatch Discipline (refines ADR-005)](006-cstr-str-dispatch-discipline.md) — 2026-05-11
 - [ADR-007: Input Classification — Shell First, Then Specific Before Broad (refines ADR-003)](007-input-classification.md) — 2026-09-23
-- [ADR-008: The NL Execution Contract (2.0.0)](008-nl-exec-contract.md) — 2026-09-23
+- [ADR-008: The NL Execution Contract (2.0.0)](008-nl-exec-contract.md) — 2026-09-23, amended 2026-09-26 (2.0.2: restricted sessions)
 
 ## Format
 

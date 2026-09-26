@@ -38,8 +38,8 @@ include "src/history.cyr"
 # reachable from the test suite.
 include "src/run_agnos.cyr"
 include "src/run_host.cyr"
-include "src/nlexec.cyr"
 include "src/security.cyr"
+include "src/nlexec.cyr"
 
 # Compose a SecurityContext (56 bytes — uid, gid, euid, username,
 # is_root, restricted, sudo_available) by hand for the security tests
@@ -146,6 +146,20 @@ fn _t_count_nl(path): i64 {
     var i = 0;
     while (i < n) {
         if (load8(&_t_cap_buf + i) == 10) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+# How many times `needle` occurs in the file at `path` (its first 8191 bytes).
+fn _t_count_in(path, needle): i64 {
+    var n = _t_slurp(path);
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 0; }
+    var c = 0;
+    var i = 0;
+    while (i + nlen <= n) {
+        if (_t_mem_find(&_t_cap_buf + i, nlen, needle) == 1) { c = c + 1; }
         i = i + 1;
     }
     return c;
@@ -1126,6 +1140,75 @@ fn main() {
     if (file_exists("/usr/bin/sudo") == 1) {
         check("security_check_sudo finds installed sudo", sudo_init == 1);
     }
+
+    # === 2.0.2: the context in the binary — security_init and restricted sessions ===
+    # SecurityContext_new reads the real ids. Asserted against the same syscalls rather than literals,
+    # so the suite holds when it runs as root (a container) as well as for an ordinary user.
+    var sc_uid = sys_getuid();
+    var sc_euid = sys_geteuid();
+    var sc_root = 0;
+    if (sc_uid == 0 || sc_euid == 0) { sc_root = 1; }
+    var sctx = SecurityContext_new(0);
+    check("SecurityContext_new reads the uid, gid and euid",
+      load64(sctx) == sc_uid && load64(sctx + 8) == sys_getgid() && load64(sctx + 16) == sc_euid);
+    check("SecurityContext_new: is_root follows the ids", SecurityContext_is_root(sctx) == sc_root);
+    check("SecurityContext_new: a host session is restricted exactly when it runs as root",
+      SecurityContext_is_restricted(sctx) == sc_root);
+    check("SecurityContext_new(1) is restricted whoever runs it",
+      SecurityContext_is_restricted(SecurityContext_new(1)) == 1);
+    check("SecurityContext_new: sudo_available is security_check_sudo's answer",
+      load64(sctx + 48) == security_check_sudo());
+    check("SecurityContext_new leaves the username for first use", load64(sctx + 24) == 0);
+    var sc_name = SecurityContext_username(sctx);
+    check("SecurityContext_username looks the name up on first use",
+      sc_name != 0 && str_eq(sc_name, security_get_username_safe(sc_uid)) == 1);
+    check("...and keeps it", SecurityContext_username(sctx) == sc_name);
+    check("SecurityContext_username returns a name already set",
+      str_eq(SecurityContext_username(_mock_sec(0, 0, 1)), str_from("alice")) == 1);
+    # security_get_username over the real /etc/passwd: every Linux host has root at uid 0.
+    if (file_exists("/etc/passwd") == 1) {
+        check("security_get_username(0) is root", str_eq(security_get_username(0), str_from("root")) == 1);
+    }
+    check("an unassigned uid is uid_<n>",
+      str_eq(security_get_username(3999999999), str_from("uid_3999999999")) == 1);
+    check("...and passes the username check as that",
+      str_eq(security_get_username_safe(3999999999), str_from("uid_3999999999")) == 1);
+    # security_init / security_restricted: the session context, and the one question nlexec asks it.
+    check("security_restricted is 0 before security_init", security_ctx == 0 && security_restricted() == 0);
+    var sc_init = security_init();
+    check("security_init builds the session context", sc_init != 0 && security_ctx == sc_init);
+    check("security_restricted answers for it",
+      security_restricted() == SecurityContext_is_restricted(sc_init));
+    security_ctx = _mock_sec(1, 1, 0);
+    check("a restricted context is restricted", security_restricted() == 1);
+    security_ctx = _mock_sec(0, 0, 1);
+    check("an unrestricted one is not", security_restricted() == 0);
+    security_ctx = 0;                           # the NL tests below expect an unrestricted suite
+    # security_warn_restricted: the interactive shell's start-up line, on stderr, for root only.
+    var sw_err = tmp_state_path("agnsh_selftest_secwarn");
+    _t_capture_begin(2, 10, sw_err);
+    var sw_root = security_warn_restricted(_mock_sec(1, 1, 0));
+    var sw_user = security_warn_restricted(_mock_sec(0, 0, 1));
+    var sw_flag = security_warn_restricted(_mock_sec(0, 1, 1));
+    var sw_none = security_warn_restricted(0);
+    _t_capture_end(2, 10);
+    check("a restricted root session warns", sw_root == 1);
+    check("...on stderr, saying natural-language lines are not run", _t_file_has(sw_err,
+        "WARNING: agnsh is running as root -- natural-language lines are reported, not run") == 1);
+    check("...once", _t_count_nl(sw_err) == 1);
+    check("an unrestricted session does not warn", sw_user == 0);
+    check("a restricted session that is not root does not claim root", sw_flag == 0);
+    check("no context, no warning", sw_none == 0);
+    xunlink(sw_err);
+    # execute_command / execute_with_privileges: the escalation path has no caller in the binary
+    # (roadmap 2.0.x — approval-gated exec). The suite pins its refusals and never reaches sudo.
+    var ec_args = vec_new();
+    check("execute_command returns the child's status",
+      execute_command("/bin/true", ec_args, 0) == 0 && execute_command("/bin/false", ec_args, 0) == 1);
+    check("execute_with_privileges refuses a restricted session (-1)",
+      execute_with_privileges(_mock_sec(0, 1, 1), "/bin/true", ec_args, 0) == 0 - 1);
+    check("...and a session without sudo (-2)",
+      execute_with_privileges(_mock_sec(0, 0, 0), "/bin/true", ec_args, 0) == 0 - 2);
 
     # AuditLogger_new / log — write a line to a temp file and read it
     # back. Verifies the file is created with append-mode and a
@@ -2826,6 +2909,58 @@ fn main() {
     _t_capture_end(1, 9);
     check("interactive NL does not run what needs approval", nli == 126
       && _t_file_has(capout, "Approval required -- not executed") == 1);
+    # 2.0.2 — a restricted session (agnsh as root on a Linux host) runs no natural language.
+    var rsaudit = tmp_state_path("agnsh_selftest_rsaudit");
+    xunlink(rsaudit);
+    audit_path_override_set(rsaudit);
+    security_ctx = _mock_sec(1, 1, 0);
+    nv = nl_verdict("show me all files", "AI-AUTO");
+    check("restricted: a line that would run does not", load64(nv + NV_RUN) == 0
+      && load64(nv + NV_STATUS) == 126 && streq(load64(nv + NV_REASON), NL_RESTRICTED) == 1);
+    check("...its block says why", str_contains_cstr(load64(nv + NV_BLOCK),
+        "Restricted -- not executed: agnsh is running as root") == 1);
+    check("...and the verdict marks the shell's own refusal", load64(nv + NV_DENIED) == 1);
+    check("nl_audit_denied records that refusal as denied",
+      nl_audit_denied(nv) == 1 && _t_count_in(rsaudit, "\"result\":\"denied\"") == 1);
+    nv = nl_verdict("copy a to b", "AI-AUTO");
+    check("restricted: a line that would not run anyway keeps its reason",
+      streq(load64(nv + NV_REASON), "approval required") == 1 && load64(nv + NV_DENIED) == 0
+      && str_contains_cstr(load64(nv + NV_BLOCK), "Restricted") == 0);
+    check("...and nl_audit_denied writes nothing for it", nl_audit_denied(nv) == 0
+      && _t_count_in(rsaudit, "\"result\":\"denied\"") == 1);
+    nv = nl_verdict("what is dns", "AI-AUTO");
+    check("...and its status", load64(nv + NV_STATUS) == 127 && streq(load64(nv + NV_REASON), "a question") == 1);
+    xunlink(rsaudit);
+    _t_capture_begin(1, 9, capout);
+    _t_capture_begin(2, 10, caperr);
+    nls = nl_run_c("show me all files", Mode.AI_AUTONOMOUS, 0, nldir);
+    _t_capture_end(2, 10);
+    _t_capture_end(1, 9);
+    check("restricted -c: 126, and nothing on stdout", nls == 126 && _t_slurp(capout) == 0);
+    check("...the notice names the reason and the report",
+      _t_file_has(caperr, "agnsh: not executed: running as root (restricted) -- report: ") == 1);
+    check("...the report records it",
+      _t_file_has(nllatest, "result: not executed: running as root (restricted)") == 1);
+    check("...and the audit trail has its proposed and its denied record",
+      _t_count_in(rsaudit, "\"result\":\"proposed\"") == 1 && _t_count_in(rsaudit, "\"result\":\"denied\"") == 1);
+    _t_capture_begin(1, 9, capout);
+    nls = nl_run_c("show me all files", Mode.AI_AUTONOMOUS, 1, nldir);
+    _t_capture_end(1, 9);
+    check("restricted --dry-run: 126, a line that would not run",
+      nls == 126 && _t_file_has(capout, "Restricted -- not executed") == 1);
+    check("...which refuses nothing, so it writes no denied record",
+      _t_count_in(rsaudit, "\"result\":\"denied\"") == 1);
+    _t_capture_begin(1, 9, capout);
+    nli = nl_run_interactive("show me all files", Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    check("restricted interactive: the block and 126, and ls never ran", nli == 126
+      && _t_file_has(capout, "Restricted -- not executed") == 1 && _t_file_has(capout, "VERSION") == 0);
+    check("...with its denied record", _t_count_in(rsaudit, "\"result\":\"denied\"") == 2);
+    security_ctx = 0;
+    nv = nl_verdict("show me all files", "AI-AUTO");
+    check("unrestricted again, the same line may run", load64(nv + NV_RUN) == 1 && load64(nv + NV_DENIED) == 0);
+    audit_path_override_set(nlaudit);
+    xunlink(rsaudit);
     # An unusable report folder changes nothing but the notice.
     var nlbad = tmp_state_path("agnsh_selftest_nlbad");
     _t_write_cstr(nlbad, "a file, not a folder\n");

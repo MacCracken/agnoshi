@@ -13,7 +13,7 @@
 > **Cite a slot by arc and title** — `roadmap 2.0.x — NL exec` — never by patch number alone:
 > titles survive a renumber. References name functions and files, not line numbers.
 >
-> Verified against `src/` and the sibling repos on **2026-09-26** (tree at 2.0.1, cyrius 6.6.6, agnos
+> Verified against `src/` and the sibling repos on **2026-09-26** (tree at 2.0.2, cyrius 6.6.6, agnos
 > 1.57.9). Every upstream gate was re-checked at the 6.6.6 pin (1.9.13), and the agnos rows again at
 > 2.0.1 — all seven had resolved upstream; § Gated says what each left for agnsh.
 
@@ -32,7 +32,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.2** — wire `security.cyr` | none |
+| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.3** — checkpointing | none |
 | **2.1.x** | Interactive shell — `cd`, an rc file, a line editor | **2.1.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | host: none; agnos: the socket adapter |
 
@@ -60,16 +60,6 @@ place before anything destructive runs. 2.0.0 shipped SAFE and READ_ONLY (see th
 slots below are ordered so that nothing destructive executes before checkpointing exists. Standing
 from 2.0.0: `proc_set_timeout_ms` (host only) could give NL exec a command timeout — unscheduled.
 
-### 2.0.2 — Wire `security.cyr`
-
-- Absent from `src/agnsh.cyr`'s include graph; its only includer is the dead legacy `src/main.cyr`.
-  Include it and construct `SecurityContext_new(0)` in `main()` after `alloc_init()` / `args_init()`.
-- It carries what 2.0.4 needs for ADMIN: `execute_with_privileges` (prepends `sudo -n`) and
-  `verify_sudo_path` (re-verifies at escalation; TOCTOU window documented in ADR-006).
-- **Host-only user-visible value**: the `uid == 0 → restricted` warning is compiled out on agnos
-  (single-owner; uid 0 is normal there, CHANGELOG 1.8.4).
-- Watch the capacity and coverage gates: ~9 functions and a 64 KB `/etc/passwd` buffer.
-
 ### 2.0.3 — Checkpointing, re-implemented against the current stdlib
 
 `src/checkpoint.cyr` calls seven `fs_*` helpers the stdlib no longer has — absent from the 6.5.36
@@ -94,8 +84,11 @@ Two of the equivalents take a `Str`: honour ADR-006 at that boundary. Checkpoint
   It reads fd 0 directly, so `-c` (no stdin) declines by default, as today. ⚠ Its prompt writes to
   **stdout**: move it to stderr as `verb_confirm` did in 2.0.0 — `-c`'s stdout is the program's (ADR-008).
 - Checkpoint before every REMOVE / MOVE exec (2.0.3).
-- ADMIN routes through `execute_with_privileges` (2.0.2). BLOCKED stays blocked — `WARNING: BLOCKED`
-  is final, with no approval path.
+- ADMIN routes through `execute_with_privileges` (`security.cyr`, compiled in since 2.0.2 with no
+  caller). ⚠ It launches through `execute_command` → lib `exec_vec`: an empty environment and a second
+  host launcher, which ADR-008 § 3 rules out — route it through `host_exec` first. A restricted session
+  (root on a Linux host) runs no NL line at all since 2.0.2, and `execute_with_privileges` refuses one
+  (-1). BLOCKED stays blocked — `WARNING: BLOCKED` is final, with no approval path.
 - Audit labels: `approved` + outcome, `denied`, `timed_out`.
 - Settle the power-verb ruling first (§ Open decisions) so every confirmation follows one policy.
 - ADR the approval-vs-execute split. `docs/examples/server-hardening.md`'s do-not-deploy banner comes
@@ -266,6 +259,9 @@ Not scheduled. Open on demand.
   early return that this list used to carry shipped in agnos 1.57.6.)
 - Docker CLI syntax → stiva; SSH key management; VPN / proxy intents; systemd timers, sockets and
   dependencies; log rotation; a diff preview before destructive file operations.
+- **A `--restricted` flag**: restrict an ordinary user's session the way root's is restricted since
+  2.0.2 (`SecurityContext_new(1)` does; nothing calls it that way). `docs/examples/server-hardening.md`
+  describes it as a login-shell wrapper for untrusted users.
 - Rich prompt themes; AI-assisted, project-aware completion (after 2.1.4 and 2.2.x).
 
 ## 3.0.0 — what would force the next major

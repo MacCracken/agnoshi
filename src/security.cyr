@@ -1,23 +1,44 @@
+# security.cyr — who agnsh runs as, and the privilege-escalation path.
+#
+# ⭐ 2.0.2: IN THE BINARY. Until 2.0.2 its only includer was the legacy src/main.cyr — the build
+# entry before 1.0.0 — so no 1.x or 2.0.x binary made the root check below, and nothing had ever
+# honoured the "AI features disabled" it announced. One thing reads the context now: a RESTRICTED
+# session — agnsh running as root on a Linux host — reports natural-language lines and runs none of
+# them (nl_verdict, ADR-008 § 1). The user's own shell lines still run. The host builds the context
+# once, in main (security_init); agnos builds none (see SecurityContext_new), so it is never
+# restricted.
+# ⚠ The escalation half — execute_with_privileges (`sudo -n`) and verify_sudo_path's re-check at
+# escalation time — has no caller until approval-gated exec (roadmap 2.0.x): nothing in the binary
+# invokes sudo. When it gets one: execute_command launches through lib exec_vec with an EMPTY
+# environment, a second host launcher, which ADR-008 § 3 rules out (host_exec is the one).
 struct SecurityContext {
     uid;
     gid;
     euid;
-    username;
+    username;           # resolved on first use (SecurityContext_username); 0 until then
     is_root;
     restricted;
     sudo_available;
 }
+
+# The session's context, built once by security_init; 0 until then, which reads as unrestricted.
+var security_ctx = 0;
+
 fn SecurityContext_new(restricted) {
     # stdlib wrappers, not raw syscall(SYS_GETUID) — the wrappers carry the
     # correct arity (silencing the 6.3.x syscall-arity lint) and route to the
     # agnos numbers (where geteuid folds onto getuid) under --agnos.
     var uid = sys_getuid();
+    #ifdef CYRIUS_TARGET_AGNOS
+    var gid = 0;                    # agnos has no gids: its peer defines no sys_getgid (ADR-006)
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var gid = sys_getgid();
+    #endif
     var euid = sys_geteuid();
     var is_root = 0;
     if (uid == 0) { is_root = 1; }
     if (euid == 0) { is_root = 1; }
-    var username = security_get_username_safe(uid);
     var sudo_available = security_check_sudo();
     var actual_restricted = restricted;
     # Root-restrict is a LINUX-HOST-ONLY heuristic. On a dev host, running the AI shell as root is a
@@ -25,18 +46,21 @@ fn SecurityContext_new(restricted) {
     # On AGNOS it is WRONG and self-defeating: agnos is single-owner, has NO Unix uid model (getuid
     # is hardcoded 0), and gates privilege PER-ACTION via capabilities + agnsh's approval/permission
     # layer — so uid 0 is the normal state, not an escalation. Applying it would permanently disable
-    # AI on the AI-native OS. So it is compiled out under CYRIUS_TARGET_AGNOS.
+    # AI on the AI-native OS. So it is compiled out under CYRIUS_TARGET_AGNOS — and since 2.0.2 agnos
+    # builds no context at all (security_init is host-only; its peer has no sys_getgid either).
+    # ⚠ 2.0.2: the warning moved to security_warn_restricted, which the interactive shell prints. A
+    # constructor that wrote to stderr put the line on every run, including each `agnsh -c` of a
+    # script running as root, where the refusal already names the reason.
     #ifndef CYRIUS_TARGET_AGNOS
-    if (is_root == 1) {
-        actual_restricted = 1;
-        sys_write(2, "WARNING: Shell running as root - AI features disabled for safety\n", 65);
-    }
+    if (is_root == 1) { actual_restricted = 1; }
     #endif
     var p = alloc(56);
     store64(p, uid);
     store64(p + 8, gid);
     store64(p + 16, euid);
-    store64(p + 24, username);
+    # The username is looked up on first use: nothing in the binary shows it yet, so a session does
+    # not read and split /etc/passwd (a 64 KB buffer) on every start for a field nobody reads.
+    store64(p + 24, 0);
     store64(p + 32, is_root);
     store64(p + 40, actual_restricted);
     store64(p + 48, sudo_available);
@@ -95,6 +119,12 @@ fn security_get_username_safe(uid) {
 # cycc; cycc_aarch64 sets `CYRIUS_ARCH_AARCH64`) selects the right one.
 # (Cyrius 6.0 renamed cc5 → cycc, cc5_aarch64 → cycc_aarch64.)
 fn verify_sudo_path(sudo_path) {
+    # agnos has no sudo and no Unix file ownership, and its peer's sys_stat takes (path, len, buf)
+    # into an AgnosStat — nothing there can verify, so nothing does (the module compiles on agnos
+    # only because agnsh includes it; agnos never builds a context).
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
     if (file_exists(sudo_path) == 0) { return 0; }
     # `struct stat` is 144 bytes on x86-64 Linux (st_uid at offset 28). At
     # function scope `var X[N]` is N BYTES (cyrius 6.3.13+ put locals on the
@@ -102,6 +132,7 @@ fn verify_sudo_path(sudo_path) {
     # (=144 B) when locals were heap-slotted, but now [18] is an 18-byte stack
     # buffer and sys_stat's 144-byte write smashes the return address. Matches
     # the stdlib convention (dynlib.cyr `var statbuf[144]`).
+    #ifndef CYRIUS_TARGET_AGNOS
     var stat_buf[144];
     var stat_result = sys_stat(sudo_path, &stat_buf);
     if (stat_result != 0) { return 0; }
@@ -113,6 +144,7 @@ fn verify_sudo_path(sudo_path) {
     #endif
     if (st_uid != 0) { return 0; }
     return 1;
+    #endif
 }
 fn security_check_sudo() {
     if (file_exists("/usr/bin/sudo") == 1) { return 1; }
@@ -125,13 +157,40 @@ fn SecurityContext_is_root(self) {
 fn SecurityContext_is_restricted(self) {
     return load64(self + 40);
 }
+# The session user's name, from /etc/passwd: looked up on first use, then kept.
 fn SecurityContext_username(self) {
+    if (load64(self + 24) == 0) {
+        store64(self + 24, security_get_username_safe(load64(self)));
+    }
     return load64(self + 24);
 }
 fn SecurityContext_can_escalate(self) {
     if (load64(self + 40) == 1) { return 0; }
     if (load64(self + 48) == 0) { return 0; }
     if (load64(self + 32) == 1) { return 0; }
+    return 1;
+}
+
+# Build the session's context — main calls this once, on the host only. Returns it.
+fn security_init() {
+    security_ctx = SecurityContext_new(0);
+    return security_ctx;
+}
+
+# Is this session restricted? 1 only for agnsh running as root on a Linux host; 0 before
+# security_init, so a caller that never built a context (agnos, the test binaries) is unrestricted.
+fn security_restricted() {
+    if (security_ctx == 0) { return 0; }
+    return SecurityContext_is_restricted(security_ctx);
+}
+
+# The line a restricted session starts with (the interactive shell; `-c` names the reason when it
+# refuses a line instead). Returns 1 when it printed.
+fn security_warn_restricted(ctx) {
+    if (ctx == 0) { return 0; }
+    if (SecurityContext_is_restricted(ctx) == 0) { return 0; }
+    if (SecurityContext_is_root(ctx) == 0) { return 0; }
+    eprintln_cstr("WARNING: agnsh is running as root -- natural-language lines are reported, not run");
     return 1;
 }
 fn execute_command(cmd, args, argc) {

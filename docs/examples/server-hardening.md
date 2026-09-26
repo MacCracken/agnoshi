@@ -3,15 +3,15 @@
 > # ⛔ DO NOT DEPLOY THIS AS WRITTEN — IT DESCRIBES A SHELL THAT DOES NOT EXIST YET
 >
 > This guide was written against an intended design, not the shipped binary.
-> Verified against **1.9.9**, the following load-bearing claims below are FALSE:
+> Verified against **2.0.2**, the following load-bearing claims below are FALSE:
 >
 > | The guide says | Reality |
 > |---|---|
-> | `agnsh --strict` as a login shell | **`--strict` is not a flag.** It prints usage and exits **0** — silently ignored. The flag is `--mode strict`. |
-> | strict mode = every command needs approval | **Nothing prompts and nothing is blocked.** A HIGH-risk command prints `Approval required` and continues. `ApprovalManager` is not in the binary. |
+> | `agnsh --strict` as a login shell | **`--strict` is not a flag.** It prints usage and exits **1**, so as a login shell the session ends at once. The flag is `--mode strict`. |
+> | strict mode = every command needs approval | **Every launch confirms** (`[y/N]`, since 2.0.0), but approval-gated execution does not exist: a HIGH-risk natural-language line reports `Approval required -- not executed` and cannot be approved, and a typed shell line skips the tiers (a BLOCKED one still confirms). `ApprovalManager` is not in the binary. |
 > | `/etc/agnoshi/agnsh.conf` configures it | **No config file is read at all** — no path, no parser, nothing in `src/`. |
 > | Checkpoint makes destructive ops reversible | **No checkpointing, no `undo`.** `checkpoint.cyr` is not compiled. |
-> | Restricted mode blocks privilege escalation | **There is no privilege escalation to block** — nothing invokes `sudo`. |
+> | Restricted mode blocks privilege escalation | **There is no privilege escalation to block** — nothing invokes `sudo` — and **no `--restricted` flag** (it prints usage and exits 1). The one restriction that exists is automatic (2.0.2): agnsh running as root runs no natural-language line. |
 >
 > **What IS true and useful today**: permission classification with basename
 > extraction, argument/path sanitization, and a complete audit trail — every
@@ -151,9 +151,14 @@ sudo chmod 755 /usr/local/bin/agnsh-restricted
 sudo chsh -s /usr/local/bin/agnsh-restricted contractor
 ```
 
-⚠ Restricted mode is **not implemented** — `SecurityContext` lives in
-`src/security.cyr`, which is not in the binary's include graph. Intended:
-- Forces `restricted = 1` in `SecurityContext`
+⚠ `--restricted` is **not a flag**: the wrapper above prints usage and exits 1,
+which as a login shell ends the session at once. What exists since 2.0.2 is
+automatic and narrower: agnsh running as root on a Linux host is restricted — it
+reports natural-language lines and runs none of them, while the user's own shell
+lines still run (`src/security.cyr`, ADR-008 § 1). Nothing restricts an ordinary
+user, and there is no escalation to block. Intended:
+- A flag that forces `restricted = 1` in `SecurityContext`
+  (`SecurityContext_new(1)` does; nothing calls it that way yet)
 - Blocks all sudo/privilege escalation
 - Runs same classification, but ADMIN-level ops always deny
 

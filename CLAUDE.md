@@ -97,7 +97,7 @@ agnoshi (AI natural language shell, Cyrius)
 - **Single source of truth for version** — `VERSION` file; `cyrius.cyml` pulls via `${file:VERSION}`.
 - **Pin the toolchain in `cyrius.cyml`** — CI reads `cyrius = "..."` from the manifest.
 - **`./lib/` is gitignored** — `cyrius deps` repopulates from the pinned snapshot; never check stdlib stubs into the tree.
-- **Security first** — every command is classified, sanitized and audited. ⚠ Note what does NOT exist yet: there is no sandbox, no privilege escalation, and no interactive approval prompt (`security.cyr` and `session.cyr` are not in the binary's include graph; `approval.cyr` is, but only for its risk classifier — `ApprovalManager_request`, the prompt, has no caller). Do not describe those as shipped.
+- **Security first** — every command is classified, sanitized and audited. ⚠ Note what does NOT exist yet: there is no sandbox, no privilege escalation, and no interactive approval prompt (`session.cyr` is not in the binary's include graph; `security.cyr` is since 2.0.2, but only its root restriction runs — `execute_with_privileges`, the `sudo` path, has no caller; `approval.cyr` is, but only for its risk classifier — `ApprovalManager_request`, the prompt, has no caller). Do not describe those as shipped.
 
 ## DO NOT
 

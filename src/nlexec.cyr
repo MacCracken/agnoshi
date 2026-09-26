@@ -15,8 +15,12 @@ enum NlVerdict {
     NV_RUN = 24;            # 1 when the translation may run (ADR-008 § 1)
     NV_REASON = 32;         # cstring: why it may not, when NV_RUN is 0
     NV_STATUS = 40;         # the -c status when it does not run: EXIT_NOT_RUN / EXIT_NOTHING_TO_RUN
-    NV_BYTES = 48;
+    NV_DENIED = 48;         # 1 when the shell refused a line that would have run (a restricted session)
+    NV_BYTES = 56;
 }
+
+# Why a restricted session runs nothing (security.cyr) — the reason nl_verdict gives.
+var NL_RESTRICTED = "running as root (restricted)";
 
 # Is this the `cmd1 | cmd2` form of PIPELINE (Interpreter_parse's own marker, " | ") rather than the
 # natural-language `… then …` form?
@@ -41,6 +45,7 @@ fn nl_verdict(input_cstr, mode_label) {
     store64(v + NV_RUN, 0);
     store64(v + NV_REASON, 0);
     store64(v + NV_STATUS, 0);
+    store64(v + NV_DENIED, 0);
     var sb = str_builder_new();
     var interp = Interpreter_new();
     var intent = Interpreter_parse(interp, str_from(input_cstr));
@@ -137,9 +142,31 @@ fn nl_verdict(input_cstr, mode_label) {
     if (streq(desc, "Unknown intent") == 1) {
         return _nv_not_run(v, sb, "arguments refused by the safety checks", EXIT_NOT_RUN);
     }
+    # ⭐ 2.0.2 — A RESTRICTED SESSION RUNS NO NATURAL LANGUAGE. agnsh running as root on a Linux host
+    # (security.cyr) shows what it understood and runs none of it (ADR-008 § 1): the root check that
+    # CHANGELOG 1.8.4 kept for Linux hosts, honoured for the first time. Checked last, so a line that
+    # would not have run anyway keeps its own reason and status. Shell lines never reach this parser.
+    if (security_restricted() == 1) {
+        str_builder_add_cstr(sb, "  Restricted -- not executed: agnsh is running as root\n");
+        store64(v + NV_DENIED, 1);
+        return _nv_not_run(v, sb, NL_RESTRICTED, EXIT_NOT_RUN);
+    }
     store64(v + NV_BLOCK, str_builder_build(sb));
     store64(v + NV_RUN, 1);
     return v;
+}
+
+# The exec record for a line the shell refused itself (NV_DENIED): `denied`, as a declined prompt
+# writes. The parse-time record says `proposed` — the tier allows it — so without this one the trail
+# would read as a line that was allowed and then never mentioned again. Returns 1 when it wrote one.
+# Not under --dry-run, which refuses nothing: it runs nothing by request.
+fn nl_audit_denied(v) {
+    if (load64(v + NV_DENIED) == 0) { return 0; }
+    var tr = load64(v + NV_TRANSLATION);
+    var line = nl_command_line(tr);
+    if (line == 0) { line = load64(tr); }
+    audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
+    return 1;
 }
 
 # The report filed for one `-c` run: input, mode and time, the report block, and the outcome (Str).
@@ -229,7 +256,10 @@ fn nl_launch(v, mode) {
 fn nl_run_interactive(input_cstr, mode) {
     var v = nl_verdict(input_cstr, mode_display(mode));
     str_print(load64(v + NV_BLOCK));
-    if (load64(v + NV_RUN) == 0) { return load64(v + NV_STATUS); }
+    if (load64(v + NV_RUN) == 0) {
+        nl_audit_denied(v);
+        return load64(v + NV_STATUS);
+    }
     var code = nl_launch(v, mode);
     if (code == LAUNCH_DECLINED) { return EXIT_NOT_RUN; }
     if (code < 0) { return EXIT_NOTHING_TO_RUN; }
@@ -268,6 +298,7 @@ fn nl_run_c(input_cstr, mode, dry_run, report_dir) {
     } else {
         notice = load64(v + NV_REASON);
         outcome = nl_outcome(0, notice);
+        nl_audit_denied(v);
     }
     var why = report_dir_prepare(report_dir);
     var path = 0;

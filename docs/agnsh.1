@@ -1,4 +1,4 @@
-.TH AGNSH 1 "September 2026" "agnoshi 2.0.1" "User Commands"
+.TH AGNSH 1 "September 2026" "agnoshi 2.0.2" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -77,6 +77,13 @@ translations report
 .I "Approval required"
 and do not run in this release; BLOCKED ones never run.
 .TP
+.B Restricted sessions
+On a Linux host, agnsh running as root (uid or euid 0) is restricted: it
+reports every natural-language line and runs none of them, says so before
+the first interactive prompt, and exits 126 for such a line under
+.BR -c .
+Shell lines still run. AGNOS is never restricted.
+.TP
 .B BLOCKED shell lines
 A typed line the classifier calls BLOCKED (rm -rf, dd, mkfs, chmod, chown,
 shred) asks for confirmation in every mode; with no answer it is declined.
@@ -105,7 +112,8 @@ killed it \(em on AGNOS too, since 2.0.1).
 .TP
 .B 126
 Understood but not run: approval required, BLOCKED, declined at a prompt,
-or arguments refused by the safety checks.
+arguments refused by the safety checks, or a restricted session (root on
+a Linux host).
 .TP
 .B 127
 Nothing to run: not understood, a question, no such program, or it could

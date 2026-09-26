@@ -141,18 +141,38 @@ no longer exist, so its wire-up is a re-implementation (roadmap 2.0.x — checkp
 
 ### 7. Privilege Escalation — ⚠ NOT IN THE SHIPPED BINARY
 
-**agnsh never escalates privileges.** Nothing in the binary invokes `sudo`. The
-`SecurityContext` euid check and the sudo path/root-ownership re-verification
-live in `src/security.cyr`, which is not in the include graph.
+**agnsh never escalates privileges.** Nothing in the binary invokes `sudo`.
+Since 2.0.2 `src/security.cyr` is compiled in, but its escalation half —
+`execute_with_privileges` (`sudo -n`) and the sudo path/root-ownership
+re-verification at escalation time (`verify_sudo_path`) — has no caller until
+approval-gated execution (roadmap 2.0.x). When it gets one: `execute_command`
+launches through lib `exec_vec` with an empty environment, a second host
+launcher, which ADR-008 § 3 rules out.
+
+### 7a. Restricted sessions — root on a Linux host — ✅ Active since 2.0.2
+
+The other half of `src/security.cyr` is live. agnsh running as root on a Linux
+host (uid or euid 0) is **restricted**: it reports every natural-language line
+and runs none of them, whatever the tier and the mode ([ADR-008](../adr/008-nl-exec-contract.md)
+§ 1, amended in 2.0.2). An AI-proposed command never runs as root there. The
+user's own shell lines still run, with the BLOCKED confirmation as before. `-c`
+exits 126 (`running as root (restricted)`), the interactive shell warns once
+before its first prompt, and the audit log records the refusal — the parse-time
+`proposed`, then an exec `denied`.
+
+AGNOS is never restricted: it has no Unix uid model (`getuid` is 0 for everyone)
+and gates privilege per action, so the check is compiled out there (CHANGELOG
+1.8.4) and agnos builds no context at all.
 
 ### 7b. Child environment — what actually happens
 
 Neither target uses the documented whitelist (`build_safe_env` exists in
 `src/sanitize.cyr` and has **no caller anywhere**). The two real behaviours:
 
-- **Host** (`run /abs/path`): the child gets an **empty environment** —
-  `lib/process.cyr`'s `_exec3` passes a NULL `envp`. Stronger than a whitelist
-  for `LD_PRELOAD` purposes, since nothing is inherited at all.
+- **Host** (`run`, barewords and NL execution, all through `host_exec`): the
+  child **inherits agnsh's environment**, since 2.0.0 (ADR-008 § 3). Until then
+  the host `run` passed an empty one (`lib/process.cyr`'s `_exec3`, a NULL
+  `envp`); this section still said so until 2.0.2.
 - **AGNOS**: the child **inherits agnsh's entire environment**, deliberately —
   `sh_build_env_blob` walks agnsh's own envp and passes it on, clamped to
   ≤1024 B / ≤16 entries. This is the 1.7.0 env-inheritance feature. Today that
@@ -170,7 +190,9 @@ Neither target uses the documented whitelist (`build_safe_env` exists in
   reason) but its only caller is `src/prompt.cyr`, which is **not compiled**.
   The live prompt renders no branch at all.
 - ⚠ Usernames from `/etc/passwd` — `is_safe_username`'s only caller is
-  `src/security.cyr`, **not compiled**.
+  `security_get_username_safe` (`src/security.cyr`, compiled since 2.0.2). It
+  runs only when `SecurityContext_username` is first called, and nothing in the
+  binary calls that yet: agnsh never reads `/etc/passwd`.
 
 ## File Permissions
 

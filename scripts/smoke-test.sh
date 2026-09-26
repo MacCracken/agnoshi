@@ -17,6 +17,14 @@ case "$BIN" in
     *) BIN="$(pwd)/$BIN" ;;
 esac
 
+# 2.0.2: as root on a Linux host agnsh reports natural-language lines and runs none of them, so the
+# NL checks below would fail for a reason that is not a defect. The root behaviour has its own
+# checks (a user namespace, below).
+if [ "$(id -u)" = 0 ]; then
+    echo "smoke-test: run it as an ordinary user -- as root, agnsh runs no natural-language line (2.0.2)"
+    exit 1
+fi
+
 PASS=0
 FAIL=0
 FAILED_TESTS=""
@@ -215,6 +223,41 @@ ec=0
 check "a user-write NL line does not run yet (126)" "^126$" "$ec"
 check "...and the audit says it needs approval" '"input":"copy a to b","action":"cp","approved":0,"result":"needs_approval"' "$(cat "$NL_DIR/.agnsh_audit.log" 2>/dev/null)"
 rm -rf "$NL_DIR"
+
+# Restricted sessions (2.0.2, src/security.cyr): agnsh running as root on a Linux host reports
+# natural-language lines and runs none of them (126); the user's own shell lines still run. A user
+# namespace gives uid 0 without privilege (`unshare -r`). Where the host forbids one -- some CI kernels
+# restrict unprivileged user namespaces -- those checks are skipped, and the run says so.
+out=$(printf 'exit\n' | "$BIN" 2>&1) || true
+case "$out" in
+  *"running as root"*) FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS
+  FAIL: an interactive shell run by an ordinary user warned about root";;
+  *) PASS=$((PASS + 1));;
+esac
+if command -v unshare >/dev/null 2>&1 && unshare -r true 2>/dev/null; then
+    RS_DIR=$(mktemp -d -t agnsh-root.XXXXXX)
+    RS_STATE="$RS_DIR/state"
+    mkdir -p "$RS_DIR/work"
+    touch "$RS_DIR/work/agnsh-root-marker"
+    ec=0
+    out=$(cd "$RS_DIR/work" && HOME="$RS_DIR" XDG_STATE_HOME="$RS_STATE" unshare -r "$BIN" -c "show me all files" 2>"$RS_DIR/err") || ec=$?
+    check "as root, an NL line is not run (126)" "^126$" "$ec"
+    check "...leaving stdout empty: ls never ran" "^$" "$out"
+    check "...and stderr says why" "agnsh: not executed: running as root (restricted) -- report: " "$(cat "$RS_DIR/err")"
+    check "...as does its report" "result: not executed: running as root (restricted)" "$(cat "$RS_STATE/agnoshi/reports/latest.txt" 2>/dev/null)"
+    check "the audit records the refusal as denied" '"input":"show me all files","action":"[^"]*ls -a","approved":0,"result":"denied"' "$(cat "$RS_DIR/.agnsh_audit.log" 2>/dev/null)"
+    out=$(HOME="$RS_DIR" XDG_STATE_HOME="$RS_STATE" unshare -r "$BIN" -c "echo agnsh-root-shell-line" 2>/dev/null) || true
+    check "as root, the user's own shell line still runs" "^agnsh-root-shell-line$" "$out"
+    ec=0
+    out=$(HOME="$RS_DIR" XDG_STATE_HOME="$RS_STATE" unshare -r "$BIN" --dry-run -c "show me all files" 2>&1) || ec=$?
+    check "as root, --dry-run shows the restriction" "Restricted -- not executed: agnsh is running as root" "$out"
+    check "...and exits 126: the line would not run" "^126$" "$ec"
+    out=$(printf 'exit\n' | HOME="$RS_DIR" XDG_STATE_HOME="$RS_STATE" unshare -r "$BIN" 2>&1) || true
+    check "as root, the interactive shell warns before its first prompt" "WARNING: agnsh is running as root" "$out"
+    rm -rf "$RS_DIR"
+else
+    echo "(skipped: the restricted-session checks -- no unprivileged user namespace on this host)"
+fi
 
 # Interactive mode -- drive via stdin pipe and check that the mode-
 # switching builtins flow correctly and the prompt updates. Each line

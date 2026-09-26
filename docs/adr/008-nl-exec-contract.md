@@ -1,6 +1,6 @@
 # ADR-008: The NL Execution Contract (2.0.0)
 
-**Status:** Accepted (2026-09-23, for 2.0.0)
+**Status:** Accepted (2026-09-23, for 2.0.0). Amended 2026-09-26 for 2.0.2: restricted sessions (§ 1).
 **Builds on:** [ADR-007](007-input-classification.md) — which lines are shell and which are natural
 language. This ADR settles what happens once a natural-language line is understood.
 
@@ -35,6 +35,17 @@ first (roadmap § Open decisions, "NL exec contract"), and each ruling has conse
   and `assist` run directly. `-c` defaults to `auto`, as it always has.
 - Confirmation prompts go to **stderr**, for `run` as well — they are the shell talking, not the
   program.
+
+> **Amendment, 2.0.2 — a restricted session runs no natural language** (ruled 2026-09-26). agnsh
+> running as root on a Linux host — uid or euid 0 — is *restricted* (`src/security.cyr`): it reports
+> every NL line and runs none of them, whatever the tier and the mode. The report block says
+> `Restricted -- not executed: agnsh is running as root`, `-c` exits **126** with the reason `running
+> as root (restricted)`, and the interactive shell warns once before its first prompt. The user's own
+> shell lines — `run`, barewords, a typed BLOCKED line after its yes — still run: they are not the
+> AI's. This is the root check CHANGELOG 1.8.4 kept for Linux hosts ("AI features disabled for
+> safety"), which no 1.x or 2.0.x binary contained until `security.cyr` joined the build. It stays
+> compiled out on agnos, which has no Unix uid model and is never restricted. The check comes after
+> every other one, so a line that would not have run anyway keeps its own reason and status.
 
 ### 2. The report goes to a report folder
 
@@ -94,7 +105,7 @@ verbatim, plus the input, mode, time and what happened — is written to a file:
 | outcome | status |
 |---|---|
 | the program ran | its exit status (128 + N when signal N killed it) |
-| understood but not run: approval required, BLOCKED, declined at the prompt (a BLOCKED shell line included), arguments refused by the safety checks | **126** |
+| understood but not run: approval required, BLOCKED, declined at the prompt (a BLOCKED shell line included), arguments refused by the safety checks, a restricted session (2.0.2, § 1) | **126** |
 | nothing to run: UNKNOWN, no translation, QUESTION, an NL pipeline, SHELL_COMMAND, or the program could not be found or launched | **127** |
 | usage error | 1, as before |
 
@@ -102,6 +113,10 @@ verbatim, plus the input, mode, time and what happened — is written to a file:
 follow the same table (they returned 1 for every refusal and launch failure until 2.0.0), so a script
 sees one convention whichever path handled its line. Under `--dry-run` the status is 0 for a line
 that would run.
+
+> ⚠ **Correction, 2.0.2**: on agnos the `&`, `|` and `>` launchers kept 1 for their refusals and launch
+> failures through 2.0.1 — `pipe()`, arm, open and launch failures, a full job table. They follow the
+> table since 2.0.2; empty pipeline stages and a missing `>` target are usage errors and keep 1.
 
 ### 5. Audit
 
@@ -111,6 +126,9 @@ now `needs_approval` with `approved: 0`, since that is what stops it running. Un
 `proposed` / `approved: 1` — true while nothing ran, false once SAFE and READ_ONLY lines did.
 `approved` now follows the label. A command that runs adds the exec records `run` already writes:
 `launched` before the child starts, then `executed` / `failed` with its exit code, or `error`.
+A line a restricted session refuses (2.0.2) keeps its parse-time `proposed` and adds an exec
+`denied` — the shell refused it, as a declined prompt is recorded. `--dry-run` refuses nothing, so it
+adds none.
 
 ### 6. Versioning
 
@@ -145,6 +163,8 @@ only classify — both break scripts written against 1.x. The roadmap's 1.10.x a
 - `src/agnsh.cyr` — `print_intent_result`, the `-c` path; `src/statepaths.cyr` — state paths
 - `src/run_agnos.cyr` — `sh_run_program` and the agnos launchers; `src/sanitize.cyr` —
   `mode_needs_confirm`, `verb_confirm`
+- `src/nlexec.cyr` — `nl_verdict`, the verdict and its reasons; `src/security.cyr` — the session
+  context and `security_restricted` (2.0.2)
 - [ADR-007](007-input-classification.md); `docs/examples/scripting.md`
 - [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)
   — `$XDG_STATE_HOME`

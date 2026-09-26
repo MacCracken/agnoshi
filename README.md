@@ -6,11 +6,12 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**2.0.1 · Cyrius 6.6.6 · 26 modules · ~6.5 K src lines · 227 KB static binary (DCE, x86_64) · 663 KB aarch64 · 0 runtime deps · 897 unit + 26 security + 358 parse-corpus + 127 smoke tests · 100% host-reachable fn coverage**
+**2.0.2 · Cyrius 6.6.6 · 26 modules · ~6.8 K src lines · 227 KB static binary (DCE, x86_64) · 663 KB aarch64 · 0 runtime deps · 939 unit + 26 security + 358 parse-corpus + 137 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
 - **Natural language that runs** (2.0.0) — SAFE and READ_ONLY translations execute; the rest are reported and not run ([ADR-008](docs/adr/008-nl-exec-contract.md))
+- **Never as root** (2.0.2) — on a Linux host, agnsh running as root reports natural language and runs none of it; your own shell lines still run
 - **Shell first** — a program's name runs the program, on AGNOS and (via `$PATH`) on Linux ([ADR-007](docs/adr/007-input-classification.md))
 - **Natural language interpretation** — keyword-based intent parser, 44 intent types
 - **30+ domain translators** — filesystem, process, network, packages, git, firewall, user/group, services
@@ -22,8 +23,9 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 
 ⚠ **Not shipped yet, though the modules exist in `src/`**: interactive approval
 prompts — so USER_WRITE, SYSTEM_WRITE and ADMIN natural-language lines report
-`Approval required` and do not run — checkpoint/`undo`, and privilege escalation. `src/checkpoint.cyr` and
-`src/security.cyr` are **not in the binary's include graph**, and
+`Approval required` and do not run — checkpoint/`undo`, and privilege escalation. `src/checkpoint.cyr`
+is **not in the binary's include graph**; `src/security.cyr` is (2.0.2), but only
+its root restriction runs — its `sudo` path has no caller; and
 `src/approval.cyr` is compiled in only for its risk classifier —
 `ApprovalManager_request`, the prompt itself, has no caller. A HIGH-risk command
 reports `Approval required` but is not prompted or blocked, there is no `undo`
@@ -82,10 +84,11 @@ src/                                COMPILED INTO THE BINARY (src/agnsh.cyr's in
 ├── run_agnos.cyr     — AGNOS launch path: exec, pipelines, redirect, bg jobs, and the
 │                       shell-line gate both targets share (its pure parsers are host-testable)
 ├── run_host.cyr      — the Linux host's $PATH lookup and argv launcher (host-only)
+├── security.cyr      — who agnsh runs as: a host session as root is restricted (2.0.2);
+│                       its sudo escalation path is compiled in with no caller
 └── nlexec.cyr        — the NL path: verdict, report, execution
 
 src/                                PRESENT BUT NOT IN THE BINARY
-├── security.cyr      — SecurityContext, privilege escalation
 ├── session.cyr       — shell session lifecycle, cd/undo builtins
 ├── checkpoint.cyr    — destructive-op rollback (blocked: 7 missing stdlib symbols)
 ├── completion.cyr    — tab completion engine

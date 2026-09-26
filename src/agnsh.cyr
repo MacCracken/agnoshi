@@ -47,9 +47,11 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 include "src/run_host.cyr"
+# 2.0.2: who agnsh runs as — a host session as root is restricted, and nlexec reads that.
+include "src/security.cyr"
 include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 2.0.1";
+var VERSION_STR = "agnoshi 2.0.2";
 
 fn print_version() {
     println(VERSION_STR);
@@ -258,6 +260,9 @@ fn interactive_loop() {
     println("Run: a program's name, or run /abs/path   (pipelines, > and & are AGNOS-only)");
     #endif
     println("");
+    # A restricted session says so before its first prompt (2.0.2): as root on a Linux host, no
+    # natural-language line runs. stderr — the shell talking, like its prompts' confirmations.
+    security_warn_restricted(security_ctx);
 
     var buf[4096];
     var interp = Interpreter_new();
@@ -522,6 +527,12 @@ fn interactive_loop() {
 fn main() {
     alloc_init();
     args_init();
+    # 2.0.2: who agnsh runs as (security.cyr). A host session as root is RESTRICTED: it reports
+    # natural-language lines and runs none of them. agnos keeps no context — no Unix uid model (getuid
+    # is 0 for everyone), no sudo — so it is never restricted (CHANGELOG 1.8.4).
+    #ifndef CYRIUS_TARGET_AGNOS
+    security_init();
+    #endif
 
     var n_args = argc();
     if (n_args < 2) {
