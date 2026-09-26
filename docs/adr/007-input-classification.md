@@ -32,6 +32,12 @@ inside the parser. agnos does this already (`sh_try_bareword_launch` probes `/bi
 `print_intent_result`). The Linux host adopts it with a `PATH` lookup in 2.0.0, alongside NL
 execution; until then the host's only launcher is `run /abs/path`.
 
+> ⚠ **Correction, 2.0.1**: agnos did this for most lines, not all. Its launcher ran `is_safe_path`
+> over the *whole line* before the probe, so a sentence containing `$`, `(`, `)`, `;` or `..` — `what
+> is in $HOME` — was refused as `run: unsafe path` and never reached the parser. Since 2.0.1 it looks
+> up the first word first (`sh_prog_word_ok`, shared with the host) and judges the line only once
+> that word is a program, as this decision requires.
+
 ### 2. Operators are shell syntax
 
 A line with `|` or `>` is a shell line. If a stage is not a program the line is an **error**

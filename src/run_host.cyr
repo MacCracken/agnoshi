@@ -6,22 +6,9 @@
 # leaving stdout and stderr to the child. agnos has its own launchers in run_agnos.cyr.
 #ifndef CYRIUS_TARGET_AGNOS
 
-# Could `word` (`wl` bytes) name a program? Non-empty, no '/', and only letters, digits and `._+-`.
-# Anything else is not looked up at all: it cannot be a bareword program, and the lookup should never
-# build a path out of arbitrary input.
-fn _host_prog_word_ok(word, wl) {
-    if (wl <= 0) { return 0; }
-    for (var i = 0; i < wl; i = i + 1) {
-        var c = load8(word + i);
-        var ok = 0;
-        if (c >= 97) { if (c <= 122) { ok = 1; } }     # a-z
-        if (c >= 65) { if (c <= 90) { ok = 1; } }      # A-Z
-        if (c >= 48) { if (c <= 57) { ok = 1; } }      # 0-9
-        if (c == 46 || c == 95 || c == 43 || c == 45) { ok = 1; }   # . _ + -
-        if (ok == 0) { return 0; }
-    }
-    return 1;
-}
+# Whether a word could name a program at all is sh_prog_word_ok (run_agnos.cyr), shared with agnos's
+# bareword launcher since 2.0.1: anything else is not looked up, and the lookup never builds a path out
+# of arbitrary input.
 
 # A regular file this user may execute — not a directory, and executable by access(X_OK), which
 # answers for the real uid. stat follows symlinks: /usr/bin/editor -> alternatives is a program.
@@ -38,7 +25,7 @@ fn _host_is_exec_file(path) {
 # the current directory, and running whatever a directory someone else controls holds is the classic
 # PATH hijack. With no PATH at all, the conventional /usr/local/bin:/usr/bin:/bin.
 fn path_lookup_in(word, wl, path_env) {
-    if (_host_prog_word_ok(word, wl) == 0) { return 0; }
+    if (sh_prog_word_ok(word, wl) == 0) { return 0; }
     if (path_env == 0) { path_env = "/usr/local/bin:/usr/bin:/bin"; }
     var n = strlen(path_env);
     var s = 0;
@@ -190,9 +177,9 @@ fn host_refuse_operators(line) {
 # Shell-first on the host (ADR-007 decision 1): a line whose first word is a program on $PATH runs
 # as that program, through the gate every shell line passes. Returns the exit status, or -1 when the
 # first word is not a program — the caller then hands the line to the NL path. Validation comes AFTER
-# the lookup, unlike agnos's bareword launcher: there the existence probe opens a path built from the
-# input, here the lookup only ever tries a plain program name, and an NL sentence containing `$`
-# is not refused unless its first word really is a program.
+# the lookup — the lookup only ever tries a plain program name (sh_prog_word_ok) — so an NL sentence
+# containing `$` is not refused unless its first word really is a program. agnos's bareword launcher
+# has done the same since 2.0.1; before, it refused such a sentence outright.
 fn host_try_bareword_launch(line, mode) {
     var wl = 0;
     while (load8(line + wl) != 0) {

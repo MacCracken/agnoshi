@@ -4,7 +4,9 @@
 - **Repo**: agnoshi
 - **agnoshi**: 2.0.0
 - **Found by**: agnos 1.57.9 (end review of its blocking pipe writes; `scripts/smoke/pipeline-smoke.sh` in agnos)
-- **Status**: OPEN — fix is below (tested against agnos 1.57.9 from a scratch copy of agnoshi; not applied here)
+- **Status**: ✅ **RESOLVED in agnoshi 2.0.1 (2026-09-26)** — both parts of the fix below, applied as proposed,
+  plus one defect the review of this code found (§ Resolution). agnos `pipeline-smoke.sh`: red on all four boots
+  with 2.0.0, **12 passed / 0 failed / 0 void** with 2.0.1.
 
 ## What happens
 
@@ -86,3 +88,31 @@ sweep until this lands.
 
 kriya `k_write` (src/lib/sys.cyr) bounds a stalled write by 20,000 × `sched_yield`#44; since #44 parks up to one timer
 tick when nothing else is ready, that is ~200 s. It should be time-based.
+
+## Resolution (agnoshi 2.0.1)
+
+Applied in `src/run_agnos.cyr` as proposed: `_sh_pipe_spawn` passes `SPAWN_F_CLEANFD` on both stages, and the shell's
+read end is closed as soon as stage 2 exists and, on both stage-2 failure paths, before stage 1 is reaped. Two
+differences from the diff above:
+
+- **The reaps are blocking waits** (`sh_wait_child`, `waitpid` `WAIT_BLOCK`) — the companion issue
+  `2026-09-26-poll-and-yield-loops-should-block`, resolved in the same release. `_sh_pipe_reap` is gone.
+- **The 127-byte stage cap moved ahead of the arm.** `_sh_pipe_spawn` used to return -1 for a long stage *without
+  issuing* the `#43` its redirect was armed for, and the kernel clears an arm set only on a `#43` / `#37` return — so
+  `echo <130 characters> | wc` left stage 1's stdout redirect armed for the shell's next launch.
+  `sh_run_pipeline` now refuses such a stage before anything is armed (`pipeline stage too long`), and
+  `_sh_pipe_spawn` has no early return. Measured on 2.0.0 in QEMU: the next command, `echo armcheck`, failed
+  with `kriya echo: write error: operation not permitted` and exited 1 — its stdout was that closed pipe end.
+
+Evidence, agnos 1.57.9 (the agnos repo only read: its smoke ran from a copy whose `ROOT` pointed elsewhere, with
+`PIPE_SMOKE_KERNEL` and `PIPE_SMOKE_AGNSH` set):
+
+- `pipeline-smoke.sh`, 2.0.0: `early` and `s2fail` FAIL at `-smp 1` and `-smp 4` ("NO PROMPT within 40 s").
+  2.0.1: 12 passed, 0 failed, 0 void — every case's prompt back in 0.0 s.
+- agnoshi's own `scripts/agnos-qemu-test.py` now carries both cases, a 185,191-byte streaming pipeline, a stage-2
+  spawn failure, the over-long stage and the command after it, and it stops at a wedged shell. On 2.0.0 it stops at
+  `grep . /etc/ssl/cert.pem | echo pipeearly` (16 of 17 checks held so far); 2.0.1 holds **49/49** at `-smp 1` and
+  at `-smp 4`.
+
+The kriya `k_write` note under § Related is kriya's; nothing in agnoshi depends on it.
+

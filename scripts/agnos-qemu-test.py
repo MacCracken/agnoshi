@@ -18,9 +18,16 @@
 # Usage:
 #   python3 scripts/agnos-qemu-test.py                 # build agnsh from this tree, then test it
 #   AGNSH_AGNOS=/path/agnsh python3 scripts/...        # test a prebuilt agnos-target binary
+#   AGNOS_QEMU_SMP=4 python3 scripts/...               # the same session on 4 CPUs
 # Env: AGNOS_ROOT (default ../agnos), GNOBOOT_ROOT (default ../gnoboot),
-#      AGNOS_QEMU_TCG=1 forces TCG instead of KVM, SLEEP_SAFETY_TICKS caps a sleeper's life.
+#      AGNOS_QEMU_TCG=1 forces TCG instead of KVM, AGNOS_QEMU_SMP (default 1) sets the CPU count,
+#      SLEEP_SAFETY_TICKS caps a sleeper's life.
 # Exit 0 only when every check was evaluated and held (the verdict starts at FAIL).
+#
+# ⛔ A SHELL THAT STOPS RETURNING ITS PROMPT ENDS THE RUN. Every later line would be typed into a
+# wedged shell, so the harness says which line did it and exits FAIL rather than timing out forty
+# more checks. 2.0.1's pipeline cases exist to catch exactly that (agnos pipeline-smoke's `early` and
+# `s2fail`): a pipeline whose consumer is gone must still come back.
 #
 # Lessons carried over from agnos's harnesses (agnos/scripts/harness/README.md):
 #   - the first keystroke of a session is swallowed, so a bare Enter goes first;
@@ -33,7 +40,9 @@ AGNOS_ROOT = os.path.abspath(os.environ.get("AGNOS_ROOT", os.path.join(REPO, "..
 GNOBOOT = os.path.abspath(os.environ.get("GNOBOOT_ROOT", os.path.join(REPO, "../gnoboot"))) + "/build/BOOTX64.EFI"
 KERNEL = os.path.join(AGNOS_ROOT, "build/agnos")
 ROOTFS = os.path.join(AGNOS_ROOT, "build/rootfs")
-WORK = os.path.join(REPO, "build/agnos-qemu")          # build/ is gitignored
+SMP = int(os.environ.get("AGNOS_QEMU_SMP", "1"))
+# build/ is gitignored; a multi-CPU run gets its own directory, so the two can run side by side.
+WORK = os.path.join(REPO, "build/agnos-qemu" + ("" if SMP == 1 else f"-smp{SMP}"))
 IMG = os.path.join(WORK, "agnsh-test.img")
 SEED = os.path.join(WORK, "seed")
 SER = os.path.join(WORK, "serial.log")
@@ -50,6 +59,7 @@ AUDIT = "/.agnsh_audit.log"
 SAFETY_TICKS = int(os.environ.get("SLEEP_SAFETY_TICKS", str(3840 * 10**9)))
 CHECK_TICKS = 800 * 10**6
 JOB_CAP = 8                                             # run_agnos.cyr's background-job table
+CERT = "/etc/ssl/cert.pem"                              # agnos's rootfs ships it: 185 KB, 45 rings' worth
 
 
 def p(*a):
@@ -87,6 +97,20 @@ SLEEPER_BLOB = bytes.fromhex(
     "2f73746f70534c45455045522d444f4e450a")
 
 
+def write_elf(path, code):
+    """`code` as a static ELF64 at 0x400078: one R+X PT_LOAD covering the file."""
+    filesz = 120 + len(code)
+    eh = bytearray(64)
+    eh[0:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into("<HHIQQ", eh, 16, 2, 0x3E, 1, 0x400078, 64)   # ET_EXEC, x86-64, entry, phoff
+    struct.pack_into("<HHH", eh, 52, 64, 56, 1)                     # ehsize, phentsize, phnum
+    ph = bytearray(56)
+    struct.pack_into("<IIQQQQQQ", ph, 0, 1, 5, 0, 0x400000, 0x400000, filesz, filesz, 0x1000)
+    with open(path, "wb") as f:
+        f.write(bytes(eh) + bytes(ph) + bytes(code))
+    os.chmod(path, 0o755)
+
+
 def build_sleeper(path):
     """A static ELF64 that waits -- yielding, near-zero CPU -- until /stop exists, then writes
     SLEEPER-DONE and exits 0. Not sleep_ms#41: that holds the CPU on agnos (agnos issue
@@ -99,16 +123,14 @@ def build_sleeper(path):
     assert code[17:25] == b"\x11" * 8 and code[27:35] == b"\x22" * 8
     code[17:25] = struct.pack("<Q", SAFETY_TICKS)
     code[27:35] = struct.pack("<Q", CHECK_TICKS)
-    filesz = 120 + len(code)
-    eh = bytearray(64)
-    eh[0:7] = b"\x7fELF\x02\x01\x01"
-    struct.pack_into("<HHIQQ", eh, 16, 2, 0x3E, 1, 0x400078, 64)   # ET_EXEC, x86-64, entry, phoff
-    struct.pack_into("<HHH", eh, 52, 64, 56, 1)                     # ehsize, phentsize, phnum
-    ph = bytearray(56)
-    struct.pack_into("<IIQQQQQQ", ph, 0, 1, 5, 0, 0x400000, 0x400000, filesz, filesz, 0x1000)
-    with open(path, "wb") as f:
-        f.write(bytes(eh) + bytes(ph) + code)
-    os.chmod(path, 0o755)
+    write_elf(path, code)
+
+
+# mov eax,2; syscall (getpid) · mov edi,eax; mov esi,9; mov eax,16; syscall (kill self, SIGKILL) · jmp $
+# agnos lets a process signal itself (proc_may_signal), and a kill of a running process ends it at the
+# kill's own syscall exit (boundary B1), so the jmp never runs. agnos 1.57.7 reports the death as the
+# wait status 0x100 | 9; agnsh must report 128 + 9 (ADR-008 § 4).
+SELFKILL_CODE = bytes.fromhex("b8020000000f0589c7be09000000b8100000000f05ebfe")
 
 
 for path in (GNOBOOT, KERNEL, ROOTFS):
@@ -153,6 +175,18 @@ for stale in (".agnsh_audit.log", ".agnsh_history"):          # every run starts
     except FileNotFoundError:
         pass
 build_sleeper(os.path.join(SEED, "bin/sleeper"))
+write_elf(os.path.join(SEED, "bin/selfkill"), SELFKILL_CODE)
+# Passes agnsh's existence probe and fails spawn_path#43 with NOEXEC: a pipeline stage 2 that
+# cannot start (agnos pipeline-smoke's /bin/notelf).
+with open(os.path.join(SEED, "bin/notelf"), "w") as f:
+    f.write("not an ELF: stage 2 of a pipeline must fail to spawn\n")
+os.chmod(os.path.join(SEED, "bin/notelf"), 0o755)
+if not os.path.exists(os.path.join(SEED, CERT.lstrip("/"))):
+    die(CERT + " is not in " + ROOTFS + " (the streaming and early-exit pipelines need > 4080 B)")
+# What the streaming pipeline must count: `grep .` passes every non-empty line, newline included —
+# the host's own `grep . | wc -c` over the same file.
+with open(os.path.join(SEED, CERT.lstrip("/")), "rb") as f:
+    CERT_NONEMPTY = sum(len(l) + 1 for l in f.read().split(b"\n") if l)
 with open(os.path.join(SEED, "redir-target.txt"), "w") as f:  # a planted symlink points here
     f.write("REDIRECT-TARGET-ORIGINAL\n")
 os.symlink("/redir-target.txt", os.path.join(SEED, "redir-link"))
@@ -164,27 +198,60 @@ sh(f"mmd -i {IMG}@@1048576 ::EFI ::EFI/BOOT ::boot")
 sh(f"mcopy -i {IMG}@@1048576 {GNOBOOT} ::EFI/BOOT/BOOTX64.EFI")
 sh(f"mcopy -i {IMG}@@1048576 {KERNEL} ::boot/agnos")
 sh(f"mkfs.ext2 -F -q -L AGNOS-BG -b 4096 -m 0 -O {EXT2_FEATURES} -d {SEED} -E offset={PART_OFFSET} {IMG} {PART_BLOCKS}")
-shutil.copyfile(OVMF_VARS, os.path.join(WORK, "vars.fd"))
-open(SER, "w").close()
 
 accel = ["-cpu", "max"]
+if SMP > 1:
+    accel = ["-accel", "tcg,thread=multi", "-cpu", "max"]   # agnos smoke_accel's multi-CPU TCG
 if os.environ.get("AGNOS_QEMU_TCG") != "1" and os.access("/dev/kvm", os.R_OK | os.W_OK):
     accel = ["-enable-kvm", "-cpu", "host"]
-p("accelerator:     ", " ".join(accel))
-qemu = subprocess.Popen([
-    "qemu-system-x86_64", "-machine", "q35", "-m", "512M", *accel,
-    "-drive", f"if=pflash,format=raw,readonly=on,file={OVMF_CODE}",
-    "-drive", f"if=pflash,format=raw,file={WORK}/vars.fd",
-    "-drive", f"file={IMG},format=raw,if=none,id=disk0",
-    "-device", "nvme,drive=disk0,serial=AGNOS-BG",
-    "-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0",
-    "-serial", f"file:{SER}", "-display", "none", "-no-reboot",
-    "-monitor", f"unix:{MON},server,nowait",
-], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+p("accelerator:     ", " ".join(accel), f"-smp {SMP}")
+
+# ⚠ A FAILED FIRMWARE HAND-OFF IS VOID, NOT A FAILURE OF AGNSH: OVMF sometimes fails gnoboot's
+# ExitBootServices and drops to its boot menu for good, and the kernel never runs. agnos's smokes
+# retry with fresh NVRAM (qemu-dwell.sh's QEMU_DWELL_VOID); so does this, up to six boots. The disk
+# is untouched when the kernel never ran. Until 2.0.1 a void boot was scored as agnsh never
+# reaching its banner.
+VOID = re.compile(r"gnoboot: fail @|BdsDxe: failed to load|BootManagerMenuApp|Please select boot device")
+for attempt in range(1, 7):
+    shutil.copyfile(OVMF_VARS, os.path.join(WORK, "vars.fd"))
+    open(SER, "w").close()
+    if os.path.exists(MON):
+        os.unlink(MON)
+    qemu = subprocess.Popen([
+        "qemu-system-x86_64", "-machine", "q35", "-m", "512M", *accel, "-smp", str(SMP),
+        "-drive", f"if=pflash,format=raw,readonly=on,file={OVMF_CODE}",
+        "-drive", f"if=pflash,format=raw,file={WORK}/vars.fd",
+        "-drive", f"file={IMG},format=raw,if=none,id=disk0",
+        "-device", "nvme,drive=disk0,serial=AGNOS-BG",
+        "-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0",
+        "-serial", f"file:{SER}", "-display", "none", "-no-reboot",
+        "-monitor", f"unix:{MON},server,nowait",
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Only a VOID signature (or QEMU gone) retries. No banner yet after two minutes is not void --
+    # a slow TCG boot is still a boot -- so the session goes on and its banner check decides.
+    void = False
+    for _ in range(480):
+        log = open(SER, "rb").read().decode("latin1")
+        if "AGNOS kernel v" in log:
+            break
+        if VOID.search(log) or qemu.poll() is not None:
+            void = True
+            break
+        time.sleep(0.25)
+    if not void:
+        break
+    qemu.terminate()
+    try:
+        qemu.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        qemu.kill()
+    p(f"  (VOID attempt {attempt}: the firmware never handed off -- retrying with fresh NVRAM)")
+else:
+    die("the firmware never handed off in 6 attempts (infrastructure, not agnsh)")
 
 # sendkey names for every character this harness types.
 KEYS = {" ": "spc", "\n": "ret", "-": "minus", ".": "dot", "/": "slash", "_": "shift-minus",
-        ">": "shift-dot", "|": "shift-backslash", "&": "shift-7"}
+        ">": "shift-dot", "|": "shift-backslash", "&": "shift-7", "$": "shift-4"}
 checks = []            # (name, held)
 
 
@@ -214,11 +281,27 @@ NL = ["show me all files", "git status", "list running processes"]
 # owl, which SHOW_FILE translates to there because agnos has no cat.
 NL_LS = "list files in /"
 NL_OWL = "show contents of /redir-target.txt"
+# 2.0.1: the bareword launcher looks up the first WORD before it judges the line (ADR-007 decision 1).
+# Until then it ran is_safe_path over the whole line first, so any sentence with `$`, `(`, `)`, `;` or
+# `..` was refused as "run: unsafe path" on agnos and never reached the parser -- the host was right.
+NL_META = "what is in $HOME"
+SHELL_META = "ls $HOME"                 # a program's line: still refused, now audited (and 126)
 REDIR_OK = "echo hello-redirect > /out.txt"
 REDIR_AUDIT = "echo pwned > " + AUDIT
 REDIR_LINK = "echo pwned > /redir-link"
 PIPE_OK = "ls / | wc"
 PIPE_MISSING = "nosuchprog | wc"
+# 2.0.1 (agnos pipeline-smoke): a pipeline must come back when its consumer is gone. Since agnos 1.57.9
+# a pipe write blocks while the ring is full and any read end is open, so a read end the shell keeps --
+# or that stage 1 inherited -- leaves the producer blocked for good and the shell reaping it forever.
+PIPE_STREAM = "grep . " + CERT + " | wc"               # 185 KB through a 4080-byte ring, every byte
+PIPE_EARLY = "grep . " + CERT + " | echo pipeearly"    # the consumer never reads, and exits at once
+PIPE_S2FAIL = "grep . " + CERT + " | notelf"           # stage 2 cannot start; stage 1 must still end
+# A stage over spawn_path's 127-byte line cap is refused before anything is armed. Until 2.0.1 the cap
+# was checked after stage 1's stdout redirect was armed, which left it armed for the NEXT launch.
+PIPE_LONG = "echo " + "x" * 130 + " | wc"
+ARM_CHECK = "echo armcheck"
+SELFKILL = "selfkill"
 BG = "sleeper &"
 guest = []                               # the in-guest read-back (section 5)
 
@@ -296,6 +379,11 @@ try:
     seg = run_wait(NL_OWL, "REDIRECT-TARGET", timeout=40)
     check("NL exec: SHOW_FILE reads through owl on agnos",
           "Command: owl" in seg and "REDIRECT-TARGET-ORIGINAL" in seg)
+    seg = run_wait(NL_META, "] >", timeout=40)
+    check("a sentence with `$` reaches the NL parser (ADR-007 decision 1)",
+          "Intent:" in seg and "unsafe path" not in seg)
+    seg = run_wait(SHELL_META, "] >")
+    check("a program's line with `$` is refused", "run: unsafe path" in seg)
 
     # ---- 2. redirection ----
     # Control first: a plain open FOLLOWS the planted symlink, so a later refusal to redirect onto
@@ -323,6 +411,44 @@ try:
     n_missing = seg.count("no such command in pipeline stage 1")
     check("a missing pipeline binary is reported exactly once", n_missing == 1)
     check("...and is not retried down the NL path", "Intent:" not in seg)
+
+    # ---- 3b. pipelines whose consumer is gone (2.0.1) ----
+    def must_return(seg, line):
+        """A line that never gives the prompt back wedges the session: say which, and stop."""
+        if prompted(seg):
+            return
+        check(f"{line!r} returned to the prompt", False)
+        p("  the shell is stuck; serial tail:")
+        p(ser()[-600:])
+        p(f"agnos-qemu-test: {sum(1 for _, ok in checks if ok)}/{len(checks)} checks held"
+          " -- stopped at a wedged shell")
+        p("agnos-qemu-test: FAIL")
+        sys.exit(1)
+
+    seg = run_wait(PIPE_STREAM, "] >", timeout=90)
+    must_return(seg, PIPE_STREAM)
+    check(f"a {CERT_NONEMPTY}-byte pipeline streams through the ring (wc counts every byte)",
+          str(CERT_NONEMPTY) in seg and "run:" not in seg)
+    seg = run_wait(PIPE_EARLY, "] >", timeout=60)
+    must_return(seg, PIPE_EARLY)
+    check("a pipeline whose consumer never reads returns to the prompt",
+          "\npipeearly" in seg.replace("\r", ""))
+    seg = run_wait(PIPE_S2FAIL, "] >", timeout=60)
+    must_return(seg, PIPE_S2FAIL)
+    check("a pipeline whose stage 2 cannot start returns, and says why",
+          "failed to launch pipeline stage 2" in seg)
+    seg = run_wait(PIPE_LONG, "] >", timeout=60)
+    must_return(seg, PIPE_LONG)
+    check("a pipeline stage over 127 bytes is refused with a reason", "pipeline stage too long" in seg)
+    seg = run_wait(ARM_CHECK, "] >")
+    check("...and arms nothing: the next command's output reaches the console",
+          "\narmcheck" in seg.replace("\r", ""))
+
+    # ---- 3c. a child killed by a signal (2.0.1) ----
+    seg = run_wait(SELFKILL, "] >", timeout=30)
+    must_return(seg, SELFKILL)
+    check("a SIGKILLed child reports 128 + 9 (ADR-008 § 4), not agnos's 0x100 | 9",
+          "run: exit 137" in seg)
 
     # ---- 4. background jobs, and the job-table cap ----
     launched = 0
@@ -400,6 +526,16 @@ check("`> " + AUDIT + "`: denied, nothing launched", results_for(REDIR_AUDIT) ==
 check("`>` onto a symlink: launched, then error", results_for(REDIR_LINK) == ["launched", "error"])
 check("`cmd1 | cmd2`: launched, then executed", results_for(PIPE_OK) == ["launched", "executed"])
 check("missing pipeline binary: one error record", results_for(PIPE_MISSING) == ["error"])
+check("streaming pipeline: launched, then executed", results_for(PIPE_STREAM) == ["launched", "executed"])
+check("early-exit consumer: launched, then executed (stage 2's status)",
+      results_for(PIPE_EARLY) == ["launched", "executed"])
+check("stage 2 that cannot start: launched, then error", results_for(PIPE_S2FAIL) == ["launched", "error"])
+check("over-long pipeline stage: one error record, nothing launched", results_for(PIPE_LONG) == ["error"])
+check("the command after it: launched, then executed", results_for(ARM_CHECK) == ["launched", "executed"])
+check("the refused program line is on disk as denied", results_for(SHELL_META) == ["denied"])
+sk = [r for r in disk if field(r, "input") == SELFKILL]
+check("the SIGKILLed child: launched, then failed with exit_code 137",
+      [field(r, "result") for r in sk] == ["launched", "failed"] and '"exit_code":137' in sk[-1])
 bg = results_for(BG)
 check(f"`{BG}`: {JOB_CAP} launched then one denied", bg == ["launched"] * JOB_CAP + ["denied"])
 # A reaped job is recorded under its OWN command, not the last line typed (the 1.9.10 asymmetry).

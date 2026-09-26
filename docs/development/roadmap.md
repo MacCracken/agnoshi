@@ -7,14 +7,15 @@
 > **Pinned release arcs.** Each arc is a minor version, and each slot in it names the patch it is
 > planned to land in. Slots are ordered by dependency, so the next unblocked slot is the lowest open
 > number. ⚠ An unplanned release — a toolchain bump, a response to an upstream issue — takes the next
-> free patch number and pushes the planned slots down by one (1.9.11 and 1.9.12 both did, and their
-> pinned work is still open below). Renumber the arc in the same change.
+> free patch number and pushes the planned slots down by one (1.9.11, 1.9.12 and 2.0.1 all did — 2.0.1
+> answered two agnos 1.57.9 issues). Renumber the arc in the same change.
 >
 > **Cite a slot by arc and title** — `roadmap 2.0.x — NL exec` — never by patch number alone:
 > titles survive a renumber. References name functions and files, not line numbers.
 >
-> Verified against `src/` and the sibling repos on **2026-09-23** (tree at 2.0.0, cyrius 6.6.6).
-> Every upstream gate was re-checked at the 6.6.6 pin (1.9.13); § Gated lists what is still open.
+> Verified against `src/` and the sibling repos on **2026-09-26** (tree at 2.0.1, cyrius 6.6.6, agnos
+> 1.57.9). Every upstream gate was re-checked at the 6.6.6 pin (1.9.13), and the agnos rows again at
+> 2.0.1 — all seven had resolved upstream; § Gated says what each left for agnsh.
 
 ## How this file is organised
 
@@ -31,9 +32,9 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.1** — wire `security.cyr` | none |
+| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.2** — wire `security.cyr` | none |
 | **2.1.x** | Interactive shell — `cd`, an rc file, a line editor | **2.1.0** — `cd` / `pwd` | host: none; agnos pieces gated |
-| **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | host: none; agnos: loopback TCP |
+| **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | host: none; agnos: the socket adapter |
 
 2.0.x is the headline: **agnoshi's premise is that natural language becomes execution.** 2.0.0
 shipped the first tier — SAFE and READ_ONLY lines run, under the `-c` contract of
@@ -43,10 +44,12 @@ before anything destructive runs. 2.1.x and 2.2.x are independent of each other 
 2.2.2's suggested commands run through 2.0.x's exec path, so that one slot does follow it.
 
 ⚠ **The two-target reality**, which every slot below splits along: `src/run_agnos.cyr` is mostly
-`#ifdef CYRIUS_TARGET_AGNOS`, so bareword launch, pipelines, background jobs and `>` redirection
-exist **only on agnos**. The Linux host's sole exec path is `run /abs/path` through `lib/process.cyr`.
-Read each slot's target notes before estimating — several are half the size on one target and gated
-on the other.
+`#ifdef CYRIUS_TARGET_AGNOS`, so pipelines, background jobs and `>` redirection exist **only on
+agnos**. The Linux host runs programs through `src/run_host.cyr` — a `$PATH` lookup and an argv
+launcher behind `run`, barewords and NL exec — and refuses `|`, `>` and `&` (2.0.0). Since 2.0.1 agnsh
+needs agnos **1.57.7** or later on that target (`WAIT_BLOCK`; `SPAWN_F_CLEANFD` is 1.57.6), and 1.57.8
+for a PTY-hosted shell to wait in the kernel. Read each slot's target notes before estimating —
+several are half the size on one target and gated on the other.
 
 ---
 
@@ -56,18 +59,23 @@ The natural-language path does what it proposes, one permission tier at a time, 
 place before anything destructive runs. 2.0.0 shipped SAFE and READ_ONLY (see the CHANGELOG); the
 slots below are ordered so that nothing destructive executes before checkpointing exists. Standing
 from 2.0.0: `proc_set_timeout_ms` (host only) could give NL exec a command timeout — unscheduled.
+Standing from 2.0.1: the agnos launchers in `run_agnos.cyr` still exit **1** where ADR-008 § 4 says
+126 or 127 — `sh_run_program_bg`'s refusals and launch failure, and `sh_run_pipeline` /
+`sh_run_redirect`'s `pipe()`, arm, open and launch failures (empty stages and a missing `>` target are
+usage errors and keep 1). Converting them wants a harness that can read an agnos `-c` status first:
+the typed session cannot, and the `agnos_hostsh` driver could spawn `agnsh -c` through `SPAWN_F_ARGV`.
 
-### 2.0.1 — Wire `security.cyr`
+### 2.0.2 — Wire `security.cyr`
 
 - Absent from `src/agnsh.cyr`'s include graph; its only includer is the dead legacy `src/main.cyr`.
   Include it and construct `SecurityContext_new(0)` in `main()` after `alloc_init()` / `args_init()`.
-- It carries what 2.0.3 needs for ADMIN: `execute_with_privileges` (prepends `sudo -n`) and
+- It carries what 2.0.4 needs for ADMIN: `execute_with_privileges` (prepends `sudo -n`) and
   `verify_sudo_path` (re-verifies at escalation; TOCTOU window documented in ADR-006).
 - **Host-only user-visible value**: the `uid == 0 → restricted` warning is compiled out on agnos
   (single-owner; uid 0 is normal there, CHANGELOG 1.8.4).
 - Watch the capacity and coverage gates: ~9 functions and a 64 KB `/etc/passwd` buffer.
 
-### 2.0.2 — Checkpointing, re-implemented against the current stdlib
+### 2.0.3 — Checkpointing, re-implemented against the current stdlib
 
 `src/checkpoint.cyr` calls seven `fs_*` helpers the stdlib no longer has — absent from the 6.5.36
 snapshot (1.9.8) and re-verified absent at 6.6.6. Six have equivalents; one does not:
@@ -85,20 +93,20 @@ snapshot (1.9.8) and re-verified absent at 6.6.6. Six have equivalents; one does
 Two of the equivalents take a `Str`: honour ADR-006 at that boundary. Checkpoints go to
 `$HOME/.agnoshi/checkpoints/`, auto-pruned to the newest 100. No exec change in this slot.
 
-### 2.0.3 — Approval-gated exec: USER_WRITE, SYSTEM_WRITE, ADMIN
+### 2.0.4 — Approval-gated exec: USER_WRITE, SYSTEM_WRITE, ADMIN
 
 - `ApprovalManager_request` is compiled in and has no caller. Call it before executing these tiers.
   It reads fd 0 directly, so `-c` (no stdin) declines by default, as today. ⚠ Its prompt writes to
   **stdout**: move it to stderr as `verb_confirm` did in 2.0.0 — `-c`'s stdout is the program's (ADR-008).
-- Checkpoint before every REMOVE / MOVE exec (2.0.2).
-- ADMIN routes through `execute_with_privileges` (2.0.1). BLOCKED stays blocked — `WARNING: BLOCKED`
+- Checkpoint before every REMOVE / MOVE exec (2.0.3).
+- ADMIN routes through `execute_with_privileges` (2.0.2). BLOCKED stays blocked — `WARNING: BLOCKED`
   is final, with no approval path.
 - Audit labels: `approved` + outcome, `denied`, `timed_out`.
 - Settle the power-verb ruling first (§ Open decisions) so every confirmation follows one policy.
 - ADR the approval-vs-execute split. `docs/examples/server-hardening.md`'s do-not-deploy banner comes
   down only when `strict` mode actually gates.
 
-### 2.0.4 — `undo`
+### 2.0.5 — `undo`
 
 - `CheckpointManager_undo` behind a new `undo` builtin. `commands.cyr` stopped advertising `undo` in
   1.9.1, when the audit found nothing behind it — add it to `is_builtin` and the dispatch together.
@@ -178,7 +186,7 @@ man-page pair; `explain` is 2.2.2), and **history fuzzy search** (after 2.1.3).
 ## 2.2.x — hoosh / LLM
 
 The host client is unblocked: hoosh 2.6.10's modernization has shipped, and the stdlib carries the
-transport. On agnos the client is § Gated on loopback TCP.
+transport. On agnos the client is § Gated on the socket adapter (the kernel half shipped in agnos 1.57.7).
 
 ### 2.2.0 — hoosh client, host (`src/llm.cyr`)
 
@@ -212,7 +220,7 @@ transport. On agnos the client is § Gated on loopback TCP.
 
 | Decision | Needed by | The question |
 |---|---|---|
-| **Power verbs and confirmation** | 2.0.3 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
+| **Power verbs and confirmation** | 2.0.4 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
 | **Metacharacter pass-through in `human` mode** | any redirection-lane work | Let `;` `\|` `&` `$()` `<` `>` through in `human` only (user-flagged 2026-07-07). `is_shell_metachar` and its four wrappers are mode-blind with no mode parameter, so this threads one. On Linux it must warn: metachar → `execve` is a real injection vector (audit C2). |
 | **Install location** | the next zugot recipe bump | `scripts/install.sh` → `/usr/local/bin`; the zugot recipe (ark) → `/usr/bin`; agnos images → `/bin/agnsh`. The first two are FHS-correct as a pair (local build vs package), so the likely ruling is "no change" — but the recipe ships no man page, which is a real gap. |
 
@@ -220,18 +228,27 @@ transport. On agnos the client is § Gated on loopback TCP.
 
 ## Gated — not on the arc sequence
 
-Open, with the trigger outside agnoshi. Each was re-verified at pin 6.6.6.
+Open, with the trigger outside agnoshi. Re-verified at pin 6.6.6, and the agnos rows against agnos
+1.57.9 at 2.0.1.
 
 ### agnos kernel and userland
 
 | Gate | Filed as | What it unblocks in agnsh |
 |---|---|---|
-| `spawn_path` #43 answers -1 for every failure | agnos `2026-09-23-spawn-path-failure-gives-no-reason` | Telling "process table full" from "no such program" in the launch error and the `error` audit record. agnsh launches foreground and background jobs through #43. |
-| `spawn_path` arguments cannot contain a space | agnos `2026-09-23-spawn-path-args-cannot-contain-spaces` | Quoted arguments reaching a program on agnos. |
-| A child inherits every fd; `exec_redirect` arms one fd; a failed spawn leaves `CH_ENDOW` armed | agnos `2026-09-23-child-inherits-every-fd-and-spawn-arms-leak` | Clean fds in redirected and piped children. |
-| A parent cannot end, stop or continue a child | agnos `2026-09-23-parent-cannot-end-stop-or-continue-a-child` | Job control: Ctrl-C to the foreground child, `kill %n`, `fg` / `bg`. |
 | Raw keyboard input | puka (line discipline) | 2.1.3's editor on agnos. `kbscan #42` works from ring 3 but loses keys (0–4 of 9 at a 100 ms hold). |
-| Loopback TCP, and sockets that hold the CPU | agnos `2026-09-23-tcp-server-cannot-be-loopback-only`, `…-sock-recv-never-reports-eof-after-peer-fin`, `…-sock-send-and-connect-hold-the-cpu` | 2.2.x on agnos. TCP to `127.0.0.1` is dropped; receive never reports EOF (stop on `[DONE]`). Under QEMU a host hoosh is reachable at `10.0.2.2:8088`. |
+| The socket consumer adapter | cyrius — the adapter agnos's `2026-09-23-tcp-server-cannot-be-loopback-only` names as pending | 2.2.x on agnos. The kernel half shipped in agnos 1.57.7: a loopback-only listen, `127.0.0.0/8` as a destination, EOF once the peer's FIN is read, and `#47` / `#48` that block only their caller. Under QEMU a host hoosh is reachable at `10.0.2.2:8088`. |
+
+### Opened upstream — agnsh's half, not yet scheduled
+
+The kernel halves shipped in agnos 1.57.6 and 1.57.7 (the issues are archived there, resolved); what
+is left is agnsh's. Each lands in an arc on demand.
+
+| agnos gave | Issue | What agnsh has to do |
+|---|---|---|
+| 1.57.6: `spawn_path` #43 fails with `-SPAWN_E_*` — −2 table full, −3 no memory, −4 no such program, −5 not an executable, −6 bad arguments | `2026-09-23-spawn-path-failure-gives-no-reason` | Say which in the launch error and the `error` audit record: agnsh still prints one message for all of them. `execwait` #37 — the `>` path — still folds them to −1. |
+| 1.57.6: `SPAWN_F_ARGV`, an argv blob whose entries may contain spaces (≤ 1,024 bytes) | `2026-09-23-spawn-path-args-cannot-contain-spaces` | A quoting parser — agnsh has none — then launch through the argv form, which also lifts the 127-byte line cap. |
+| 1.57.6: `SPAWN_F_CLEANFD`, multi-pair `exec_redirect`, arms cleared on every #43 / #37 return | `2026-09-23-child-inherits-every-fd-and-spawn-arms-leak` | **Pipeline stages: done in 2.0.1.** The `>` child still inherits agnsh's table — 0/1/2 and its target — because #37 takes no flags; `2>` and `2>&1` wait on the redirection lane (§ Demand-gated backlog). |
+| 1.57.7: `kill` #16 ends (9), stops (19) and continues (18) a child | `2026-09-23-parent-cannot-end-stop-or-continue-a-child` | Job control — `kill %n`, `fg` / `bg`, Ctrl-C to the foreground child — which needs a keypress to reach agnsh while it waits: agnos has no default action for SIGINT. (A killed child's status has read 128 + N since 2.0.1.) |
 
 ### Consumer app translators
 
@@ -250,8 +267,8 @@ Not scheduled. Open on demand.
 - **The redirection lane beyond `cmd > file`**: `>>`, `<`, `2>`, combined redirects and globbing
   (each fails `is_safe_path` on the residual `>` today rather than misbehaving); `cmd > file` on the
   Linux host (both dispatch sites are agnos-only); a shared writable-target denylist closing
-  `> /bin/agnsh` and `> /boot/agnos`; a kernel-side clear of the one-shot `exec_redirect#62` on every
-  `execwait#37` early return.
+  `> /bin/agnsh` and `> /boot/agnos`. (The kernel-side clear of an armed `exec_redirect#62` on every
+  early return that this list used to carry shipped in agnos 1.57.6.)
 - Docker CLI syntax → stiva; SSH key management; VPN / proxy intents; systemd timers, sockets and
   dependencies; log rotation; a diff preview before destructive file operations.
 - Rich prompt themes; AI-assisted, project-aware completion (after 2.1.4 and 2.2.x).
@@ -327,5 +344,5 @@ one arch, and three gates had opened without anyone noticing.
   (`CONTRIBUTING.md`). `sh_env_blob[128]` is 1 KB, not 128 bytes.
 - **Coverage**: every wire-up grows the fn denominator; add `test_core` anchors for the new module's
   pure functions. The 80% gate is CI-enforced, and agnos-only functions are reported, not gated.
-- **Benchmarks** after 2.0.3 and 2.2.1 — both add new code paths (2.0.0's NL exec is dominated by
+- **Benchmarks** after 2.0.4 and 2.2.1 — both add new code paths (2.0.0's NL exec is dominated by
   process creation, which the in-process suite does not measure).

@@ -8,10 +8,11 @@ is Cyrius and builds with `cyrius build` — no external test runner.
 | File | Kind | Covers |
 |------|------|--------|
 | `harness.cyr` | shared include | `check()` / `report()`, the pass/fail tally, and the forward-ref stubs. **Not a test** — has no `main()`. |
-| `test_core.tcyr` | unit tests | mode manager, permissions, intent parsing, translators, approval matrix, audit log, security context, the report folder, the host launcher and NL execution (885 checks) |
+| `test_core.tcyr` | unit tests | mode manager, permissions, intent parsing, translators, approval matrix, audit log, security context, the report folder, the host launcher, NL execution, the agnos exit-status mapping and the shared program-word check (897 checks) |
 | `test_security.tcyr` | regression | command classification, path/username/branch/commit-message sanitizers, permission gates (26 checks) |
 | `test_parse_corpus.tcyr` | spec | the NL classifier against `docs/examples/common-commands.md` (read at run time), shadowing probes in both directions, and the PhraseIndex held to `input_has_phrase` — [ADR-007](../docs/adr/007-input-classification.md) (358 checks) |
 | `bench_core.bcyr` | benchmarks | parse / translate / permission / sanitize hot paths |
+| `agnos_hostsh.cyr` | agnos driver | **Not a suite** and agnos-only: hosts agnsh on a pipe for `scripts/agnos-qemu-bench.py`, which seeds it as `/bin/agnsh` so it runs at boot. Build with `cyrius build --agnos`; a host build only prints that it is agnos-only. |
 | `test.sh` | runner | builds the shell, then runs every `test_*.tcyr` suite → smoke → bench |
 
 ## Running

@@ -6,6 +6,139 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-26 — pipelines let go of their pipe ends, and agnsh's waits block
+
+An unplanned release answering the two issues agnos 1.57.9 filed against 2.0.0
+(`docs/development/issue/archive/`). It takes the 2.0.1 slot, so the roadmap's 2.0.x arc moves down by
+one: wiring `security.cyr` is now 2.0.2.
+
+### Fixed
+
+- **A pipeline whose consumer exited early never came back** (agnos, `src/run_agnos.cyr`).
+  `grep . /etc/ssl/cert.pem | echo pipeearly` printed `pipeearly` and wedged the shell. agnsh kept its
+  own copy of the pipe's read end while it reaped both stages, and stage 1 inherited that read end too,
+  so the producer always saw a live reader and never got EPIPE. agnos 1.57.9 made a pipe write block
+  while the ring is full and a reader is open (as Linux `pipe_write` and POSIX `write()` do), so it
+  blocked for good, with agnsh waiting to reap it. Before 1.57.9, kriya's retry loop stalled for about
+  200 s instead. **Fix**, as bash's `execute_pipeline` does with `fds_to_close`: both stages spawn
+  with `SPAWN_F_CLEANFD`, so a stage gets fds 0/1/2 after its armed redirect and nothing else. The
+  shell closes its read end as soon as stage 2 exists.
+- **A pipeline whose stage 2 could not start wedged the same way.** Both stage-2 failure paths reaped
+  stage 1 while still holding the read end (`grep . /etc/ssl/cert.pem | notelf`, with `/bin/notelf`
+  not an ELF). They now close it first, so stage 1 gets EPIPE and exits.
+- **A pipeline stage over 127 bytes left stage 1's stdout redirect armed for the next command.**
+  `_sh_pipe_spawn` returned -1 for a long line *without* issuing the `#43` its redirect was armed
+  for. The kernel clears an arm only on a `#43` / `#37` return, so the next program launched got that
+  closed pipe end as its stdout — measured on 2.0.0 in QEMU: `echo armcheck` failed with `kriya echo:
+  write error: operation not permitted` and exited 1. The cap is now checked before anything is armed
+  (`run: pipeline stage too long`), and `_sh_pipe_spawn` has no early return.
+- **`cmd > file` with a command over 127 bytes truncated the target, then failed silently.** The
+  length is checked before the target is opened. A failed `>` launch now says `run: failed to launch
+  program` — the one launch failure that printed nothing.
+- **`run` of a line over 127 bytes** said only `run: failed to launch program`, after a `launched`
+  record, through a fallback to `#37` "which has no cap". agnos 1.57.7 gave `#37` the same cap, so the
+  fallback only changed which syscall refused the line. It now says `command line too long` before
+  any `launched` record, and the fallback is gone.
+- **A child killed by a signal reported agnos's raw wait status.** agnos 1.57.7 encodes a death by
+  signal N as `0x100 | N`, and agnsh passed it through: `run: exit 265`, an audit `exit_code` of 265,
+  and `agnsh -c` exiting 265 & 0xFF = **9**, indistinguishable from a program that exited 9. Every
+  status agnsh reaps on agnos now goes through `sh_exit_status` and reads **128 + N**, as ADR-008 § 4
+  promises and the host launcher already did.
+- **On agnos, a sentence containing `$`, `(`, `)`, `;` or `..` never reached the NL parser.** The
+  bareword launcher ran `is_safe_path` over the whole line *before* checking whether its first word
+  was a program, so `what is in $HOME` was refused as `run: unsafe path` — against ADR-007 decision
+  1, where the program lookup decides, and unlike the host. It now looks the first word up first,
+  with the host's program-word check (`sh_prog_word_ok`, shared by both targets). Only then does it
+  judge the line. Nothing built from the input is opened before that check, as before.
+- **Unsafe-path refusals exited 1**: `agnsh -c "run /tmp/x;evil"` on both targets, and a program's
+  line with a metacharacter on agnos (`ls $HOME`), which also left no audit record. Both now exit
+  **126** (ADR-008 § 4: refused by the safety checks) with a `denied` record. ⚠ They are not the
+  last: on agnos, background-job refusals and launch failures and the pipeline and redirect
+  arm / launch failures still exit 1 where § 4 says 126 or 127 — open on the roadmap (2.0.x, standing
+  note), because the harness cannot yet read an agnos `-c` status to prove the change.
+- `scripts/agnos-qemu-test.py`: when the firmware failed to hand off (OVMF's intermittent `gnoboot:
+  fail @ EBS`), the harness scored it as agnsh never reaching its banner. It now retries with fresh
+  NVRAM, as agnos's smokes do. A shell that stops returning its prompt ends the run with the line that
+  wedged it, instead of timing out forty more checks.
+
+### Changed
+
+- **agnsh's waits block** (agnos). `run`, barewords, NL execution and both pipeline stages reap with
+  a single `waitpid` `WAIT_BLOCK` (`sh_wait_child`) — POSIX `waitpid(pid, &st, 0)`. They used to poll
+  a non-blocking `waitpid` with `sched_yield#44` between polls, and since agnos 1.57.9 a `#44` with
+  nothing else READY parks until the next timer tick. A PTY- or pipe-hosted shell's stdin read is one
+  blocking read (`rl_read_blocking`); the `#44` + 20,000-iteration spin is gone, along with the
+  comment claiming the kernel never blocks on a channel (untrue since agnos 1.57.8). The prompt with
+  background jobs keeps its poll, deliberately and now with the reason in the code: it waits for a key
+  *or* a job's exit, which no single agnos call covers yet.
+- ⚠ **agnos requirement: 1.57.7 or later** (`WAIT_BLOCK` 1.57.7, `SPAWN_F_CLEANFD` 1.57.6), and
+  1.57.8 for a PTY-hosted shell to wait in the kernel. On an older kernel `WAIT_BLOCK` answers -1 and
+  a flagged `#43` is refused, so `run` and pipelines fail there. agnsh ships in the agnos image beside
+  its kernel (1.57.9 today). The Linux host is unaffected.
+- The pipeline, redirect and launcher comments in `run_agnos.cyr` described an older agnos: a
+  store-and-forward pipe capped at 4,088 bytes (streaming since 1.8.8), a redirect that "swaps the
+  GLOBAL fd table" (per-process since agnos 1.57.6), `#37` running its child with interrupts off (a
+  blocking wait on a scheduled child since 1.57.7). Rewritten to what runs; the history they carried
+  stays, in the past tense.
+
+### Added
+
+- `scripts/agnos-qemu-bench.py` + `tests/agnos_hostsh.cyr`: a boot-time driver, seeded as `/bin/agnsh`
+  so nothing is typed, that hosts agnsh on a pipe (the shape of a PTY-hosted shell) and reports how it
+  waits. **Idle**: the cpu ticks charged over 1 s blocked on an empty stdin, gated at ≤ 5 in state 6
+  (BLOCKED). **Round trips**: N queued `echo hs` lines and N `echo hs | wc` pipelines through one shell.
+  `AGNSH_BASELINE` runs an a/b from the same boot.
+- `scripts/agnos-qemu-test.py`, each check with its audit records read back from disk: a
+  185,191-byte pipeline that must stream whole; the early-exit and stage-2-failure pipelines; an
+  over-long stage followed by a command whose output must arrive; a child that SIGKILLs itself
+  (`/bin/selfkill`, 23 bytes) and must read `run: exit 137`; and `what is in $HOME` reaching the
+  parser while `ls $HOME` is refused. `AGNOS_QEMU_SMP=4` runs the session on four CPUs.
+- 12 unit checks: `sh_exit_status` (hoisted out of the agnos block because it is pure arithmetic) and
+  `sh_prog_word_ok` judging the word, never the line. One smoke check: `run` of an unsafe path exits 126.
+
+### Verified
+
+- All CI gates, on the tree and on a clean copy with a freshly vendored `lib/` (38 files, as CI
+  starts); unit **897/897** (885 + 12), security 26/26, parse corpus 358/358, smoke **127/127**
+  (126 + 1); the same suites on aarch64 under qemu-user; host-reachable coverage 228/228, with 20
+  agnos-only functions reported, not gated; the agnos target builds.
+- **agnos's `scripts/smoke/pipeline-smoke.sh`** on agnos 1.57.9, run from a copy (the agnos repo only
+  read): 2.0.0 fails all four boots — `early` and `s2fail` at `-smp 1` and `-smp 4`, "NO PROMPT within
+  40 s"; 2.0.1 **12 passed, 0 failed, 0 void**.
+- **`scripts/agnos-qemu-test.py`** on agnos 1.57.9: **49/49 at `-smp 1` and 49/49 at `-smp 4`**, 64
+  complete audit records on disk. Watched failing on 2.0.0: it stops at `grep . /etc/ssl/cert.pem |
+  echo pipeearly`. With that case and `s2fail` taken out, the over-long stage is not refused and
+  `echo armcheck` then fails (`kriya echo: write error`), `what is in $HOME` prints `run: unsafe
+  path`, and `selfkill` reads `run: exit 265`.
+- The void-boot retry, against a bootloader the firmware cannot load: six fresh-NVRAM attempts, then
+  an infrastructure failure rather than an agnsh one.
+
+### Performance
+
+`scripts/agnos-qemu-bench.py` on agnos 1.57.9 under KVM, host load 0.04 at the start: 2.0.0 (a) and
+2.0.1 (b) alternating in one boot, five runs each. Round trips are µs per line, median, with the a /
+b ranges:
+
+| | idle ticks over 1 s (state) | `echo hs` | `echo hs \| wc` |
+|---|---|---|---|
+| `-smp 1` | 0 (6) → 0 (6) | 70,018 → 70,168 (+0.2 %; 69,414–70,189 / 69,537–70,294) | 134,346 → 134,174 (−0.1 %; 134,156–134,728 / 133,886–134,671) |
+| `-smp 4` | 0 (6) → 0 (6) | 78,102 → 73,329 (**−6.1 %**; 77,482–78,454 / 72,729–73,771) | 142,211 → 140,391 (**−1.3 %**; 141,731–144,133 / 139,816–140,670) |
+
+An earlier boot of the same comparison measured −4.6 % and −1.5 % at `-smp 4`, and no change at
+`-smp 1`. At `-smp 1` the old poll's yield handed the CPU straight to the child, so there is nothing
+to recover. At `-smp 4` the child runs on another CPU and the old poll parked a tick at a time. Most
+of each line is agnos loading kriya's 1.1 MB image. The idle row is the regression gate, not a win:
+since agnos 1.57.8 the kernel blocks the `a4 = 0` read that 2.0.0 already issued, so the spin 2.0.1
+removed was no longer reached.
+
+The host suite has no benchmark on any path this release touched: `sh_prog_word_ok` moved files
+unchanged, and `sh_exit_status` is not called on the host. One run on a quiet host (load 0.69),
+`bench-history.csv` rows `c4526bb-dirty` against 2.0.0's `caa4ee4-dirty`: `parse/list_files` 1,943 →
+1,911 ns, `parse/shell_cmd` 3,459 → 3,363 ns, `perm/classify_5` 1,375 → 1,332 ns,
+`history/add_at_cap` 308 → 315 ns — noise. `translate/list_files` read 148 → 121 ns with no translate
+code changed: layout or noise, not a claim. Binaries: x86_64 DCE 232,248 bytes and aarch64 678,528
+bytes, both unchanged; agnos 366,432 → 366,592.
+
 ## [2.0.0] - 2026-09-23 — natural language runs
 
 agnoshi's premise is that natural language becomes execution, and until now the natural-language

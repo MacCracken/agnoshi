@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**2.0.0 · Cyrius 6.6.6 · 26 modules · ~6 K src lines · 227 KB static binary (DCE, x86_64) · 663 KB aarch64 · 0 runtime deps · 885 unit + 26 security + 358 parse-corpus + 126 smoke tests · 100% host-reachable fn coverage**
+**2.0.1 · Cyrius 6.6.6 · 26 modules · ~6.5 K src lines · 227 KB static binary (DCE, x86_64) · 663 KB aarch64 · 0 runtime deps · 897 unit + 26 security + 358 parse-corpus + 127 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
@@ -44,6 +44,13 @@ cyrius build src/agnsh.cyr build/agnsh
 # Install to /usr/local/bin
 sudo sh scripts/install.sh
 ```
+
+**On AGNOS** agnsh is the system shell (`/bin/agnsh`, exec'd by kybernet at boot). Build it with
+`cyrius build --agnos src/agnsh.cyr build/agnsh_agnos`. Since 2.0.1 it needs **agnos 1.57.7** or
+later — its waits are the kernel's blocking `waitpid` and its pipeline stages spawn with
+`SPAWN_F_CLEANFD` — and 1.57.8 for a PTY-hosted shell to wait in the kernel rather than poll.
+`scripts/agnos-qemu-test.py` runs it on the agnos kernel in QEMU; `scripts/agnos-qemu-bench.py`
+measures how it waits there.
 
 ## Usage
 

@@ -187,6 +187,9 @@ check "a typed BLOCKED line asks even in auto" "BLOCKED: run" "$err"
 check "...and with no answer it is declined (126)" "^126$" "$ec"
 out=$("$BIN" -c "run /bin/echo agnsh-run-args" 2>/dev/null) || true
 check "run takes arguments on the host" "^agnsh-run-args$" "$out"
+ec=0
+"$BIN" -c "run /tmp/x;evil" >/dev/null 2>&1 || ec=$?
+check "run of an unsafe path is refused with 126 (2.0.1)" "^126$" "$ec"
 out=$(AGNSH_SMOKE_VAR=inherited "$BIN" -c "env" 2>/dev/null) || true
 check "a program inherits agnsh's environment" "AGNSH_SMOKE_VAR=inherited" "$out"
 

@@ -49,7 +49,7 @@ include "src/run_agnos.cyr"
 include "src/run_host.cyr"
 include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 2.0.0";
+var VERSION_STR = "agnoshi 2.0.1";
 
 fn print_version() {
     println(VERSION_STR);
@@ -79,6 +79,29 @@ fn print_usage() {
 var rl_buf[512];
 var rl_len = 0;   # bytes currently held in rl_buf
 var rl_pos = 0;   # read cursor into rl_buf
+
+#ifdef CYRIUS_TARGET_AGNOS
+# One BLOCKING read of stdin into rl_buf (a4 = 0): the byte count, 0 at EOF, or -1. The keyboard's
+# read waits for a full line, and since agnos 1.57.8 a pipe or CHANNEL read waits for data or EOF
+# too, so a PTY-hosted agnsh sleeps in the kernel between commands instead of polling.
+# ⭐ 2.0.1: until now the no-jobs path retried a -2 here with sched_yield#44 plus a 20,000-iteration
+# spin, because "the kernel NEVER blocks on a channel" — true when 1.8.7 wrote it (one SYSCALL stack
+# per CPU), false since agnos 1.57.8, whose read#5 waits on an empty pipe or channel like any other
+# blocking call (per-process kernel stacks arrived in 1.57.6).
+# ⛔ -2 / -3 ARE STILL "NOT YET", NEVER EOF (1.8.7: a PTY-hosted shell exited before its first prompt
+# when -2 fell into the EOF check). A ring-3 blocking read returns neither on agnos >= 1.57.8 — -2 is
+# the kernel's answer for a context that cannot block — so this retry is a guard that does not run:
+# its yield makes a surprise cost a tick per round, not a hot spin.
+# NOTE: read(fd0) MUST pass a4 EXPLICITLY — see read_line.
+fn rl_read_blocking(): i64 {
+    var r = syscall(SYS_READ, 0, &rl_buf, 4095, 0);
+    while (r == 0 - 2 || r == 0 - 3) {
+        syscall(44);
+        r = syscall(SYS_READ, 0, &rl_buf, 4095, 0);
+    }
+    return r;
+}
+#endif
 
 fn read_line(buf, maxlen) {
     # Return exactly ONE line from stdin, buffering any leftover for the next
@@ -115,13 +138,18 @@ fn read_line(buf, maxlen) {
             # calls that don't intend a4 — so a 4-arg read(0) would deliver GARBAGE r10 as a4 and
             # mis-route to the non-blocking path (returns -2 -> agnsh reads it as EOF -> exits).
             if (job_any() > 0) {
+                # ⚠ THE ONE POLL LEFT, DELIBERATELY. This waits for EITHER a key OR a job's exit, and
+                # no single agnos call covers both yet — shells elsewhere use SIGCHLD plus a blocking
+                # read (bash) or poll/select on the terminal (zsh). Since agnos 1.57.9 a #44 with
+                # nothing else READY parks until the next timer tick, so a round costs up to a tick
+                # of latency, not a spin. Every other wait in agnsh blocks (2.0.1).
                 var done = 0;
                 while (done == 0) {
                     var r = syscall(SYS_READ, 0, &rl_buf, 4095, 1);   # a4=1 -> non-blocking
                     if (r == 0 - 2) {                                 # nothing buffered: reap + retry
                         job_reap_poll();
                         if (job_any() == 0) {                         # no jobs AND no partial line ->
-                            rl_len = syscall(SYS_READ, 0, &rl_buf, 4095, 0);   # block efficiently (a4=0)
+                            rl_len = rl_read_blocking();              # block (a4=0), as with no jobs
                             done = 1;
                         } else {
                             # sched_yield (literal 44, agnos 1.44.16; see the literal-43/37 rationale
@@ -140,34 +168,7 @@ fn read_line(buf, maxlen) {
                     } else { rl_len = r; done = 1; }                  # a complete line (or EOF 0)
                 }
             } else {
-                # ⛔ -2 IS "NOT YET", NEVER EOF — AND THE NO-JOBS PATH USED TO MISS THAT.
-                # This branch took the efficient BLOCKING read and fell straight into the
-                # `rl_len <= 0` EOF check below. That is correct for the keyboard, whose blocking
-                # read genuinely waits for a full line — and fatal the moment stdin is a CHANNEL.
-                # The kernel NEVER blocks on a channel (agnos planning/ipc.md §9.4: one SYSCALL
-                # stack per CPU, so N blocked waiters would need N kernel stacks), so a channel
-                # read answers -2 immediately whatever a4 says. agnsh read that as EOF and exited
-                # — a PTY-hosted shell would have died before printing its first prompt.
-                # ⭐ The jobs branch above already had this rule. The two paths now agree, which is
-                # the actual fix: the difference between them is whether bg jobs get reaped, not
-                # what -2 means.
-                var done2 = 0;
-                while (done2 == 0) {
-                    var r2 = syscall(SYS_READ, 0, &rl_buf, 4095, 0);  # a4=0 -> blocking (keyboard)
-                    if (r2 == 0 - 2) {
-                        # ⛔ A PREEMPTIBLE SPIN, NOT sleep_ms#41 AND NOT ONLY sched_yield. sleep_ms
-                        # is `preempt_disable; sti; hlt` — on a PTY it would starve the terminal we
-                        # are waiting on — and sched_yield is a documented silent no-op under four
-                        # guards (§9.4), so it cannot be the only thing standing between us and a
-                        # busy loop. Donate the slice, then spin briefly so progress does not depend
-                        # on the yield having done anything.
-                        syscall(44);
-                        var sp = 0;
-                        while (sp < 20000) { sp = sp + 1; }
-                    } elif (r2 == 0 - 3) {                            # PARTIAL line in the kernel
-                        syscall(44);
-                    } else { rl_len = r2; done2 = 1; }                # a complete line, or EOF 0
-                }
+                rl_len = rl_read_blocking();
             }
             #endif
             #ifndef CYRIUS_TARGET_AGNOS
@@ -648,10 +649,12 @@ fn main() {
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
                 return 1;
             }
+            # Refused by the safety checks: 126, ADR-008 § 4 (it was 1 until 2.0.1 — one of the refusals
+            # 2.0.0's move to 126 / 127 missed; the roadmap's 2.0.x standing note lists the agnos rest).
             if (is_safe_path(rpath) == 0) {
                 eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
                 audit_exec_ctx(rpath, "denied", AUDIT_NO_EXIT);
-                return 1;
+                return EXIT_NOT_RUN;
             }
             return sh_run_program(rpath, c_mode);
         }

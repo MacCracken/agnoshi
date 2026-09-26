@@ -28,25 +28,32 @@ agnoshi
 │   ├── ui.cyr              -- terminal UI helpers
 │   ├── statepaths.cyr      -- state-file paths ($HOME, or uid-qualified /tmp)
 │   ├── run_agnos.cyr       -- launch path: sh_run_program + (AGNOS) pipelines, redirect, bg jobs
+│   ├── run_host.cyr        -- the Linux host's $PATH lookup and argv launcher
+│   ├── nlexec.cyr          -- the NL path: verdict, report, execution
+│   ├── report.cyr          -- the report folder (-c files what agnsh understood there)
 │   └── main.cyr            -- legacy pre-port entry, never linked
 │
-│   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, mode,
-│     permissions, intent, commands, translate, interpreter, approval, audit,
-│     history, run_agnos — plus agnsh.cyr itself.
+│   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, report,
+│     mode, permissions, intent, commands, translate, interpreter, approval,
+│     audit, history, run_agnos, run_host, nlexec — plus agnsh.cyr itself.
 │     NOT COMPILED: security, session, checkpoint, completion, prompt, config,
 │     aliases, output, ui, main. Features they implement (approval prompts,
 │     undo, sudo, tab completion, git-branch prompt) do NOT exist at runtime.
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 678 unit tests
+│   ├── test_core.tcyr      -- 897 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
+│   ├── test_parse_corpus.tcyr -- 358 classifier checks against docs/examples
+│   ├── agnos_hostsh.cyr    -- agnos-only driver for scripts/agnos-qemu-bench.py
 │   ├── bench_core.bcyr     -- 11 criterion-style benchmarks
 │   └── test.sh             -- run all test suites
 ├── scripts/
 │   ├── install.sh          -- install to /usr/local/bin
 │   ├── uninstall.sh        -- clean removal
-│   ├── smoke-test.sh       -- 92 end-to-end binary tests
+│   ├── smoke-test.sh       -- 127 end-to-end binary tests
+│   ├── agnos-qemu-test.py  -- agnsh on the agnos kernel in QEMU (manual)
+│   ├── agnos-qemu-bench.py -- how agnsh waits there: idle gate, round trips (manual)
 │   └── bench-history.sh    -- benchmark CSV tracker
 └── docs/
     ├── agnsh.1             -- man page
@@ -62,8 +69,8 @@ agnoshi
 on AGNOS, the `/bin` launchers — pipeline, redirect, bareword. A shell line runs and never reaches the
 parser, and a `|` / `>` line whose stage is not a program is an error, not natural language. Only
 what is left reaches `Interpreter_parse`, which tries its specific tier (anchored phrases) before its
-broad tier (single keywords). The Linux host has no launchers yet — 2.0.0 adds a `PATH` lookup — so
-every host line that is not a builtin or `run` reaches the parser.
+broad tier (single keywords). On the Linux host a `|`, `>` or `&` line is refused and a bareword
+found on `$PATH` runs (`run_host.cyr`, 2.0.0); what is left reaches the parser.
 
 ```
 User Input (stdin)
@@ -164,7 +171,8 @@ Every command is classified into one of six levels:
 - Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step (38 files at 6.6.6 on a clean checkout; it does not delete files an earlier pin vendored, so clear `./lib/` first after a pin bump). (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
 
 **Runtime:**
-- None (statically linked ELF, ~197 KB x86_64 (DCE) / ~661 KB aarch64 on Cyrius 6.6.6; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so ~347 KB of the aarch64 figure is unreachable code)
+- None (statically linked ELF, ~227 KB x86_64 (DCE) / ~663 KB aarch64 on Cyrius 6.6.6; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so much of the aarch64 figure is unreachable code)
+- On AGNOS: agnos 1.57.7 or later (2.0.1: `WAIT_BLOCK`, `SPAWN_F_CLEANFD`), and 1.57.8 for a PTY-hosted shell to wait in the kernel
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
 

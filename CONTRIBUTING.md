@@ -39,7 +39,13 @@ cyrius build --aarch64 tests/test_core.tcyr build/test_core_a64 && qemu-aarch64 
 # (pipelines, `>`, `&`) and checks the audit records they write — CI builds the agnos target
 # but cannot run it. Manual: needs ../agnos (build/agnos + build/rootfs) and ../gnoboot
 # built. Run it for any change that touches an agnos path. It only reads the agnos repo.
+# AGNOS_QEMU_SMP=4 runs the same session on four CPUs.
 python3 scripts/agnos-qemu-test.py
+
+# How agnsh WAITS on agnos (2.0.1): boots a driver that hosts agnsh on a pipe -- a PTY-hosted
+# shell's shape -- and reports its idle CPU (gated: 0 %) and foreground / pipeline round trips.
+# A/B a change against a baseline agnos build from the same boot:
+AGNSH_BASELINE=/path/to/old/agnsh_agnos python3 scripts/agnos-qemu-bench.py
 ```
 
 ### Cleanliness gates

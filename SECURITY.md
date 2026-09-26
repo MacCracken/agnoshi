@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.9.x   | Yes       |
-| < 1.9   | No        |
+| 2.0.x   | Yes       |
+| < 2.0   | No        |
 
 ## Reporting a Vulnerability
 
@@ -68,6 +68,9 @@ Since 2.0.0 ([ADR-008](docs/adr/008-nl-exec-contract.md)):
   an explicit yes.
 - Host programs inherit agnsh's environment (until 2.0.0 the host `run` passed an
   empty one), as AGNOS programs always have.
+- On AGNOS a pipeline stage starts with fds 0/1/2 and nothing else of the shell's
+  (`SPAWN_F_CLEANFD`, 2.0.1) — not even the other end of its own pipe, which is
+  what let a producer outlive its consumer and wedge the shell until 2.0.1.
 
 Every launch and every refusal is recorded in the audit log (see below).
 

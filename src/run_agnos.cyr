@@ -104,6 +104,40 @@ fn _sh_find_redirect(line): i64 {
     return 0 - 1;
 }
 
+# Could `word` (`wl` bytes) name a program? Non-empty, no '/', and only letters, digits and `._+-`.
+# Nothing is looked up for a word that fails — no path is built from it, nothing is opened — and the
+# line is natural language (ADR-007 decision 1: the discriminator is the program lookup).
+# ⭐ 2.0.1: shared by both targets' bareword launchers; it was the host's `_host_prog_word_ok`, and
+# agnos had no such gate, so it validated the WHOLE line before looking anything up (see
+# sh_try_bareword_launch).
+fn sh_prog_word_ok(word, wl): i64 {
+    if (wl <= 0) { return 0; }
+    for (var i = 0; i < wl; i = i + 1) {
+        var c = load8(word + i);
+        var ok = 0;
+        if (c >= 97) { if (c <= 122) { ok = 1; } }     # a-z
+        if (c >= 65) { if (c <= 90) { ok = 1; } }      # A-Z
+        if (c >= 48) { if (c <= 57) { ok = 1; } }      # 0-9
+        if (c == 46 || c == 95 || c == 43 || c == 45) { ok = 1; }   # . _ + -
+        if (ok == 0) { return 0; }
+    }
+    return 1;
+}
+
+# A wait status from agnos, as the shell reports it: the child's exit code, or 128 + N when signal
+# N killed it. Negative values (a launch failure, "not our child") pass through.
+#
+# ⛔ 2.0.1 — agnos 1.57.7 reports a child killed by signal N as `0x100 | N` (WSTAT_SIGNALED; a
+# fault stays an exit code, 128 + vector, e.g. 142). agnsh passed that through, so a SIGKILLed
+# `run` said `run: exit 265`, audited 265, and `agnsh -c` exited 265 & 0xFF = 9 — indistinguishable
+# from a program that exited 9. ADR-008 § 4 promises 128 + N, which every POSIX shell reports and the
+# host launcher always has (host_exec). Every status agnsh reaps on agnos passes through here.
+# Hoisted out of the agnos block so the host suite can assert it: it is pure arithmetic.
+fn sh_exit_status(ws): i64 {
+    if (ws >= 0x100) { return 128 + (ws & 0xFF); }
+    return ws;
+}
+
 # line[start..end] trimmed + NUL-terminated, VERBATIM (no "/bin/" prefix — this is a
 # file path, not a program). Fresh alloc, or 0 on an empty / alloc-failed segment.
 fn _sh_path_segment(line, start, end): i64 {
@@ -244,6 +278,17 @@ fn sh_launch_line(path, mode) {
         return LAUNCH_FAILED;
     }
     #endif
+    # The agnos twin of that probe (2.0.1): spawn_path's line form carries at most 127 bytes, and so
+    # does execwait's since agnos 1.57.7, so a longer line cannot launch — say why before claiming a
+    # launch. Until 2.0.1 such a line fell back to #37 "which has no cap", was refused there too, and
+    # was reported as a bare `run: failed to launch program` after a `launched` record.
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (strlen(path) > SH_SPAWN_LINE_MAX) {
+        eprintln_cstr("run: command line too long (agnos launches at most 127 bytes)");
+        audit_exec_ctx(path, "error", AUDIT_NO_EXIT);
+        return LAUNCH_FAILED;
+    }
+    #endif
     # Written BEFORE the child starts. A foreground program can hang forever,
     # kill the shell, or (reboot/poweroff/halt) take the machine down — an
     # outcome-only record would leave no trace of any of those. A `launched`
@@ -253,10 +298,10 @@ fn sh_launch_line(path, mode) {
     # stages argv from the full command line. The vendored lib run() is sys_spawn-based
     # (no argv, hard-hangs on iron) so it is NOT used here.
     #ifdef CYRIUS_TARGET_AGNOS
-    # The foreground runs under the SCHEDULER (spawn_path #43 + a waitpid poll), not execwait #37.
-    # execwait runs the child inside agnsh's own syscall frame with IF cleared and the child marked
-    # non-schedulable, so nothing else on the box runs for the child's whole life — including procs
-    # the child spawns. That is why the compositor painted its chrome while its setu clients never
+    # The foreground runs under the SCHEDULER (spawn_path #43 + a blocking waitpid), not execwait #37.
+    # Until agnos 1.57.7 execwait ran the child inside agnsh's own syscall frame with IF cleared and the
+    # child marked non-schedulable, so nothing else on the box ran for the child's whole life — including
+    # procs the child spawns. That is why the compositor painted its chrome while its setu clients never
     # executed an instruction. Rationale + the exit-code contract: sh_exec_line_sched (run_agnos.cyr).
     #
     # ⚠ This routing was reverted once (1.8.6) after a 15.6 MB compositor was #PF-killed on
@@ -267,9 +312,9 @@ fn sh_launch_line(path, mode) {
     # ⛔ NOT yet re-confirmed on iron. If large-binary `run` regresses there, swap this one call back
     # to sh_exec_line and the old behaviour returns exactly.
     #
-    # ⚠ Pipelines and `>` redirects deliberately STAY on #37 (see _sh_bin_segment / the redirect
-    # launcher): exec_redirect#62 is a one-shot the NEXT #37 consumes and it swaps the GLOBAL fd
-    # table, which is only sound under run-to-completion.
+    # ⚠ `>` redirects stay on #37 (sh_run_redirect); pipelines spawn both stages on #43
+    # (sh_run_pipeline). Since agnos 1.57.6 exec_redirect#62 arms the caller's NEXT #43 or #37 and is
+    # applied into that child's own fd table, so neither needs the other's launch path any more.
     var ecode = sh_exec_line_sched(path);
     if (ecode < 0) {
         eprintln_cstr("run: failed to launch program");
@@ -365,7 +410,7 @@ fn job_reap_poll(): i64 {
     var i = 0;
     while (i < job_count) {
         var pid = load64(&job_pid + i * 8);
-        var r = syscall(SYS_WAITPID, pid);
+        var r = sh_exit_status(syscall(SYS_WAITPID, pid));  # -2 passes through
         if (r != 0 - 2) {                                   # exited (not WOULD_BLOCK)
             var n = load64(&job_num + i * 8);
             str_print(str_from("[")); str_print(str_from_int(n)); println("] Done");
@@ -481,6 +526,13 @@ fn sh_build_env_blob(): i64 {
     return off;                                        # 0 = no env to pass
 }
 
+# agnos ABI values this file passes by number — for the reason the syscall numbers are literals:
+# lib/ is regenerated from the pinned snapshot, so committed src must not depend on a name there.
+var SH_SPAWN_LINE_MAX = 127;       # spawn_path#43 / execwait#37: the "PATH arg.." line form's cap
+var SH_SPAWN_CLEANFD = 0x20000;    # #43 a2 flag SPAWN_F_CLEANFD (agnos 1.57.6): the child gets fds
+#                                    0/1/2 after its armed redirects, and none of the shell's others
+var SH_WAIT_BLOCK = 0x100;         # waitpid#4 a1 = SH_WAIT_BLOCK | pid (agnos 1.57.7): block on it
+
 # Launch `line` ("ABS_PATH [args..]", a NUL-terminated cstr) via execwait (#37) and
 # return the child's exit code, or -1 on launch failure. The literal 37 mirrors the
 # literal-60 sys_exit call in agnsh.cyr (the agnos syscall enum tops out at 33 and has
@@ -489,26 +541,51 @@ fn sh_exec_line(line): i64 {
     var len = 0;
     while (load8(line + len) != 0) { len = len + 1; }
     var blen = sh_build_env_blob();
-    if (blen > 0) { return syscall(37, line, len, &sh_env_blob, blen); }   # 5-arg: a3/a4 explicit
-    return syscall(37, line, len, 0, 0);               # explicit zeros — never garbage a3/a4
+    # #37's success value is the child's wait status (a signal death is 0x100 | N): sh_exit_status.
+    if (blen > 0) { return sh_exit_status(syscall(37, line, len, &sh_env_blob, blen)); }   # a3/a4 explicit
+    return sh_exit_status(syscall(37, line, len, 0, 0));   # explicit zeros — never garbage a3/a4
 }
 
-# Foreground launch under the SCHEDULER: spawn_path (#43) + a non-blocking waitpid poll,
-# instead of execwait #37's run-to-completion. Returns the child's exit code — the SAME
-# contract as sh_exec_line — or -1 on launch failure.
+# Wait for child `pid` to exit, reap it, and return its exit status — or -1 when it is not the
+# shell's to wait for.
 #
-# WHY THIS EXISTS. #37 runs the child inside agnsh's own syscall frame with IF CLEARED, and
-# the child is deliberately state=3 (never schedulable — kernel elf.cyr). So for the child's
-# entire life NOTHING else on the box runs, including processes the child itself spawns. A
-# compositor launched that way paints its chrome perfectly and its setu clients never execute
-# a single instruction: measured at 2938 frames / 30 s with zero client output, while the same
-# binaries print freely the moment the compositor is launched any other way. sched_yield does
-# not help — the kernel refuses it for IF=0 callers and during a #37 nest (sched.cyr).
+# ⭐ 2.0.1 — ONE BLOCKING waitpid, NOT A POLL. WAIT_BLOCK parks agnsh in the kernel until the
+# child's exit wakes it: POSIX `waitpid(pid, &st, 0)`. Until 2.0.1 the foreground `run` and both
+# pipeline reaps polled the non-blocking form (-2 while alive) with sched_yield#44 between polls —
+# the only wait agnos offered when the foreground moved onto the scheduler (1.8.6). Since agnos
+# 1.57.9 a #44 with nothing else READY on its CPU parks until the next timer tick (~10 ms), as
+# Linux sched_yield does, so every round of that poll could add a tick of exit latency, and the
+# shell woke ~100 times a second for a foreground program's whole life. Linux sched_yield(2) calls
+# waiting for another thread that way a design error; the wait belongs in a blocking primitive.
+# ⚠ -2 from the blocking form means the kernel could not block THIS caller (wq_can_block: no
+# scheduler yet, or a lock held) — never a ring-3 process on agnos >= 1.57.7. It is still "not
+# yet", never a status, so it is retried; the yield makes a surprise cost a tick per round, not a
+# hot spin.
+# ⚠ pid is a process-table slot (0..15), so `SH_WAIT_BLOCK | pid` never reaches 0x1FF (ANY child).
+fn sh_wait_child(pid): i64 {
+    if (pid < 0) { return 0 - 1; }
+    var r = syscall(SYS_WAITPID, SH_WAIT_BLOCK | pid);
+    while (r == 0 - 2) {
+        syscall(44);
+        r = syscall(SYS_WAITPID, SH_WAIT_BLOCK | pid);
+    }
+    return sh_exit_status(r);
+}
+
+# Foreground launch under the SCHEDULER: spawn_path (#43) + a blocking waitpid (sh_wait_child).
+# Returns the child's exit code — the SAME contract as sh_exec_line — or -1 on launch failure.
 #
-# #43 makes the child an ordinary scheduled proc. agnsh then holds the PROMPT, not the kernel:
-# waitpid #4 is non-blocking here (-2 = WOULD_BLOCK while the child lives, and it reaps on
-# exit), so this is a poll + slice donation — the same shape as the bg-job loop in agnsh.cyr.
-# The child and the child's children all get scheduled, which is the entire point.
+# WHY THIS EXISTS. Until agnos 1.57.7, #37 ran the child inside agnsh's own syscall frame with IF
+# CLEARED, and the child was deliberately state=3 (never schedulable — kernel elf.cyr). So for the
+# child's entire life NOTHING else on the box ran, including processes the child itself spawned. A
+# compositor launched that way painted its chrome perfectly and its setu clients never executed a
+# single instruction: measured at 2938 frames / 30 s with zero client output, while the same
+# binaries printed freely the moment the compositor was launched any other way. (agnos 1.57.7
+# rebuilt #37 as a blocking wait on a scheduled child, so that is history; #43 stays because it
+# hands back the pid, which the pipeline needs and #37 never did.)
+#
+# #43 makes the child an ordinary scheduled proc; agnsh holds the PROMPT, not the kernel. The child
+# and the child's children all get scheduled, which is the entire point.
 #
 # ⚠ THE 1.8.6 REVERT IS ADDRESSED, NOT IGNORED. This routing was tried before and reverted
 # because a 15.6 MB compositor spawned this way was #PF-killed on archaemenid (`run: exit 142`).
@@ -521,29 +598,25 @@ fn sh_exec_line(line): i64 {
 # ⛔ Iron has NOT re-confirmed this yet. If `run` regresses on archaemenid for large binaries,
 # this routing is the first suspect and sh_exec_line is one line away.
 #
-# ⚠ #43 caps the path at 127 bytes; #37 has no such cap, so longer lines fall back to it.
+# ⚠ A line over SH_SPAWN_LINE_MAX is refused here, and sh_launch_line says why before it gets this
+# far. Until 2.0.1 it fell back to #37 "which has no cap" — true until agnos 1.57.7, which gave #37
+# the same one, so the fallback only changed which syscall refused it.
 fn sh_exec_line_sched(line): i64 {
     var len = 0;
     while (load8(line + len) != 0) { len = len + 1; }
-    if (len > 127) { return sh_exec_line(line); }      # spawn_path path cap -> #37 handles it
+    if (len > SH_SPAWN_LINE_MAX) { return 0 - 1; }
     var blen = sh_build_env_blob();
     var pid = 0 - 1;
     if (blen > 0) { pid = syscall(43, line, len, &sh_env_blob, blen); }
     else { pid = syscall(43, line, len, 0, 0); }
     if (pid < 0) { return 0 - 1; }
-    var code = 0 - 1;
-    var done = 0;
-    while (done == 0) {
-        var r = syscall(SYS_WAITPID, pid);
-        if (r == 0 - 2) { syscall(44); }               # alive: donate the slice, poll again
-        else { code = r; done = 1; }                   # exited: #4 already reaped; r = exit code
-    }
-    return code;
+    return sh_wait_child(pid);                         # blocks until it exits; reaped, its status
 }
 
 # Bareword program launch. If the first word of `line` names an executable at
-# /bin/<word>, run it from disk WITH its args and return the child exit code (>= 0,
-# or 1 on launch failure / unsafe path). Returns -1 to mean "not a /bin program" so
+# /bin/<word>, run it from disk WITH its args and return the child exit code (>= 0;
+# EXIT_NOT_RUN when the line is refused or declined, EXIT_NOTHING_TO_RUN when it could
+# not be launched, 1 when memory ran out). Returns -1 to mean "not a /bin program" so
 # the caller falls through to the NL-intent path — exactly the burn-1436 UX: `doom`
 # and `bnrmr AGNOS` launch, the typo `brnmr` interprets. PATH is fixed to /bin (the
 # AGNOS userland tool dir). A line already starting with '/' is left to the explicit
@@ -569,27 +642,18 @@ fn sh_try_bareword_launch(line, mode): i64 {
     while (tl < ll) { if (load8(line + tl) == 32) { break; } tl = tl + 1; }
     if (tl == 0) { return 0 - 1; }                 # leading space → NL path
 
-    # cmd = "/bin/" + the command part, handed to execwait so the kernel opens
-    # /bin/<word> and stages argv from the full line.
-    var cmd = alloc(5 + ll + 1);
-    # ⛔ alloc can fail. Unchecked, the store8s below wrote through a null base and
-    # faulted at a line with no obvious relationship to the exhaustion.
-    if (cmd == 0) { eprintln_cstr("run: out of memory"); return 1; }
-    store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);
-    store8(cmd + 3, 110); store8(cmd + 4, 47);
-    var j = 0;
-    while (j < ll) { store8(cmd + 5 + j, load8(line + j)); j = j + 1; }
-    store8(cmd + 5 + ll, 0);
-
-    # ⛔ VALIDATE BEFORE OPENING ANYTHING. The existence probe used to run FIRST,
-    # so `sys_open` was handed an unvalidated, attacker-shaped path ("/bin/" +
-    # whatever the user typed, traversal included) and the safety check ran only
-    # afterwards on a path that had already been opened — check-after-use. The
-    # open is a real effect on agnos, so the ordering is the fix.
-    if (is_safe_path(cmd) == 0) {
-        eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
-        return 1;
-    }
+    # ⛔ VALIDATE BEFORE OPENING ANYTHING — the WORD before the probe, the whole line once it is
+    # a program. The existence probe used to run FIRST, so `sys_open` was handed an unvalidated,
+    # attacker-shaped path ("/bin/" + whatever the user typed, traversal included) and the safety
+    # check ran only afterwards on a path that had already been opened — check-after-use. The open
+    # is a real effect on agnos, so the ordering is the fix.
+    # ⭐ 2.0.1: that fix over-reached. It ran is_safe_path over the WHOLE line before the probe, so a
+    # sentence like `what's in my $HOME` or `disk use (in GB)` was refused as "run: unsafe path"
+    # and never reached the NL parser — against ADR-007 decision 1 (the discriminator is the program
+    # lookup) and unlike the host. The probe is now built from the first word alone, and only a word
+    # sh_prog_word_ok accepts (no '/'; letters, digits, `._+-`) is probed: nothing input-shaped is
+    # ever opened, and a word that fails is natural language.
+    if (sh_prog_word_ok(line, tl) == 0) { return 0 - 1; }
 
     # probe = "/bin/" + token (existence check for the binary). ASCII: '/'=47 'b'=98
     # 'i'=105 'n'=110 '/'=47.
@@ -600,60 +664,76 @@ fn sh_try_bareword_launch(line, mode): i64 {
     var i = 0;
     while (i < tl) { store8(probe + 5 + i, load8(line + i)); i = i + 1; }
     store8(probe + 5 + tl, 0);
-    # Existence probe. `probe` is already absolute ("/bin/<word>") AND the command
-    # line it came from has passed is_safe_path, so opening it is now safe.
     var fd = sys_open(probe, strlen(probe), 0x0);
     if (fd < 0) { return 0 - 1; }                  # no such /bin program → NL intent
     sys_close(fd);
+
+    # A SHELL LINE from here: its first word is a program, so it is never natural language.
+    # cmd = "/bin/" + the command part, handed to the kernel, which opens /bin/<word> and stages
+    # argv from the full line.
+    var cmd = alloc(5 + ll + 1);
+    # ⛔ alloc can fail. Unchecked, the store8s below wrote through a null base and
+    # faulted at a line with no obvious relationship to the exhaustion.
+    if (cmd == 0) { eprintln_cstr("run: out of memory"); return 1; }
+    store8(cmd + 0, 47); store8(cmd + 1, 98); store8(cmd + 2, 105);
+    store8(cmd + 3, 110); store8(cmd + 4, 47);
+    var j = 0;
+    while (j < ll) { store8(cmd + 5 + j, load8(line + j)); j = j + 1; }
+    store8(cmd + 5 + ll, 0);
+    # The whole command line passes is_safe_path before any launch. A refusal is audited and
+    # exits 126, as the host's bareword refusal does — until 2.0.1 it was 1, with no record.
+    if (is_safe_path(cmd) == 0) {
+        eprintln_cstr("run: unsafe path (traversal or shell metacharacter)");
+        audit_exec_ctx(cmd, "denied", AUDIT_NO_EXIT);
+        return EXIT_NOT_RUN;
+    }
 
     if (bg == 1) { return sh_run_program_bg(cmd, mode); }   # `prog &` → non-blocking #43 + job table
     return sh_run_program(cmd, mode);
 }
 
 # ===================================================================================
-# Two-stage pipelines `cmd1 | cmd2` (e.g. `iam | anuenue`) — agnos has no streaming
-# pipes, so this is STORE-AND-FORWARD over the kernel's 4088-byte pipe buffer: cmd1
-# runs to completion under execwait #37 with its stdout redirected into the pipe, then
-# cmd2 runs with its stdin redirected from the pipe and drains it. EOF is free —
-# pipe_read returns 0 once drained, and cmd1 has already exited, so no write-end close
-# is needed (sequencing IS the EOF). Kernel building blocks: pipe()#25, exec_redirect#62
-# (a one-shot fd swap consumed by the NEXT #37), and the read#5 VFS_DEVICE tag guard
-# (a redirected fd 0 reaches pipe_read instead of the keyboard).
+# Two-stage pipelines `cmd1 | cmd2` (e.g. `iam | anuenue`). BOTH stages are spawned with the
+# non-blocking spawn_path #43 and are alive together, so the pipe STREAMS through the kernel's
+# 4080-byte ring (1.8.8): stage 1's stdout is armed onto the pipe's write end, stage 2's stdin onto
+# its read end, and the shell waits only once both exist. Kernel building blocks: pipe()#25,
+# exec_redirect#62 (per-process since agnos 1.57.6, applied into the NEXT #43/#37 child's own fd
+# table), spawn_path#43 and waitpid#4 (WAIT_BLOCK).
 #
-# LIMITS (MVP — documented, not enforceable client-side): cmd1's stdout must fit the
-# 4088-byte buffer (pipe_write silently wraps+overwrites past it, giving no overflow
-# signal the driver could see); pipes are single-foreground only — the redirect swaps
-# the GLOBAL fd table so this is correct only under #37 run-to-completion, NOT SMP
-# STEP-2-safe (per-process fd tables are the follow-on). 2-stage only (no N-stage chain).
+# ⛔ THE SHELL HOLDS NO PIPE END ONCE THE STAGE THAT USES IT EXISTS (bash execute_pipeline's
+# fds_to_close; every POSIX shell). The kernel decides EOF and EPIPE by scanning for ANY open end of
+# the other kind anywhere on the box, so an end the shell keeps is a live peer:
+#   · the WRITE end: stage 2 never sees EOF, even after stage 1 exits (fixed in 1.8.8);
+#   · the READ end: a producer whose consumer has exited never sees EPIPE. Since agnos 1.57.9 a pipe
+#     write BLOCKS while the ring is full and a reader is open (Linux pipe_write, POSIX write()), so
+#     `grep . /etc/ssl/cert.pem | echo x` left grep blocked for good and the shell waiting to reap
+#     it (2.0.1; agnos pipeline-smoke). Stage 1 must not INHERIT the read end either — hence
+#     SH_SPAWN_CLEANFD on both stages.
+#
+# LIMITS: 2-stage only (no N-stage chain); each stage's "/bin/<cmd> [args]" is at most 127 bytes
+# (SH_SPAWN_LINE_MAX, spawn_path's line form), checked before anything is armed.
 
 # Thin syscall wrappers — literals, same convention as the literal-37/43 execwait/spawn
 # calls above (the agnos syscall enum has no slot for these, so there's no constant).
 fn sh_pipe(fds_ptr): i64 { return syscall(25, fds_ptr); }             # pipe(): rfd@[0], wfd@[8]
-fn sh_exec_redirect(src, dst): i64 { return syscall(62, src, dst); }  # one-shot, consumed by next #37
+fn sh_exec_redirect(src, dst): i64 { return syscall(62, src, dst); }  # armed for the NEXT #43/#37
 
-# Spawn `cmd` via the non-blocking `#43` and return its pid WITHOUT waiting. The pipeline needs this
-# and nothing else does: `sh_exec_line` (#37) is run-to-completion and `sh_exec_line_sched` (#43) polls
-# to completion, so both leave exactly ONE stage alive at a time.
+# Spawn pipeline stage `cmd` via the non-blocking #43 and return its pid WITHOUT waiting: both stages
+# must be alive together for the pipe to stream. SH_SPAWN_CLEANFD gives the stage fds 0/1/2 after its
+# armed redirect and nothing else — in particular NOT the shell's copy of the other pipe end.
+# ⚠ With a flag set the kernel applies its env-blob gate strictly: a blob the flagless form would
+# quietly replace with the default env is REFUSED. sh_env_blob is agnsh's own envp, which the kernel
+# validated when it staged it, so it passes.
+# ⛔ NO RETURN BEFORE THE SYSCALL. Every #43 return clears the caller's whole arm set, success or
+# not; returning without one leaves the armed redirect waiting for the shell's NEXT launch, whose
+# stdout (or stdin) then lands on a closed pipe end. Until 2.0.1 the 127-byte cap was checked here in
+# exactly that way; sh_run_pipeline now checks it before arming anything.
 fn _sh_pipe_spawn(cmd): i64 {
     var len = 0;
     while (load8(cmd + len) != 0) { len = len + 1; }
-    if (len > 127) { return 0 - 1; }               # #43 path cap
     var blen = sh_build_env_blob();
-    if (blen > 0) { return syscall(43, cmd, len, &sh_env_blob, blen); }
-    return syscall(43, cmd, len, 0, 0);
-}
-
-# Reap `pid`, donating the slice while it lives. Returns its exit code.
-fn _sh_pipe_reap(pid): i64 {
-    if (pid < 0) { return 0 - 1; }
-    var code = 0 - 1;
-    var done = 0;
-    while (done == 0) {
-        var r = syscall(SYS_WAITPID, pid);
-        if (r == 0 - 2) { syscall(44); }
-        else { code = r; done = 1; }
-    }
-    return code;
+    if (blen > 0) { return syscall(43, cmd, len | SH_SPAWN_CLEANFD, &sh_env_blob, blen); }
+    return syscall(43, cmd, len | SH_SPAWN_CLEANFD, 0, 0);
 }
 
 # Run a 2-stage pipeline. Returns cmd2's exit code (>=0); EXIT_NOT_RUN when a stage is refused or the
@@ -686,9 +766,10 @@ fn sh_run_pipeline(line, mode): i64 {
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return EXIT_NOT_RUN;
     }
-    # Both stages must EXIST before we open the pipe + arm any redirect — else a missing
-    # cmd1/cmd2 fails its #37 with the fd-swap armed, dangling onto the NEXT command (same
-    # one-shot-redirect hazard the `>` path guards against).
+    # Both stages must EXIST before we open the pipe or arm any redirect: a missing program is
+    # reported by name, before any confirm prompt. (Until agnos 1.57.6 a launch that failed with
+    # the redirect armed also left it armed for the NEXT command; every #43/#37 return now clears
+    # the caller's arm set, success or not.)
     if (_sh_bin_probe(cmd1) == 0) {
         eprintln_cstr("run: no such command in pipeline stage 1");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
@@ -696,6 +777,13 @@ fn sh_run_pipeline(line, mode): i64 {
     }
     if (_sh_bin_probe(cmd2) == 0) {
         eprintln_cstr("run: no such command in pipeline stage 2");
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return EXIT_NOTHING_TO_RUN;
+    }
+    # Each stage must also fit spawn_path's line form, checked before anything is armed: refused here
+    # with a reason, never by _sh_pipe_spawn, which must not return without the #43 its arm is for.
+    if (strlen(cmd1) > SH_SPAWN_LINE_MAX || strlen(cmd2) > SH_SPAWN_LINE_MAX) {
+        eprintln_cstr("run: pipeline stage too long (agnos launches at most 127 bytes)");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return EXIT_NOTHING_TO_RUN;
     }
@@ -720,27 +808,12 @@ fn sh_run_pipeline(line, mode): i64 {
     }
     var rfd = load64(&fds);
     var wfd = load64(&fds + 8);
-    # Stage 1: stdout -> pipe write end; runs to completion, fills the buffer, exits
-    # (the kernel auto-restores fd 1 on resume). Nothing between the arm and the #37
-    # issues another syscall (sh_build_env_blob inside sh_exec_line is pure memory).
-    # ⭐⭐ STAGE 1 IS SPAWNED, NOT RUN TO COMPLETION (agnos ipc bite 11) — this is what makes the
-    # pipeline STREAM. `sh_exec_line` uses execwait `#37`, which runs the child inside agnsh's own
-    # syscall frame with IF CLEARED and the child deliberately non-schedulable: for its entire life
-    # NOTHING else on the box runs, so stage 2 could not possibly be alive at the same time. That is
-    # why every pipeline until now was store-and-forward, capped at one buffer of output.
-    # `sh_exec_line_sched` uses the non-blocking `#43`, which makes the child an ordinary scheduled
-    # proc — producer and consumer alive together, which is the whole bite.
-    # ⚠ It still WAITS for stage 1 here. Full duplex needs stage 2 spawned too, and this ordering
-    # (producer first, then the consumer draining) is the shape that keeps `rc1` meaningful and the
-    # exit-code contract identical to before.
     # ⭐⭐ BOTH STAGES ARE SPAWNED, AND NEITHER IS WAITED FOR UNTIL BOTH EXIST (agnos ipc bite 11).
-    # That is what makes a pipeline STREAM, and both halves are required:
-    #   · `sh_exec_line` (#37) runs the child inside agnsh's own syscall frame with IF CLEARED and the
-    #     child non-schedulable — for its entire life NOTHING else on the box runs.
-    #   · `sh_exec_line_sched` (#43) fixes the scheduling but still POLLS TO COMPLETION.
-    # Either leaves exactly one stage alive at a time, so the producer can only ever deliver one
-    # ring-full before a consumer exists. Measured with stage 1 on `sh_exec_line_sched`:
-    # `grep . /etc/ssl/cert.pem | wc` reported **4080** — the ring size, to the byte.
+    # That is what makes a pipeline STREAM. `sh_exec_line` (#37) and `sh_exec_line_sched` (#43 plus
+    # a wait) each run their child to completion, so either leaves exactly one stage alive at a
+    # time, and the producer can only ever deliver one ring-full before a consumer exists. Measured
+    # with stage 1 on `sh_exec_line_sched`: `grep . /etc/ssl/cert.pem | wc` reported **4080** — the
+    # ring size, to the byte.
     # ⛔ CHECK THE ARM. exec_redirect#62's return was discarded at all three arm
     # sites: if arming failed, the stage ran anyway with its stdout still on the
     # terminal, so a pipeline silently degraded into "run stage 1 normally, then
@@ -768,24 +841,34 @@ fn sh_run_pipeline(line, mode): i64 {
     sys_close(wfd);
     # Stage 2: stdin -> the read end, ALSO spawned, so producer and consumer are alive together. It
     # drains while stage 1 writes and sees a genuine EOF once stage 1's write end is gone.
+    # ⛔ IF STAGE 2 CANNOT START, CLOSE OUR READ END BEFORE REAPING STAGE 1. Stage 1 may already be
+    # blocked on a full ring, and with no stage 2 our rfd is the last reader on the box: closed, its
+    # write fails with EPIPE and it exits; held across the reap, the shell waits for a producer that
+    # is waiting for a reader (2.0.1 — agnos pipeline-smoke `s2fail`, `grep . /etc/ssl/cert.pem |
+    # notelf` with /bin/notelf not an ELF).
     if (sh_exec_redirect(0, rfd) < 0) {
         eprintln_cstr("run: failed to arm pipeline stage 2 redirect");
-        _sh_pipe_reap(pid1);
         sys_close(rfd);
+        sh_wait_child(pid1);
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return 1;
     }
     var pid2 = _sh_pipe_spawn(cmd2);
     if (pid2 < 0) {
         eprintln_cstr("run: failed to launch pipeline stage 2");
-        _sh_pipe_reap(pid1);
         sys_close(rfd);
+        sh_wait_child(pid1);
         audit_exec_ctx(line, "error", pid2);
         return 1;
     }
-    var rc2 = _sh_pipe_reap(pid2);
-    _sh_pipe_reap(pid1);                            # producer normally exits first; reap it regardless
+    # ⛔ AND CLOSE IT AS SOON AS STAGE 2 EXISTS (2.0.1). The arm was applied into stage 2's own fd
+    # table at the spawn, so this drops only the shell's claim. Until 2.0.1 it was held until after
+    # both reaps, which kept a reader alive once stage 2 had exited: a producer with more to write
+    # blocked on the full ring for good while the shell waited to reap it (agnos pipeline-smoke
+    # `early`, `grep . /etc/ssl/cert.pem | echo pipeearly`).
     sys_close(rfd);
+    var rc2 = sh_wait_child(pid2);
+    sh_wait_child(pid1);                            # producer normally exits first; reap it regardless
     # The pipeline's exit status is stage 2's, matching the return contract.
     audit_exec_ctx(line, audit_exec_outcome(rc2), rc2);
     # ⛔ NEVER RETURN A BARE NEGATIVE. The dispatcher reads <0 as "this launcher
@@ -810,8 +893,9 @@ fn sh_try_pipeline_launch(line, mode): i64 {
 # Output redirection `cmd > file` — the write sibling of the pipeline. exec_redirect#62
 # copies the DST fd's vfs-table entry into the child's SRC slot, so DST can be a plain
 # FILE fd (not just a pipe): open FILE for write, arm (1 -> FILE), run cmd under #37,
-# and cmd's stdout lands straight in FILE — no intermediate pipe, so no 4088-byte cap.
-# The kernel auto-restores fd 1 on #37 resume; we close FILE after.
+# and cmd's stdout lands straight in FILE — no intermediate pipe. Since agnos 1.57.7 the
+# arm is applied into the child's own fd table, so there is nothing to restore; we close
+# FILE after.
 #
 # SAFETY (why this does NOT reopen audit C2's execve-injection hole): '>' is a shell
 # metacharacter is_safe_path rejects, exactly like '|'. We never pass it THROUGH to a
@@ -904,9 +988,17 @@ fn sh_run_redirect(line, mode): i64 {
     # Otherwise a typo (`notacmd > f`) would arm exec_redirect#62, then #37 fails on the
     # missing binary BEFORE the kernel consumes/restores it — leaving the redirect live to
     # swallow the NEXT command's stdout. Probing first = no dangling arm, and no empty
-    # target file created for a typo.
+    # target file created for a typo. (agnos 1.57.6+ clears the arm on every #37 return,
+    # so the dangling arm is history; the empty file for a typo is not.)
     if (_sh_bin_probe(cmd) == 0) {
         eprintln_cstr("run: no such command");
+        audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
+        return EXIT_NOTHING_TO_RUN;
+    }
+    # The same reasoning for a command #37 will refuse outright (2.0.1): a line over the 127-byte
+    # cap used to reach the launch, which failed silently AFTER the target had been truncated.
+    if (strlen(cmd) > SH_SPAWN_LINE_MAX) {
+        eprintln_cstr("run: command line too long (agnos launches at most 127 bytes)");
         audit_exec_ctx(line, "error", AUDIT_NO_EXIT);
         return EXIT_NOTHING_TO_RUN;
     }
@@ -930,7 +1022,7 @@ fn sh_run_redirect(line, mode): i64 {
         audit_exec_ctx(line, "error", fd);
         return 1;
     }
-    # Arm stdout -> FILE, then run cmd to completion (kernel auto-restores fd 1 on resume).
+    # Arm stdout -> FILE, then run cmd to completion (#37 applies the arm into the child's table).
     # The arm's return is checked: unarmed, the command would run with its output
     # on the terminal while the (already-created, already-truncated) target stayed
     # empty — the user's file silently emptied and the output somewhere else.
@@ -948,8 +1040,12 @@ fn sh_run_redirect(line, mode): i64 {
     # sh_try_redirect_launch, where the dispatcher read it as "not a redirect"
     # and fell through — so a redirect that FAILED to launch was retried as a
     # bareword and then as natural language, with the target file already
-    # truncated. Collapse to a handled 1.
-    if (rc < 0) { return 1; }
+    # truncated. Collapse to a handled 1 — and say so: until 2.0.1 this path was the one
+    # launch failure that printed nothing at all.
+    if (rc < 0) {
+        eprintln_cstr("run: failed to launch program");
+        return 1;
+    }
     return rc;
 }
 

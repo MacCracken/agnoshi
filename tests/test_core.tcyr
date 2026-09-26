@@ -1323,6 +1323,17 @@ fn main() {
     # Writable scratch buffer, so the non-mutation assertions below are real.
     var pbuf[64];
 
+    # sh_exit_status (2.0.1): an agnos wait status as the shell reports it. agnos 1.57.7 encodes a
+    # death by signal N as 0x100 | N; ADR-008 § 4 promises 128 + N, as host_exec already returns.
+    check("exit_status: exit 0 stays 0", sh_exit_status(0) == 0);
+    check("exit_status: exit 3 stays 3", sh_exit_status(3) == 3);
+    check("exit_status: exit 255 stays 255", sh_exit_status(255) == 255);
+    check("exit_status: a fault (128 + vector) stays an exit code", sh_exit_status(142) == 142);
+    check("exit_status: SIGKILL (0x100 | 9) -> 137", sh_exit_status(0x100 | 9) == 137);
+    check("exit_status: SIGTERM (0x100 | 15) -> 143", sh_exit_status(0x100 | 15) == 143);
+    check("exit_status: a launch failure passes through", sh_exit_status(0 - 1) == 0 - 1);
+    check("exit_status: WOULD_BLOCK passes through", sh_exit_status(0 - 2) == 0 - 2);
+
     # _sh_find_pipe / _sh_find_redirect: offset of the separator, -1 when absent.
     check("find_pipe absent", _sh_find_pipe("ls -la") == 0 - 1);
     check("find_pipe at offset", _sh_find_pipe("ls | wc") == 3);
@@ -2839,13 +2850,20 @@ fn main() {
     var hlog = tmp_state_path("agnsh_selftest_hostlog");
     xunlink(hlog);
     audit_path_override_set(hlog);
-    # Program words: a plain name only — never a path, never a metacharacter.
-    check("a program word", _host_prog_word_ok("ls", 2) == 1);
-    check("a dotted program word", _host_prog_word_ok("python3.12", 10) == 1);
-    check("g++ is a program word", _host_prog_word_ok("g++", 3) == 1);
-    check("a path is not a program word", _host_prog_word_ok("a/b", 3) == 0);
-    check("a metacharacter is not", _host_prog_word_ok("rm;x", 4) == 0);
-    check("an empty word is not", _host_prog_word_ok("", 0) == 0);
+    # Program words: a plain name only — never a path, never a metacharacter. sh_prog_word_ok is
+    # shared with agnos's bareword launcher since 2.0.1 (it was the host's _host_prog_word_ok).
+    check("a program word", sh_prog_word_ok("ls", 2) == 1);
+    check("a dotted program word", sh_prog_word_ok("python3.12", 10) == 1);
+    check("g++ is a program word", sh_prog_word_ok("g++", 3) == 1);
+    check("a path is not a program word", sh_prog_word_ok("a/b", 3) == 0);
+    check("a metacharacter is not", sh_prog_word_ok("rm;x", 4) == 0);
+    check("an empty word is not", sh_prog_word_ok("", 0) == 0);
+    # Only the word is judged, never the rest of the line: agnos refused `ls $HOME` and `what is
+    # $HOME` alike until 2.0.1, because it validated the whole line before any lookup.
+    check("the word, not the line: `ls` of `ls $HOME`", sh_prog_word_ok("ls $HOME", 2) == 1);
+    check("a sentence's `$HOME` is not a program word", sh_prog_word_ok("$HOME", 5) == 0);
+    check("nor its `(in`", sh_prog_word_ok("(in", 3) == 0);
+    check("nor `what's`", sh_prog_word_ok("what's", 6) == 0);
     # PATH lookup over a folder this test builds: an executable, a plain file, a directory.
     var pdir = tmp_state_path("agnsh_selftest_pathdir");
     var pprog = str_cat3_cstr(pdir, "/", "agnsh_selftest_prog");
