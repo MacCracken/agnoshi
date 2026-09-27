@@ -6,6 +6,104 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **The checkpoint store** (`src/checkpoint.cyr`, rewritten; [ADR-009](docs/adr/009-checkpoint-store.md)),
+  the roadmap's 2.0.x checkpointing slot. It saves what a remove or a move is about to destroy, so
+  that `undo` can put it back.
+  - **Where**: a private state folder beside the report folder. On the host that is
+    `$XDG_STATE_HOME/agnoshi/checkpoints/`, by default `~/.local/state/agnoshi/checkpoints/`; on agnos,
+    `/.agnsh_checkpoints/`. It is created 0700, and on the host refused unless it is a real directory
+    that you own and nobody else can write. (Ruled 2026-09-26 over the roadmap's
+    `~/.agnoshi/checkpoints/`: XDG lists undo history as state data.)
+  - **What**: one file per entry — a short text header, then the saved bytes — created exclusively,
+    0600 and never through a symlink. Names are fixed-width, so they sort in the order they were made.
+  - **Groups**: every entry one command makes shares a group. `ckpt_undo` puts back the newest group,
+    newest entry first, and the newest 100 groups are kept; each new group prunes once, before its
+    first entry.
+  - **Saved**: a regular file of at most 64 MiB about to be removed, or one a move is about to
+    overwrite. A move itself is renamed back, and its destination follows `mv` (into a directory when
+    there is one).
+  - **Refused, with a reason**: a directory, a symlink, a device, a larger file, or a path that
+    cannot be recorded. The caller decides whether its command runs anyway.
+  - **Restores never overwrite**: when something has appeared at a path since, it stays, and so does
+    the entry, with its reason. Permission bits come back without setuid, setgid or sticky.
+  - ⚠ **No caller yet**: nothing is checkpointed and there is no `undo` builtin until approval-gated
+    exec and `undo` (roadmap 2.0.x). It is compiled into every build, so every target type-checks it —
+    agnos included, where its `stat` calls take the path length.
+  - **Why a rewrite, not a port**: the v1.0 manager kept its index in memory, so an undo in a second
+    `agnsh -c` could never have found anything. It named backups by a counter that restarted at 0 in
+    each process, overwriting earlier ones, followed symlinks both ways, kept no permission bits, and
+    fell back to a fixed `/tmp` folder any user could create first. It also called seven stdlib
+    helpers that no longer exist, so no build could include it.
+- **Tests**:
+  - 113 unit checks (1052): round trips in a scratch folder — a remove, a move, a move into a folder,
+    a move over a file — plus groups, pruning, every refusal, the never-overwrite rule and malformed
+    entries.
+  - The bench driver's agnos `-c` table gains a natural-language line (20 checks). It is the first
+    check that files a report on agnos.
+  - Benchmark `checkpoint/remove_4k`.
+
+### Changed
+
+- The report folder's rules moved to `src/statepaths.cyr` as `state_dir_from` and
+  `state_dir_prepare`, now shared with the checkpoint store, so the two cannot drift apart on a
+  security check. The report folder's messages are unchanged.
+
+### Fixed
+
+- **The agnos bench's idle gate failed a shell that was idle** (`scripts/agnos-qemu-bench.py`,
+  `tests/agnos_hostsh.cyr`). It failed 2 of this tree's first 4 runs: agnsh had been charged 0 cpu
+  ticks, but read READY at the end of the 1 s window.
+  - **Cause**: agnos re-checks a blocked pipe read on a 100 ms backstop deadline (`rd5_wait`), so a
+    blocked reader is READY for an instant about every 11th timer tick. The driver read the state
+    once, right after its own sleep ended — which also ends on a tick.
+  - **Fix**: the driver reads the state once per tick across the window. The gate is now at most 5
+    ticks and BLOCKED in most of at least 20 samples. `HS-IDLE` prints `blocked=<b> samples=<m>` in
+    place of `state=<s>`, and the bench's table shows `b/m`.
+  - **Why samples, not "READY with 0 ticks is fine"**: a shell that polls its stdin with
+    `sched_yield`#44 is never BLOCKED, and it is charged 0 ticks as well, because agnos does not charge
+    a #44 park. Only the state tells it from a blocked read.
+  - **Proof** (agnos 1.57.9, KVM): a build patched to poll — a non-blocking read plus #44, the loop
+    agnsh keeps only while a background job runs — reads **0/100** at `-smp 1` and **0/101** at
+    `-smp 4`, with 0 ticks, and fails. This tree reads **91/100** and **94/100**; at `-smp 1` its 9
+    READY samples are the backstop ticks.
+
+### Performance
+
+- `checkpoint/remove_4k` — one command's checkpoint of a 4 KiB file against a full store of 100
+  groups: **152 µs** (median of five runs, 152.0–153.0). Listing and sorting the folder is most of it:
+  the first cut's insertion sort measured 386 µs; a merge sort brought it to about 150 µs and keeps a
+  very large group from sorting in the square.
+- The other twelve benchmarks time code this change does not touch. Five alternating runs against
+  2.0.2's bench binary (host load 1.3–1.8) put every median within −2.2 % to +1.3 %, except
+  `sanitize/safe_path`: 59 → 36 ns, with its function unchanged. The new includes moved its code —
+  layout, not a claim. One `bench-history.csv` row (`07cd0b4-dirty`).
+- Binaries: x86_64 DCE 232,472 → 233,224 bytes (+752) and aarch64 678,760 → 679,512 (+752); the store
+  has no caller, so DCE drops it. agnos 370,912 → 388,128 (+17,216): its build keeps every function.
+  The store's two buffers are allocated on first use — as module-scope arrays they were 44 KiB of
+  every binary's image.
+
+### Verified
+
+- All CI gates on the tree; unit 1052/1052, security 26/26, parse corpus 358/358, smoke 137/137;
+  the same suites on aarch64 under qemu-user; host-reachable coverage 282/282.
+- **The store's safety checks catch what they claim.** Each of these mutations fails a check:
+  - dropping the "something is there now" test (and the exclusive create still refuses to overwrite);
+  - dropping the size re-check on the open descriptor;
+  - pruning after every entry instead of once per group;
+  - following a symlink where the store must not;
+  - breaking the name order, which fails six checks, undo's choice of group among them.
+- **agnos 1.57.9 in QEMU (KVM)**:
+  - `scripts/agnos-qemu-test.py`: **49/49 at `-smp 1` and 49/49 at `-smp 4`**, 64 complete audit
+    records on disk.
+  - `scripts/agnos-qemu-bench.py`: 20/20 `-c` statuses on every run. The new `nl-ok` line left
+    `/.agnsh_reports/<stamp>-<pid>.txt` and `latest.txt` on the disk image ("executed, exit 0") — the
+    first time agnos's report folder was checked there.
+  - The idle gate failed 2 of the first 4 bench runs on an idle agnsh (see Fixed). With the sampled
+    gate, 10 of 10 runs passed, every one at 0 ticks. At `-smp 1`, all five had 91 of 100 samples
+    BLOCKED; at `-smp 4`, the five had 94 to 96. The polling build failed both of its runs.
+
 ## [2.0.2] - 2026-09-26 — no natural language runs as root, and agnos's launchers exit as ADR-008 says
 
 The roadmap's 2.0.2 slot — wiring `src/security.cyr` into the binary — together with 2.0.1's

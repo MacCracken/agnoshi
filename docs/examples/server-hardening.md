@@ -10,7 +10,7 @@
 > | `agnsh --strict` as a login shell | **`--strict` is not a flag.** It prints usage and exits **1**, so as a login shell the session ends at once. The flag is `--mode strict`. |
 > | strict mode = every command needs approval | **Every launch confirms** (`[y/N]`, since 2.0.0), but approval-gated execution does not exist: a HIGH-risk natural-language line reports `Approval required -- not executed` and cannot be approved, and a typed shell line skips the tiers (a BLOCKED one still confirms). `ApprovalManager` is not in the binary. |
 > | `/etc/agnoshi/agnsh.conf` configures it | **No config file is read at all** — no path, no parser, nothing in `src/`. |
-> | Checkpoint makes destructive ops reversible | **No checkpointing, no `undo`.** `checkpoint.cyr` is not compiled. |
+> | Checkpoint makes destructive ops reversible | **No checkpointing, no `undo`.** The checkpoint store is compiled in (2.0.3) but nothing calls it. |
 > | Restricted mode blocks privilege escalation | **There is no privilege escalation to block** — nothing invokes `sudo` — and **no `--restricted` flag** (it prints usage and exits 1). The one restriction that exists is automatic (2.0.2): agnsh running as root runs no natural-language line. |
 >
 > **What IS true and useful today**: permission classification with basename

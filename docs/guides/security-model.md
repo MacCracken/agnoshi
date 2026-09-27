@@ -133,11 +133,24 @@ is not). Linux hosts were never affected — `O_APPEND` is honoured there.
 
 ### 6. Checkpoint / Undo — ⚠ NOT IN THE SHIPPED BINARY
 
-`src/checkpoint.cyr` implements backup-before-destructive-op, `undo` and a
-100-entry auto-prune, but it is **not in the binary's include graph**, there is
-no `undo` builtin, and no `~/.agnoshi/checkpoints/` directory is ever created.
-**Do not rely on any rollback guarantee.** It calls seven stdlib helpers that
-no longer exist, so its wire-up is a re-implementation (roadmap 2.0.x — checkpointing).
+The checkpoint store (`src/checkpoint.cyr`, rewritten in 2.0.3 —
+[ADR-009](../adr/009-checkpoint-store.md)) is compiled in, but **nothing calls it
+yet**: no command is checkpointed, there is no `undo` builtin, and its folder is
+never created. **Do not rely on any rollback guarantee** until approval-gated exec
+and `undo` (roadmap 2.0.x). What it will guarantee when called:
+
+- **A private folder** — `$XDG_STATE_HOME/agnoshi/checkpoints/` (default
+  `~/.local/state/agnoshi/checkpoints/`; `/.agnsh_checkpoints/` on AGNOS), under
+  the report folder's rules: 0700, and on the host refused unless it is a real
+  directory you own that nobody else can write.
+- **Entries created 0600**, exclusively and never through a symlink, and removed
+  again if their write fails.
+- **Only regular files are saved**, up to 64 MiB. The source is opened read-only,
+  non-blocking and without following a symlink, then re-checked on the descriptor.
+  A directory, symlink, device or larger file is refused, and the caller told.
+- **A restore never overwrites.** It creates exclusively, never through a symlink,
+  and drops setuid, setgid and sticky from the saved permission bits.
+- **The newest 100 groups are kept**, one group per command.
 
 ### 7. Privilege Escalation — ⚠ NOT IN THE SHIPPED BINARY
 
@@ -234,7 +247,7 @@ owns your audit trail. **It does not make `/tmp` a safe home for an audit log**:
 a same-uid process is unaffected, and the directory is still world-writable. Treat
 the fallback as degraded operation for a broken environment, not a supported
 configuration.
-| `~/.agnoshi/checkpoints/` | *(n/a)* | ⚠ Never created — `checkpoint.cyr` is not compiled |
+| `~/.local/state/agnoshi/checkpoints/` | 0700 / entries 0600 | ⚠ Never created yet — the store (2.0.3) has no caller |
 | `/usr/local/bin/agnsh` | 0755 | Binary — exec, not writable by users |
 
 ## What Can Still Go Wrong

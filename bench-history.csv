@@ -279,3 +279,16 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-09-26T19:48:18Z,4a8c847-dirty,main,sanitize/safe_path,60
 2026-09-26T19:48:18Z,4a8c847-dirty,main,history/add_at_cap,303
 2026-09-26T19:48:18Z,4a8c847-dirty,main,security/context_new,3305
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,parse/list_files,1913
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,parse/cd,1558
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,parse/find_files,2145
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,parse/git_status,1549
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,parse/shell_cmd,3369
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,translate/list_files,123
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,translate/cd,197
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,perm/classify_5,1357
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,sanitize/basename,44
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,sanitize/safe_path,36
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,history/add_at_cap,307
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,security/context_new,3344
+2026-09-26T20:45:30Z,07cd0b4-dirty,claude/ecstatic-wiles-4e5d1c,checkpoint/remove_4k,155071

@@ -23,9 +23,10 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 
 ⚠ **Not shipped yet, though the modules exist in `src/`**: interactive approval
 prompts — so USER_WRITE, SYSTEM_WRITE and ADMIN natural-language lines report
-`Approval required` and do not run — checkpoint/`undo`, and privilege escalation. `src/checkpoint.cyr`
-is **not in the binary's include graph**; `src/security.cyr` is (2.0.2), but only
-its root restriction runs — its `sudo` path has no caller; and
+`Approval required` and do not run — `undo`, and privilege escalation. `src/checkpoint.cyr`
+(the checkpoint store, ADR-009) is compiled in but nothing calls it yet, so nothing is
+checkpointed; `src/security.cyr` is compiled in (2.0.2), but only its root restriction
+runs — its `sudo` path has no caller; and
 `src/approval.cyr` is compiled in only for its risk classifier —
 `ApprovalManager_request`, the prompt itself, has no caller. A HIGH-risk command
 reports `Approval required` but is not prompted or blocked, there is no `undo`
@@ -86,11 +87,12 @@ src/                                COMPILED INTO THE BINARY (src/agnsh.cyr's in
 ├── run_host.cyr      — the Linux host's $PATH lookup and argv launcher (host-only)
 ├── security.cyr      — who agnsh runs as: a host session as root is restricted (2.0.2);
 │                       its sudo escalation path is compiled in with no caller
+├── checkpoint.cyr    — the checkpoint store: what a remove or move destroys, kept for undo
+│                       (ADR-009); compiled in with no caller until approval-gated exec
 └── nlexec.cyr        — the NL path: verdict, report, execution
 
 src/                                PRESENT BUT NOT IN THE BINARY
 ├── session.cyr       — shell session lifecycle, cd/undo builtins
-├── checkpoint.cyr    — destructive-op rollback (blocked: 7 missing stdlib symbols)
 ├── completion.cyr    — tab completion engine
 ├── prompt.cyr        — prompt rendering with git branch
 ├── config.cyr        — shell configuration
@@ -101,8 +103,9 @@ src/                                PRESENT BUT NOT IN THE BINARY
 ```
 
 ⚠ **The split matters.** Anything in the second group is not in the shipped
-binary, so features it implements — approval prompts, `undo`, sudo escalation,
-tab completion, the git-branch prompt — do not exist at runtime today. Wire-up
+binary, so features it implements — approval prompts, `undo`, tab completion,
+the git-branch prompt — do not exist at runtime today. Nor do sudo escalation or
+checkpointing: their code is in the first group, with no caller yet. Wire-up
 slices are in `docs/development/roadmap.md` (the 2.0.x and 2.1.x arcs).
 
 ## Documentation

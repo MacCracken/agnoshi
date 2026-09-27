@@ -4,9 +4,11 @@
 # `cyrius build --agnos tests/agnos_hostsh.cyr <out>`. scripts/agnos-qemu-bench.py seeds it as /bin/agnsh,
 # so kybernet runs it at boot (no keyboard, no typing), and seeds the shells it measures as /bin/agnsh-b (this
 # tree) and, optionally, /bin/agnsh-a (a baseline). It prints, alternating a and b each round:
-#   HS-IDLE <shell> ticks=<n> state=<s> exit=<e>  agnsh on an empty pipe for 1 s, once blocked in its first
-#                                                 read: the #99 cpu ticks charged to it (a blocked read: 0) and
-#                                                 its state at the end (6 = BLOCKED). Round 1 only.
+#   HS-IDLE <shell> ticks=<n> blocked=<b> samples=<m> exit=<e>
+#                                                 agnsh on an empty pipe for 1 s, once blocked in its first
+#                                                 read: the #99 cpu ticks charged to it (a blocked read: 0),
+#                                                 and how many of m state reads, one per timer tick, found
+#                                                 it BLOCKED (6). Round 1 only.
 #   HS-RUN <shell> n=<N> us=<t> exit=<e>          N queued `echo hs` lines through one agnsh, spawn to reap
 #   HS-PIPE <shell> n=<N> us=<t> exit=<e>         N queued `echo hs | wc` pipelines, the same way
 # then, once per shell, the `agnsh -c` exit-status checks (HS-C, below), and `HS-DONE`. The lines queued before
@@ -138,16 +140,28 @@ fn hs_idle(path) {
         syscall(41, 5, 0, 0, 0);
     }
     syscall(41, 200, 0, 0, 0);
+    # The state is SAMPLED, once per timer tick, not read once at the end. agnos re-checks a blocked pipe
+    # read on a 100 ms backstop deadline (rd5_wait), so a blocked reader is READY for an instant about
+    # every 11th tick, and our own sleep also ends on a tick, so one read at the end can land on READY.
+    # A poller is never BLOCKED — a #44 park leaves it RUNNING or READY, and its halt is not charged, so
+    # its ticks stay near 0 too. sleep_ms#41 blocks only its caller (1.57.7); 5 ms ends at the next tick.
     var k0 = hs_proc(pid, 56);
-    syscall(41, 1000, 0, 0, 0);                                   # sleep_ms#41 blocks only its caller (1.57.7)
+    var blocked = 0;
+    var samples = 0;
+    var t0 = hs_us();
+    while (hs_us() - t0 < 1000000) {
+        syscall(41, 5, 0, 0, 0);
+        if (hs_proc(pid, 8) == 6) { blocked = blocked + 1; }
+        samples = samples + 1;
+    }
     var k1 = hs_proc(pid, 56);
-    var st = hs_proc(pid, 8);
     syscall(1, wfd, "exit\n", 5, 0);
     syscall(6, wfd, 0, 0, 0);
     var code = hs_reap(pid);
     hs_line("HS-IDLE", path);
     hs_kv("ticks", k1 - k0);
-    hs_kv("state", st);
+    hs_kv("blocked", blocked);
+    hs_kv("samples", samples);
     hs_kv("exit", code);
     hs_out("\n");
     return 0;
@@ -399,6 +413,9 @@ fn hs_c_all(path) {
     hs_c(path, "bg-ok", "echo hs &", 0, "", 0);
     hs_c(path, "pipe-ok", "echo hs | wc", 0, "", 0);
     hs_c(path, "redir-ok", "echo hs > /hs-c.tmp", 0, "", 0);
+    # A natural-language line: it runs ls and files its report in /.agnsh_reports (ADR-008 § 2). A report
+    # folder that cannot be used would say so on stderr, which must stay empty.
+    hs_c(path, "nl-ok", "list files in /", 0, "", 0);
     hs_c(path, "fg-launch", "notelf", 127, "failed to launch program", 0);
     hs_c(path, "fg-unsafe", "ls $HOME", 126, "unsafe path", 0);
     hs_c(path, "pipe-missing", "nosuchprog | wc", 127, "no such command in pipeline stage 1", 0);

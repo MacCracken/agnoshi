@@ -12,6 +12,7 @@ ADRs document the why behind significant architectural decisions.
 - [ADR-006: Cyrius cstring/Str Dispatch Discipline (refines ADR-005)](006-cstr-str-dispatch-discipline.md) — 2026-05-11
 - [ADR-007: Input Classification — Shell First, Then Specific Before Broad (refines ADR-003)](007-input-classification.md) — 2026-09-23
 - [ADR-008: The NL Execution Contract (2.0.0)](008-nl-exec-contract.md) — 2026-09-23, amended 2026-09-26 (2.0.2: restricted sessions)
+- [ADR-009: The Checkpoint Store (2.0.3)](009-checkpoint-store.md) — 2026-09-26
 
 ## Format
 
@@ -25,7 +26,7 @@ Each ADR follows the [MADR-inspired](https://adr.github.io/madr/) template:
 
 ## Writing a new ADR
 
-1. Pick the next sequential number (current: 008, next: 009)
+1. Pick the next sequential number (current: 009, next: 010)
 2. Copy an existing ADR as template
 3. Update the index in this README
 4. Keep it short — an ADR is a decision record, not an essay

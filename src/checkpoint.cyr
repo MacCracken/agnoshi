@@ -1,132 +1,772 @@
-enum CheckpointOp {
-    FILE_REMOVED = 0;
-    FILE_MOVED = 1;
+# checkpoint.cyr — the checkpoint store: what a remove or a move is about to destroy, kept so that
+# `undo` can put it back (2.0.3, ADR-009).
+#
+# ⭐ 2.0.3 — REWRITTEN AS A STORE ON DISK. The v1.0 manager kept its index in memory: which backup
+# belonged to which file lived only as long as the process, so `agnsh -c "remove f"` followed by
+# `agnsh -c "undo"` could never have worked. It named backups by an in-process counter that restarted
+# at 0 in every process (overwriting earlier ones), followed symlinks both ways, kept no permission
+# bits, fell back to a fixed /tmp folder any user could create first, and called seven stdlib helpers
+# that no longer exist — so no build could include it. Only the idea survives.
+#
+# No caller yet (roadmap 2.0.x): approval-gated exec checkpoints before every REMOVE and MOVE, and the
+# `undo` builtin restores the newest group.
+#
+# THE STORE is a private state folder (statepaths.cyr): host $XDG_STATE_HOME/agnoshi/checkpoints,
+# by default ~/.local/state/agnoshi/checkpoints; agnos /.agnsh_checkpoints. One file per entry:
+#   <stamp>-<pid>-<group>-<index>.ckpt    20260926T193051.123456789Z-0000073264-000001-0001.ckpt
+# Every field is fixed-width, so names sort in the order they were made. A GROUP — the entries one
+# command made, sharing the name up to -<index> — is undone together, newest entry first, and the
+# newest CKPT_KEEP groups are kept: each new group prunes the store once, so a command that saves many
+# files does not list the folder for each. ⚠ The order is the wall clock's: agnos's has whole-second
+# resolution (clock_epoch_ns), so there two groups made in one second by different processes sort by
+# pid; and a clock set back sorts new groups before old ones.
+# An entry is a header of `key: value` lines, a blank line, then the saved file's bytes:
+#   agnsh-checkpoint 1
+#   op: remove | move
+#   path: /abs/path        the file removed, or the source of a move
+#   to: /abs/path          a move's destination: where the file went
+#   mode: 644              the saved file's permission bits, octal — present when a file was saved
+#   size: 1234             bytes after the blank line (0: none)
+#   time: 2026-09-26T19:30:51Z
+#
+# WHAT IS SAVED: a regular file of at most CKPT_MAX_BYTES — one about to be removed, or one a move is
+# about to overwrite. A directory, symlink or device is refused with a reason, and the caller decides
+# whether its command runs anyway. A move needs no copy of what it moves: undo renames it back.
+# A RESTORE NEVER OVERWRITES: when something has appeared at a path since, it is left alone and the
+# entry stays, with the reason.
+
+var CKPT_KEEP = 100;                # groups kept: a new group removes the oldest beyond
+var CKPT_MAX_BYTES = 67108864;      # 64 MiB — a larger file is refused rather than copied
+var CKPT_GROUP_LEN = 44;            # <stamp 26>-<pid 10>-<group 6>
+var CKPT_NAME_LEN = 54;             # a group, -<index 4>, .ckpt
+var CKPT_HEAD_MAX = 12288;          # a header is at most this long (two 4 KiB paths and the rest)
+var CKPT_S_IFMT = 61440;            # 0170000: the file-type bits of a mode
+var CKPT_S_IFREG = 32768;           # 0100000
+var CKPT_S_IFDIR = 16384;           # 0040000
+var CKPT_S_IFLNK = 40960;           # 0120000
+
+# The two buffers are allocated on first use and kept. As module-scope arrays (`var X[N]`, 8N bytes)
+# they were 44 KiB of every binary's image — DCE drops unreachable functions, not globals — for a
+# module with no caller yet.
+var CKPT_IO_LEN = 32768;
+var ckpt_head = 0;                  # CKPT_HEAD_MAX bytes: a header read back
+var ckpt_io = 0;                    # CKPT_IO_LEN bytes: the copy buffer
+var ckpt_group_seq = 0;             # groups this process has started
+
+# The buffers, allocated on first use (0 when that fails).
+fn _ckpt_head_buf() {
+    if (ckpt_head == 0) { ckpt_head = alloc(CKPT_HEAD_MAX); }
+    return ckpt_head;
 }
-struct Checkpoint {
-    op;
-    original_path;
-    backup_path;
+fn _ckpt_io_buf() {
+    if (ckpt_io == 0) { ckpt_io = alloc(CKPT_IO_LEN); }
+    return ckpt_io;
 }
-struct CheckpointManager {
-    checkpoints;
-    checkpoint_dir;
-    count;
+
+# ---- Where the store is ----
+
+# The host store from $XDG_STATE_HOME and $HOME (0 when unset): state_dir_from's rule.
+fn ckpt_dir_from(xdg, home) { return state_dir_from(xdg, home, "checkpoints"); }
+
+# Where this build keeps checkpoints. agnos keeps its root-dotfile style, beside /.agnsh_reports.
+fn ckpt_dir() {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return "/.agnsh_checkpoints";
+    #endif
+    return ckpt_dir_from(getenv("XDG_STATE_HOME"), getenv("HOME"));
 }
-fn CheckpointManager_new() {
-    var home = getenv("HOME");
-    var dir = str_from("/tmp/agnoshi-checkpoints");
-    if (home != 0) {
-        dir = str_cat(home, str_from("/.agnoshi/checkpoints"));
-    }
-    fs_mkdir_p(dir);
-    # Use sys_chmod wrapper for x86/aarch64 portability. NOTE: `dir`
-    # is a Str from str_cat which does NOT null-terminate; str_data(dir)
-    # gives a non-terminated buffer, and chmod expects a cstring. Real
-    # fix is to build a cstring path (cf. agnsh.cyr::audit_log_path)
-    # which lands when checkpoint.cyr gets wired into the binary in
-    # v1.4.0's exec wire-up slice. For now this matches the original
-    # v1.0 contract; the cross-arch fix here is what the linter requires.
-    # Check the return so a silent chmod failure can't leave the
-    # checkpoint dir world-readable (contains pre-destructive-op
-    # backups — meaningful security exposure).
-    # str_cstr, NOT str_data: str_data returns the Str's data pointer, which
-    # str_cat leaves WITHOUT a trailing NUL, so the kernel read past the buffer
-    # until it hit an incidental zero — acting on a path with attacker-adjacent
-    # heap bytes appended. Deferred in v1.3.1 "until checkpoint.cyr is wired in";
-    # str_cstr() shipping in the 6.5.36 stdlib made it a one-token fix, so it is
-    # closed here rather than left as a landmine for the wire-up slice.
-    var chmod_rc = sys_chmod(str_cstr(dir), 448);
-    if (chmod_rc != 0) {
-        # strlen(), not a hand-counted literal (was 53 for a 52-byte string).
-        var cwarn = "agnsh: warning: chmod 0700 failed on checkpoint dir\n";
-        sys_write(2, cwarn, strlen(cwarn));
-    }
-    var p = alloc(24);
-    store64(p, vec_new());
-    store64(p + 8, dir);
-    store64(p + 16, 0);
-    return p;
+
+# Make the store usable (state_dir_prepare): 0, or why not.
+fn ckpt_prepare(dir) { return state_dir_prepare(dir, "checkpoint folder"); }
+
+# ---- Paths, names and numbers ----
+
+# `path` as an absolute path: itself when it starts with '/', otherwise joined to the working
+# directory. agnos has none yet (roadmap 2.1.x — agnsh will track its own), so there a relative path
+# is relative to /. 0 when there is no path or the working directory cannot be read.
+fn ckpt_abs(path) {
+    if (path == 0) { return 0; }
+    if (load8(path) == 0) { return 0; }
+    if (load8(path) == 47) { return path; }
+    #ifdef CYRIUS_TARGET_AGNOS
+    return str_cat3_cstr("/", path, "");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var cwd[4096];
+    if (syscall(SYS_GETCWD, &cwd, 4096) <= 0) { return 0; }
+    return state_join(&cwd, str_cat3_cstr("/", path, ""));
+    #endif
 }
-fn CheckpointManager_checkpoint_remove(self, path) {
-    if (fs_is_dir(path) == 1) {
-        return 0;
+
+# Can `path` go on a header line? Absolute, shorter than 4096 bytes, and no control byte — a newline
+# would end the line early.
+fn ckpt_path_ok(path) {
+    if (path == 0) { return 0; }
+    if (load8(path) != 47) { return 0; }
+    var n = 0;
+    while (load8(path + n) != 0) {
+        var c = load8(path + n);
+        if (c < 32 || c == 127) { return 0; }
+        n = n + 1;
+        if (n > 4095) { return 0; }
     }
-    if (fs_exists(path) == 0) {
-        return 0;
-    }
-    var idx = str_from_int(load64(self + 16));
-    var basename = fs_basename(path);
-    var backup = str_cat(load64(self + 8), str_from("/"));
-    backup = str_cat(backup, idx);
-    backup = str_cat(backup, str_from("_"));
-    backup = str_cat(backup, basename);
-    var result = fs_copy(path, backup);
-    if (result != 0) {
-        return 0;
-    }
-    var cp = alloc(24);
-    store64(cp, CheckpointOp.FILE_REMOVED);
-    store64(cp + 8, path);
-    store64(cp + 16, backup);
-    vec_push(load64(self), cp);
-    store64(self + 16, load64(self + 16) + 1);
     return 1;
 }
-fn CheckpointManager_checkpoint_move(self, source, destination) {
-    var cp = alloc(24);
-    store64(cp, CheckpointOp.FILE_MOVED);
-    store64(cp + 8, source);
-    store64(cp + 16, destination);
-    vec_push(load64(self), cp);
-    store64(self + 16, load64(self + 16) + 1);
+
+# The last component of `path`, as a fresh cstring; trailing slashes are not part of it, so the base
+# of "/a/dir/" is "dir".
+fn ckpt_base(path) {
+    var n = strlen(path);
+    while (n > 1) { if (load8(path + n - 1) == 47) { n = n - 1; } else { break; } }
+    var s = n;
+    while (s > 0) { if (load8(path + s - 1) == 47) { break; } s = s - 1; }
+    var out = alloc(n - s + 1);
+    if (out == 0) { return 0; }
+    memcpy(out, path + s, n - s);
+    store8(out + n - s, 0);
+    return out;
+}
+
+# `n` as exactly `width` decimal digits at `buf`, zero-padded (the low digits when it is longer).
+fn _ckpt_put_fixed(buf, n, width) {
+    var t = n;
+    if (t < 0) { t = 0; }
+    var k = width;
+    while (k > 0) {
+        k = k - 1;
+        store8(buf + k, 48 + (t % 10));
+        t = t / 10;
+    }
+    return width;
+}
+
+# The id of the `seq`-th group process `pid` started, at `ns` (epoch nanoseconds):
+# YYYYMMDDTHHMMSS.nnnnnnnnnZ-pppppppppp-ssssss, fixed width so ids sort in the order they were made.
+fn ckpt_group_id(ns, pid, seq) {
+    var iso = iso8601(ns / 1000000000);             # YYYY-MM-DDTHH:MM:SSZ
+    var buf = alloc(CKPT_GROUP_LEN + 1);
+    if (buf == 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (n < 15) {                                # YYYYMMDDTHHMMSS: the stamp without - and :
+        var c = load8(iso + i);
+        if (c == 0) { return 0; }
+        if (c != 45) { if (c != 58) { store8(buf + n, c); n = n + 1; } }
+        i = i + 1;
+    }
+    store8(buf + 15, 46);                           # '.'
+    _ckpt_put_fixed(buf + 16, ns % 1000000000, 9);
+    store8(buf + 25, 90);                           # 'Z'
+    store8(buf + 26, 45);
+    _ckpt_put_fixed(buf + 27, pid, 10);
+    store8(buf + 37, 45);
+    _ckpt_put_fixed(buf + 38, seq, 6);
+    store8(buf + 44, 0);
+    return buf;
+}
+
+# The file name of entry `index` (1..9999) of `group`.
+fn ckpt_entry_name(group, index) {
+    var buf = alloc(CKPT_NAME_LEN + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, group, CKPT_GROUP_LEN);
+    store8(buf + 44, 45);
+    _ckpt_put_fixed(buf + 45, index, 4);
+    memcpy(buf + 49, ".ckpt", 5);
+    store8(buf + 54, 0);
+    return buf;
+}
+
+# Is `name` (a Str from dir_list) an entry name ckpt_entry_name makes? Nothing else in the folder is
+# ever read, restored or pruned.
+fn ckpt_is_name(name) {
+    if (str_len(name) != CKPT_NAME_LEN) { return 0; }
+    var d = str_data(name);
+    for (var i = 0; i < 49; i = i + 1) {
+        var c = load8(d + i);
+        var want = 0;                               # 0: a digit
+        if (i == 8) { want = 84; }                  # 'T'
+        if (i == 15) { want = 46; }                 # '.'
+        if (i == 25) { want = 90; }                 # 'Z'
+        if (i == 26 || i == 37 || i == 44) { want = 45; }   # '-'
+        if (want == 0) {
+            if (c < 48 || c > 57) { return 0; }
+        } elif (c != want) {
+            return 0;
+        }
+    }
+    var ext = ".ckpt";
+    for (var j = 0; j < 5; j = j + 1) {
+        if (load8(d + 49 + j) != load8(ext + j)) { return 0; }
+    }
     return 1;
 }
-fn CheckpointManager_undo_last(self) {
-    if (load64(self + 16) == 0) {
-        return 0;
-    }
-    store64(self + 16, load64(self + 16) - 1);
-    var cp = vec_get(load64(self), load64(self + 16));
-    vec_pop(load64(self));
-    match load64(cp) {
-        0 => {
-            var result = fs_copy(load64(cp + 16), load64(cp + 8));
-            if (result == 0) {
-                fs_remove(load64(cp + 16));
-                return str_cat(str_from("Restored: "), load64(cp + 8));
-            }
-            return 0;
-        }
-        1 => {
-            var result = fs_rename(load64(cp + 16), load64(cp + 8));
-            if (result == 0) {
-                return str_cat(str_from("Reverted move: "), load64(cp + 8));
-            }
-            return 0;
-        }
+
+# Byte-wise a < b over the first `n` bytes of two cstrings.
+fn _ckpt_less(a, b, n) {
+    for (var i = 0; i < n; i = i + 1) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        if (ca < cb) { return 1; }
+        if (ca > cb) { return 0; }
     }
     return 0;
 }
-fn CheckpointManager_count(self) {
-    return load64(self + 16);
+
+# Do two entry names — or a name and a group id — belong to the same group?
+fn _ckpt_same_group(a, b) {
+    for (var i = 0; i < CKPT_GROUP_LEN; i = i + 1) {
+        if (load8(a + i) != load8(b + i)) { return 0; }
+    }
+    return 1;
 }
-var CHECKPOINT_MAX_ENTRIES = 100;
-fn CheckpointManager_prune(self) {
-    var count = load64(self + 16);
-    if (count <= CHECKPOINT_MAX_ENTRIES) { return 0; }
-    var to_remove = count - CHECKPOINT_MAX_ENTRIES;
-    var vec = load64(self);
-    for (var i = 0; i < to_remove; i = i + 1) {
-        var cp = vec_get(vec, i);
-        if (load64(cp) == CheckpointOp.FILE_REMOVED) {
-            fs_remove(load64(cp + 16));
+
+# Sort the `n` cstring pointers at `a` (an array of u64) into name order, using `tmp` (n slots) —
+# a merge sort, so a store holding one very large group still sorts in n log n. (An insertion sort
+# measured 334 µs for a full store of 100 entries, and grows with the square.)
+fn _ckpt_sort(a, tmp, n) {
+    var width = 1;
+    var src = a;
+    var dst = tmp;
+    while (width < n) {
+        var lo = 0;
+        while (lo < n) {
+            var mid = lo + width;
+            if (mid > n) { mid = n; }
+            var hi = lo + 2 * width;
+            if (hi > n) { hi = n; }
+            var i = lo;
+            var j = mid;
+            var k = lo;
+            while (k < hi) {
+                var take_left = 0;
+                if (i < mid) {
+                    if (j >= hi) {
+                        take_left = 1;
+                    } elif (_ckpt_less(load64(src + j * 8), load64(src + i * 8), CKPT_NAME_LEN) == 0) {
+                        take_left = 1;
+                    }
+                }
+                if (take_left == 1) {
+                    store64(dst + k * 8, load64(src + i * 8));
+                    i = i + 1;
+                } else {
+                    store64(dst + k * 8, load64(src + j * 8));
+                    j = j + 1;
+                }
+                k = k + 1;
+            }
+            lo = hi;
+        }
+        var t = src;
+        src = dst;
+        dst = t;
+        width = width * 2;
+    }
+    if (src != a) { memcpy(a, src, n * 8); }
+    return 0;
+}
+
+# The entry names in `dir` (cstrings), oldest first.
+fn ckpt_names(dir) {
+    var all = dir_list(str_from(dir));
+    var names = vec_new();
+    for (var i = 0; i < vec_len(all); i = i + 1) {
+        var nm = vec_get(all, i);
+        if (ckpt_is_name(nm) == 1) { vec_push(names, str_cstr(nm)); }
+    }
+    var n = vec_len(names);
+    if (n < 2) { return names; }
+    var arr = alloc(n * 8);
+    var tmp = alloc(n * 8);
+    if (arr == 0 || tmp == 0) { return names; }
+    for (var j = 0; j < n; j = j + 1) { store64(arr + j * 8, vec_get(names, j)); }
+    _ckpt_sort(arr, tmp, n);
+    for (var k = 0; k < n; k = k + 1) { vec_set(names, k, load64(arr + k * 8)); }
+    return names;
+}
+
+# `mode`'s permission bits as octal digits, e.g. "644" (a fresh cstring).
+fn _ckpt_octal(mode) {
+    var buf = alloc(8);
+    if (buf == 0) { return 0; }
+    var m = mode & 4095;
+    var digits = 1;
+    var t = m / 8;
+    while (t > 0) { digits = digits + 1; t = t / 8; }
+    var k = digits;
+    t = m;
+    while (k > 0) {
+        k = k - 1;
+        store8(buf + k, 48 + (t % 8));
+        t = t / 8;
+    }
+    store8(buf + digits, 0);
+    return buf;
+}
+
+# ---- Files ----
+
+# stat (follow = 1) or lstat (follow = 0) of `path` into `buf` (STAT_BUFSZ bytes): 0 on success. The
+# field offsets are each target's own (STAT_MODE, STAT_SIZE); agnos's calls also take the length.
+fn _ckpt_stat(path, buf, follow) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (follow == 1) { return sys_stat(path, strlen(path), buf); }
+    return sys_lstat(path, strlen(path), buf);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (follow == 1) { return sys_stat(path, buf); }
+    return sys_lstat(path, buf);
+    #endif
+}
+
+# Is there anything at `path` — a file, a directory, even a dangling symlink?
+fn ckpt_exists(path) {
+    var st[STAT_BUFSZ];
+    if (_ckpt_stat(path, &st, 0) == 0) { return 1; }
+    return 0;
+}
+
+# Open a regular file to copy it: read-only and never through a symlink. On the host also
+# non-blocking — a FIFO swapped in after the check must not hang the shell — and re-checked on the
+# open descriptor, so what is copied is the regular file of `size` bytes that was inspected. -1 when
+# it cannot be opened or is no longer that file.
+fn _ckpt_open_source(path, size) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return file_open(path, OPEN_NOFOLLOW, 0);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var fd = file_open(path, OPEN_NOFOLLOW | O_NONBLOCK, 0);
+    if (fd < 0) { return 0 - 1; }
+    var st[STAT_BUFSZ];
+    var ok = 0;
+    if (sys_fstat(fd, &st) == 0) {
+        if ((load32(&st + STAT_MODE) & CKPT_S_IFMT) == CKPT_S_IFREG) {
+            if (load64(&st + STAT_SIZE) == size) { ok = 1; }
         }
     }
-    var new_vec = vec_new();
-    for (var i = to_remove; i < count; i = i + 1) {
-        vec_push(new_vec, vec_get(vec, i));
+    if (ok == 0) {
+        file_close(fd);
+        return 0 - 1;
     }
-    store64(self, new_vec);
-    store64(self + 16, count - to_remove);
-    return to_remove;
+    return fd;
+    #endif
+}
+
+# Write all `len` bytes at `buf` to `fd`: 0, or -1 on a failed or short write.
+fn _ckpt_write_all(fd, buf, len) {
+    var off = 0;
+    while (off < len) {
+        var w = file_write(fd, buf + off, len - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return 0;
+}
+
+# Copy from `src` to `dst` until `src` ends; the byte count, or -1 on an error or when more than
+# `limit` bytes arrive.
+fn _ckpt_copy(src, dst, limit) {
+    var buf = _ckpt_io_buf();
+    if (buf == 0) { return 0 - 1; }
+    var total = 0;
+    while (1 == 1) {
+        var r = file_read(src, buf, CKPT_IO_LEN);
+        if (r < 0) { return 0 - 1; }
+        if (r == 0) { return total; }
+        total = total + r;
+        if (total > limit) { return 0 - 1; }
+        if (_ckpt_write_all(dst, buf, r) != 0) { return 0 - 1; }
+    }
+    return total;
+}
+
+# ---- Groups and entries ----
+
+# One command's checkpoints: the store folder, the group id, the next entry index, and why the store
+# cannot be used (0 when it can).
+struct CkptGroup {
+    dir;
+    id;
+    next;
+    err;
+}
+
+# Start a group in the store at `dir` for one command; `undo` restores its entries together. The
+# folder is prepared here, and pruned to the newest CKPT_KEEP - 1 groups so that with this one there
+# are CKPT_KEEP — once per command, before it has entries, so it can never prune itself. When the
+# folder cannot be used, `err` says why and every entry is refused with it.
+fn ckpt_group_new(dir) {
+    ckpt_group_seq = ckpt_group_seq + 1;
+    var g = alloc(32);
+    if (g == 0) { return 0; }
+    store64(g, dir);
+    store64(g + 8, ckpt_group_id(clock_epoch_ns(), getpid(), ckpt_group_seq));
+    store64(g + 16, 1);
+    var err = ckpt_prepare(dir);
+    store64(g + 24, err);
+    if (err == 0) { ckpt_prune(dir, CKPT_KEEP - 1); }
+    return g;
+}
+
+# The header of one entry (a Str). `to` is 0 for a remove; `mode` is -1 when no file is saved.
+fn _ckpt_header(op, path, to, mode, size) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "agnsh-checkpoint 1\nop: ");
+    str_builder_add_cstr(sb, op);
+    str_builder_add_cstr(sb, "\npath: ");
+    str_builder_add_cstr(sb, path);
+    if (to != 0) {
+        str_builder_add_cstr(sb, "\nto: ");
+        str_builder_add_cstr(sb, to);
+    }
+    if (mode >= 0) {
+        str_builder_add_cstr(sb, "\nmode: ");
+        str_builder_add_cstr(sb, _ckpt_octal(mode));
+    }
+    str_builder_add_cstr(sb, "\nsize: ");
+    str_builder_add_int(sb, size);
+    str_builder_add_cstr(sb, "\ntime: ");
+    str_builder_add_cstr(sb, iso8601_now());
+    str_builder_add_cstr(sb, "\n\n");
+    return str_builder_build(sb);
+}
+
+# Write the next entry of group `g`: `header` (a Str), then `size` bytes from `src` (-1: none).
+# Created exclusively, 0600 and never through a symlink, and removed again if anything fails, so a
+# half-written entry never stays in the store. Returns 0, or why not.
+fn _ckpt_put(g, header, src, size) {
+    var dir = load64(g);
+    var idx = load64(g + 16);
+    if (idx > 9999) { return "too many files for one checkpoint"; }
+    store64(g + 16, idx + 1);
+    var epath = str_cat3_cstr(dir, "/", ckpt_entry_name(load64(g + 8), idx));
+    var fd = file_open(epath, OPEN_WRONLY | OPEN_CREAT | OPEN_EXCL | OPEN_NOFOLLOW, STATE_FILE_MODE);
+    if (fd < 0) { return "the checkpoint could not be written"; }
+    # 0600 on the descriptor: the create mode is filtered by the umask. agnos has no permission bits
+    # and no fchmod (syscall 91 is gpu_blit_bb there).
+    #ifndef CYRIUS_TARGET_AGNOS
+    sys_fchmod(fd, STATE_FILE_MODE);
+    #endif
+    var ok = 1;
+    if (_ckpt_write_all(fd, str_data(header), str_len(header)) != 0) { ok = 0; }
+    if (ok == 1) {
+        if (src >= 0) {
+            if (_ckpt_copy(src, fd, size) != size) { ok = 0; }
+        }
+    }
+    file_close(fd);
+    if (ok == 0) {
+        xunlink(epath);
+        return "the checkpoint could not be written";
+    }
+    return 0;
+}
+
+# Why a file cannot be saved, as its reason reads: `what` itself, or — for the file a move would
+# overwrite (`replacing` 1) — "it would replace <what>".
+fn _ckpt_what(replacing, what) {
+    if (replacing == 1) { return str_cat3_cstr("it would replace ", what, ""); }
+    return what;
+}
+
+# Save the regular file at `saved` — about to be removed, or (`replacing` 1) overwritten by a move — as
+# an `op` entry of `g`, with `path` and `to` as its lines (`to` 0 for none). Returns 0 when saved, or
+# why not: a reason about the file, or one about the store.
+fn _ckpt_save(g, op, path, to, saved, replacing) {
+    var st[STAT_BUFSZ];
+    if (_ckpt_stat(saved, &st, 0) != 0) { return _ckpt_what(replacing, "no such file"); }
+    var type = load32(&st + STAT_MODE) & CKPT_S_IFMT;
+    if (type == CKPT_S_IFDIR) { return _ckpt_what(replacing, "a directory"); }
+    if (type == CKPT_S_IFLNK) { return _ckpt_what(replacing, "a symbolic link"); }
+    if (type != CKPT_S_IFREG) { return _ckpt_what(replacing, "not a regular file"); }
+    var size = load64(&st + STAT_SIZE);
+    if (size > CKPT_MAX_BYTES) { return _ckpt_what(replacing, "too large to keep (over 64 MiB)"); }
+    var src = _ckpt_open_source(saved, size);
+    if (src < 0) {
+        if (replacing == 1) { return "the file it would replace cannot be read"; }
+        return "it cannot be read";
+    }
+    var why = _ckpt_put(g, _ckpt_header(op, path, to, load32(&st + STAT_MODE), size), src, size);
+    file_close(src);
+    return why;
+}
+
+# Checkpoint the file at `path`, about to be removed: its bytes and permission bits go into group `g`.
+# Returns 0 when saved, or why not (a cstring) — then nothing is saved, and the caller decides whether
+# the removal goes ahead.
+fn ckpt_remove(g, path) {
+    if (load64(g + 24) != 0) { return load64(g + 24); }
+    var abs = ckpt_abs(path);
+    if (ckpt_path_ok(abs) == 0) { return "a path the checkpoint cannot record"; }
+    return _ckpt_save(g, "remove", abs, 0, abs, 0);
+}
+
+# Where `mv src dst` puts the file: into `dst` when it is a directory (following a symlink to one, as
+# mv does), otherwise `dst` itself. Both are absolute.
+fn ckpt_move_target(src, dst) {
+    var st[STAT_BUFSZ];
+    if (_ckpt_stat(dst, &st, 1) == 0) {
+        if ((load32(&st + STAT_MODE) & CKPT_S_IFMT) == CKPT_S_IFDIR) {
+            return state_join(dst, str_cat3_cstr("/", ckpt_base(src), ""));
+        }
+    }
+    return dst;
+}
+
+# Checkpoint `mv src dst`, about to run: the move is recorded so undo can rename it back, and a
+# regular file it would overwrite is saved too. Anything else in the way is refused. Returns 0 when
+# recorded, or why not.
+fn ckpt_move(g, src, dst) {
+    if (load64(g + 24) != 0) { return load64(g + 24); }
+    var asrc = ckpt_abs(src);
+    var adst = ckpt_abs(dst);
+    if (ckpt_path_ok(asrc) == 0) { return "a path the checkpoint cannot record"; }
+    if (ckpt_path_ok(adst) == 0) { return "a path the checkpoint cannot record"; }
+    if (ckpt_exists(asrc) == 0) { return "no such file"; }
+    var to = ckpt_move_target(asrc, adst);
+    if (ckpt_path_ok(to) == 0) { return "a path the checkpoint cannot record"; }
+    if (ckpt_exists(to) == 0) {
+        return _ckpt_put(g, _ckpt_header("move", asrc, to, 0 - 1, 0), 0 - 1, 0);
+    }
+    return _ckpt_save(g, "move", asrc, to, to, 1);
+}
+
+# ---- Reading an entry back ----
+
+# One entry's header, parsed.
+struct CkptEntry {
+    op;         # 0 remove, 1 move
+    path;
+    to;         # 0 for a remove
+    mode;       # -1 when no file was saved
+    size;
+    data;       # byte offset of the saved file in the entry
+}
+
+# The value of `key` in the header lines of `h` (`hl` bytes): a fresh cstring, or 0 when absent.
+fn _ckpt_field(h, hl, key) {
+    var kl = strlen(key);
+    var i = 0;
+    while (i < hl) {
+        var e = i;
+        while (e < hl) { if (load8(h + e) == 10) { break; } e = e + 1; }
+        if (e - i > kl + 1) {
+            var hit = 1;
+            for (var k = 0; k < kl; k = k + 1) {
+                if (load8(h + i + k) != load8(key + k)) { hit = 0; break; }
+            }
+            if (hit == 1) {
+                if (load8(h + i + kl) == 58) {
+                    if (load8(h + i + kl + 1) == 32) {
+                        var vs = i + kl + 2;
+                        var out = alloc(e - vs + 1);
+                        if (out == 0) { return 0; }
+                        memcpy(out, h + vs, e - vs);
+                        store8(out + e - vs, 0);
+                        return out;
+                    }
+                }
+            }
+        }
+        i = e + 1;
+    }
+    return 0;
+}
+
+# A decimal (base 10) or octal (base 8) number written by this file: its value, or -1 when `s` is
+# absent, empty or not all digits.
+fn _ckpt_number(s, base) {
+    if (s == 0) { return 0 - 1; }
+    if (load8(s) == 0) { return 0 - 1; }
+    var v = 0;
+    var i = 0;
+    while (load8(s + i) != 0) {
+        var d = load8(s + i) - 48;
+        if (d < 0 || d >= base) { return 0 - 1; }
+        v = v * base + d;
+        i = i + 1;
+        if (i > 18) { return 0 - 1; }
+    }
+    return v;
+}
+
+# Read the header of the entry file at `epath`: a CkptEntry, or 0 when it is not one this build
+# wrote — then it is never restored.
+fn ckpt_read_entry(epath) {
+    var h = _ckpt_head_buf();
+    if (h == 0) { return 0; }
+    var fd = file_open(epath, OPEN_NOFOLLOW, 0);
+    if (fd < 0) { return 0; }
+    var n = 0;
+    while (n < CKPT_HEAD_MAX) {
+        var r = file_read(fd, h + n, CKPT_HEAD_MAX - n);
+        if (r <= 0) { break; }
+        n = n + r;
+    }
+    file_close(fd);
+    var magic = "agnsh-checkpoint 1\n";
+    var ml = strlen(magic);
+    if (n < ml) { return 0; }
+    for (var i = 0; i < ml; i = i + 1) {
+        if (load8(h + i) != load8(magic + i)) { return 0; }
+    }
+    var hl = 0 - 1;                                 # where the blank line is
+    for (var j = ml - 1; j + 1 < n; j = j + 1) {
+        if (load8(h + j) == 10) { if (load8(h + j + 1) == 10) { hl = j + 1; break; } }
+    }
+    if (hl < 0) { return 0; }
+    var e = alloc(48);
+    if (e == 0) { return 0; }
+    var op = _ckpt_field(h + ml, hl - ml, "op");
+    if (op == 0) { return 0; }
+    if (streq(op, "remove") == 1) {
+        store64(e, 0);
+    } elif (streq(op, "move") == 1) {
+        store64(e, 1);
+    } else {
+        return 0;
+    }
+    store64(e + 8, _ckpt_field(h + ml, hl - ml, "path"));
+    store64(e + 16, _ckpt_field(h + ml, hl - ml, "to"));
+    var ms = _ckpt_field(h + ml, hl - ml, "mode");
+    var mode = 0 - 1;
+    if (ms != 0) {
+        mode = _ckpt_number(ms, 8);
+        if (mode < 0) { return 0; }
+    }
+    store64(e + 24, mode);
+    var size = _ckpt_number(_ckpt_field(h + ml, hl - ml, "size"), 10);
+    if (size < 0) { return 0; }
+    store64(e + 32, size);
+    store64(e + 40, hl + 1);
+    if (ckpt_path_ok(load64(e + 8)) == 0) { return 0; }
+    if (load64(e) == 0) {
+        if (mode < 0) { return 0; }                 # a remove always saved the file
+    } else {
+        if (ckpt_path_ok(load64(e + 16)) == 0) { return 0; }
+    }
+    if (mode < 0) { if (size != 0) { return 0; } }
+    return e;
+}
+
+# Write the file saved in entry `e` (read from `epath`) back at `target`, which must not exist:
+# created exclusively, never through a symlink, with the saved permission bits (without setuid,
+# setgid or sticky). A partial file is removed again. Returns 0, or why not.
+fn _ckpt_write_back(epath, e, target) {
+    var mode = load64(e + 24) & 511;
+    var out = file_open(target, OPEN_WRONLY | OPEN_CREAT | OPEN_EXCL | OPEN_NOFOLLOW, mode);
+    if (out < 0) { return "it cannot be created"; }
+    var saved = file_open(epath, OPEN_NOFOLLOW, 0);
+    var ok = 0;
+    if (saved >= 0) {
+        if (xlseek(saved, load64(e + 40), 0) == load64(e + 40)) {
+            if (_ckpt_copy(saved, out, load64(e + 32)) == load64(e + 32)) { ok = 1; }
+        }
+        file_close(saved);
+    }
+    #ifndef CYRIUS_TARGET_AGNOS
+    sys_fchmod(out, mode);
+    #endif
+    file_close(out);
+    if (ok == 0) {
+        xunlink(target);
+        return "its saved copy could not be read";
+    }
+    return 0;
+}
+
+# Undo one entry. Returns the line to report, and sets *okp to 1 when it was undone (its entry is then
+# removed from the store) or 0 when not (the entry stays).
+fn _ckpt_restore(dir, name, okp) {
+    store64(okp, 0);
+    var epath = str_cat3_cstr(dir, "/", name);
+    var e = ckpt_read_entry(epath);
+    if (e == 0) { return str_cat3_cstr("not restored: ", name, " -- not a checkpoint this build can read"); }
+    var path = load64(e + 8);
+    if (load64(e) == 0) {
+        if (ckpt_exists(path) == 1) { return str_cat3_cstr("not restored: ", path, " -- something is there now"); }
+        var why = _ckpt_write_back(epath, e, path);
+        if (why != 0) { return str_cat3_cstr(str_cat3_cstr("not restored: ", path, " -- "), why, ""); }
+        xunlink(epath);
+        store64(okp, 1);
+        return str_cat3_cstr("restored ", path, "");
+    }
+    var to = load64(e + 16);
+    if (ckpt_exists(to) == 0) { return str_cat3_cstr("not moved back: ", to, " -- it is gone"); }
+    if (ckpt_exists(path) == 1) {
+        return str_cat3_cstr(str_cat3_cstr("not moved back: ", to, " -- something is at "), path, " now");
+    }
+    if (file_rename(to, path) != 0) { return str_cat3_cstr("not moved back: ", to, " -- the rename failed"); }
+    var moved = str_cat3_cstr(str_cat3_cstr("moved ", to, " back to "), path, "");
+    if (load64(e + 24) >= 0) {
+        var werr = _ckpt_write_back(epath, e, to);
+        if (werr != 0) {
+            # The move is undone and the entry stays: the file it replaced is still saved in it.
+            return str_cat3_cstr(moved, ", but the file it replaced was not restored: ", werr);
+        }
+        moved = str_cat3_cstr(moved, ", and restored the file it replaced", "");
+    }
+    xunlink(epath);
+    store64(okp, 1);
+    return moved;
+}
+
+# What one undo did: the lines to report, how many entries were undone, and how many were not.
+struct CkptUndo {
+    lines;
+    undone;
+    failed;
+}
+
+# Undo the newest group in the store at `dir`, newest entry first. An entry that is undone leaves
+# the store; one that is not stays, with its reason, and the rest of the group still goes ahead.
+# With nothing to undo there are no lines.
+fn ckpt_undo(dir) {
+    var u = alloc(24);
+    if (u == 0) { return 0; }
+    store64(u, vec_new());
+    store64(u + 8, 0);
+    store64(u + 16, 0);
+    var names = ckpt_names(dir);
+    var n = vec_len(names);
+    if (n == 0) { return u; }
+    var last = vec_get(names, n - 1);
+    var ok[8];
+    for (var i = n - 1; i >= 0; i = i - 1) {
+        var nm = vec_get(names, i);
+        if (_ckpt_same_group(nm, last) == 0) { break; }
+        vec_push(load64(u), _ckpt_restore(dir, nm, &ok));
+        if (load64(&ok) == 1) {
+            store64(u + 8, load64(u + 8) + 1);
+        } else {
+            store64(u + 16, load64(u + 16) + 1);
+        }
+    }
+    return u;
+}
+
+# Keep the newest `keep` groups in `dir`; returns how many entries went.
+fn ckpt_prune(dir, keep) {
+    var names = ckpt_names(dir);
+    var n = vec_len(names);
+    var groups = 0;
+    for (var i = 0; i < n; i = i + 1) {
+        if (i == 0) {
+            groups = 1;
+        } elif (_ckpt_same_group(vec_get(names, i), vec_get(names, i - 1)) == 0) {
+            groups = groups + 1;
+        }
+    }
+    var drop = groups - keep;
+    if (drop <= 0) { return 0; }
+    var removed = 0;
+    var ordinal = 0;
+    for (var j = 0; j < n; j = j + 1) {
+        var nm = vec_get(names, j);
+        if (j > 0) { if (_ckpt_same_group(nm, vec_get(names, j - 1)) == 0) { ordinal = ordinal + 1; } }
+        if (ordinal >= drop) { return removed; }
+        if (xunlink(str_cat3_cstr(dir, "/", nm)) == 0) { removed = removed + 1; }
+    }
+    return removed;
 }

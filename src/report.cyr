@@ -5,38 +5,14 @@
 # filed here instead: one file per run and a `latest.txt`, the newest REPORT_KEEP kept. The
 # interactive shell prints its report on screen and files nothing.
 
-# 0700 for the folder. Each report is STATE_FILE_MODE (0600): it carries the command line.
-var REPORT_DIR_MODE = 448;
+# The folder is a private state folder (statepaths.cyr: 0700, owned by the user). Each report is
+# STATE_FILE_MODE (0600): it carries the command line.
 # Reports kept; after each write the oldest beyond this are removed.
 var REPORT_KEEP = 100;
 
-# `base` + `suffix` as a fresh cstring, dropping one trailing '/' from `base` so that HOME=/
-# gives /.local/... rather than //.local/... — the same rule history_path follows.
-fn _report_join(base, suffix) {
-    var blen = strlen(base);
-    if (blen > 0) { if (load8(base + blen - 1) == 47) { blen = blen - 1; } }
-    var slen = strlen(suffix);
-    var buf = alloc(blen + slen + 1);
-    if (buf == 0) { return 0; }
-    memcpy(buf, base, blen);
-    memcpy(buf + blen, suffix, slen);
-    store8(buf + blen + slen, 0);
-    return buf;
-}
-
-# The host report folder from its inputs, split out of report_dir() so that the rule is testable
-# without an environment: `xdg` and `home` are $XDG_STATE_HOME and $HOME, 0 when unset.
-# The XDG base-directory rule: an unset, empty or RELATIVE $XDG_STATE_HOME is ignored and the
-# default is $HOME/.local/state. HOME must be absolute too; without a usable one the folder falls
-# back to /tmp, qualified by uid (tmp_state_path says what that does and does not defend against —
-# report_dir_prepare's ownership check covers the rest).
-fn report_dir_from(xdg, home) {
-    if (xdg != 0) { if (load8(xdg) == 47) { return _report_join(xdg, "/agnoshi/reports"); } }
-    if (home != 0) {
-        if (load8(home) == 47) { return _report_join(home, "/.local/state/agnoshi/reports"); }
-    }
-    return tmp_state_path("agnoshi-reports");
-}
+# The host report folder from $XDG_STATE_HOME and $HOME (0 when unset): state_dir_from's rule
+# (statepaths.cyr), testable without an environment.
+fn report_dir_from(xdg, home) { return state_dir_from(xdg, home, "reports"); }
 
 # Where this build files its reports. agnos keeps its root-dotfile style — /.agnsh_reports beside
 # /.agnsh_history and /.agnsh_audit.log — because HOME is always / there and its rootfs has no
@@ -48,23 +24,10 @@ fn report_dir() {
     return report_dir_from(getenv("XDG_STATE_HOME"), getenv("HOME"));
 }
 
-# Make the report folder usable. Creates it 0700 (parents too) and, on the host, refuses it unless
-# it is a real directory — not a symlink — that this user owns and nobody else can write: a folder
-# someone else pre-created, which the /tmp fallback invites, would hand them every report. Returns
-# 0 when usable, otherwise the reason as a cstring for the caller's stderr notice.
-fn report_dir_prepare(dir) {
-    if (dir == 0) { return "no report folder"; }
-    if (xmkdir_p(dir, REPORT_DIR_MODE) != 0) { return "cannot create the report folder"; }
-    #ifndef CYRIUS_TARGET_AGNOS
-    var st[STAT_BUFSZ];
-    if (sys_lstat(dir, &st) != 0) { return "cannot inspect the report folder"; }
-    var mode = load32(&st + STAT_MODE);
-    if ((mode & 61440) != 16384) { return "the report folder is not a directory"; }   # S_IFMT / S_IFDIR
-    if (load32(&st + STAT_UID) != sys_getuid()) { return "the report folder belongs to another user"; }
-    if ((mode & 18) != 0) { return "others can write the report folder"; }   # 0022
-    #endif
-    return 0;
-}
+# Make the report folder usable (state_dir_prepare: 0700, and on the host a real directory this
+# user owns and nobody else can write). Returns 0 when usable, otherwise the reason as a cstring for
+# the caller's stderr notice.
+fn report_dir_prepare(dir) { return state_dir_prepare(dir, "report folder"); }
 
 # Append the decimal digits of `n` (>= 0) at `buf`; returns how many were written.
 fn _report_put_uint(buf, n) {

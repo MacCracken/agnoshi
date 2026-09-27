@@ -17,7 +17,7 @@ agnoshi
 │   ├── approval.cyr        -- risk assessment, human approval UI
 │   ├── security.cyr        -- who agnsh runs as: root on a Linux host is restricted (2.0.2)
 │   ├── session.cyr         -- shell session lifecycle
-│   ├── checkpoint.cyr      -- destructive op rollback
+│   ├── checkpoint.cyr      -- the checkpoint store: what a remove/move destroys, kept for undo
 │   ├── audit.cyr           -- JSON audit log + audit-record construction
 │   ├── history.cyr         -- command history (0600 perms)
 │   ├── aliases.cyr         -- user-defined aliases
@@ -35,19 +35,20 @@ agnoshi
 │
 │   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, report,
 │     mode, permissions, intent, commands, translate, interpreter, approval,
-│     audit, history, run_agnos, run_host, security (2.0.2), nlexec — plus
-│     agnsh.cyr itself. security's sudo path is compiled in with no caller.
-│     NOT COMPILED: session, checkpoint, completion, prompt, config, aliases,
-│     output, ui, main. Features they implement (approval prompts, undo, tab
-│     completion, git-branch prompt) do NOT exist at runtime, and nor does sudo.
+│     audit, history, run_agnos, run_host, security (2.0.2), checkpoint (2.0.3),
+│     nlexec — plus agnsh.cyr itself. security's sudo path and the checkpoint
+│     store are compiled in with no caller.
+│     NOT COMPILED: session, completion, prompt, config, aliases, output, ui,
+│     main. Features they implement (approval prompts, undo, tab completion,
+│     git-branch prompt) do NOT exist at runtime, and nor does sudo.
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 939 unit tests
+│   ├── test_core.tcyr      -- 1052 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
 │   ├── test_parse_corpus.tcyr -- 358 classifier checks against docs/examples
 │   ├── agnos_hostsh.cyr    -- agnos-only driver for scripts/agnos-qemu-bench.py
-│   ├── bench_core.bcyr     -- 12 criterion-style benchmarks
+│   ├── bench_core.bcyr     -- 13 criterion-style benchmarks
 │   └── test.sh             -- run all test suites
 ├── scripts/
 │   ├── install.sh          -- install to /usr/local/bin
@@ -106,8 +107,8 @@ User Input (stdin)
     |                                           as `run` (below); -c files the
     |                                           report in the report folder
     |
-    |   The approval loop (ApprovalManager_request) and checkpointing
-    |   (CheckpointManager) are NOT in the include graph: USER_WRITE and above
+    |   The approval loop (ApprovalManager_request) has no caller, and the
+    |   checkpoint store (checkpoint.cyr, ADR-009) none yet: USER_WRITE and above
     |   are reported and not run. Approval-gated exec is roadmap 2.0.x.
     |
     +--> SHELL LINES (checked before the parser, ADR-007):

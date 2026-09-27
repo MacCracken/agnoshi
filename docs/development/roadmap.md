@@ -32,7 +32,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.3** — checkpointing | none |
+| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.4** — approval-gated exec (the checkpoint store is done, in `[Unreleased]`) | none |
 | **2.1.x** | Interactive shell — `cd`, an rc file, a line editor | **2.1.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | host: none; agnos: the socket adapter |
 
@@ -60,30 +60,16 @@ place before anything destructive runs. 2.0.0 shipped SAFE and READ_ONLY (see th
 slots below are ordered so that nothing destructive executes before checkpointing exists. Standing
 from 2.0.0: `proc_set_timeout_ms` (host only) could give NL exec a command timeout — unscheduled.
 
-### 2.0.3 — Checkpointing, re-implemented against the current stdlib
-
-`src/checkpoint.cyr` calls seven `fs_*` helpers the stdlib no longer has — absent from the 6.5.36
-snapshot (1.9.8) and re-verified absent at 6.6.6. Six have equivalents; one does not:
-
-| `checkpoint.cyr` calls | cyrius 6.6.6 |
-|---|---|
-| `fs_mkdir_p` | `xmkdir_p` (`lib/io.cyr`) |
-| `fs_rename` | `file_rename` (`lib/io.cyr`, has an agnos arm) |
-| `fs_exists` | `file_exists` (`lib/io.cyr`) |
-| `fs_remove` | `xunlink` / `xrmdir` (`lib/io.cyr`) |
-| `fs_is_dir` | `is_dir` (`lib/fs.cyr`, takes a `Str`) |
-| `fs_basename` | `path_basename` (`lib/fs.cyr`, takes a `Str`) |
-| `fs_copy` | **none** — write it (read + write loop; there is no copy or sendfile helper) |
-
-Two of the equivalents take a `Str`: honour ADR-006 at that boundary. Checkpoints go to
-`$HOME/.agnoshi/checkpoints/`, auto-pruned to the newest 100. No exec change in this slot.
-
 ### 2.0.4 — Approval-gated exec: USER_WRITE, SYSTEM_WRITE, ADMIN
 
 - `ApprovalManager_request` is compiled in and has no caller. Call it before executing these tiers.
   It reads fd 0 directly, so `-c` (no stdin) declines by default, as today. ⚠ Its prompt writes to
   **stdout**: move it to stderr as `verb_confirm` did in 2.0.0 — `-c`'s stdout is the program's (ADR-008).
-- Checkpoint before every REMOVE / MOVE exec (2.0.3).
+- Checkpoint before every REMOVE / MOVE exec, with the store ([ADR-009](../adr/009-checkpoint-store.md),
+  `src/checkpoint.cyr` — compiled in with no caller): one `ckpt_group_new(ckpt_dir())` per command,
+  then `ckpt_remove` / `ckpt_move` per file. ⚠ A refusal — a directory (`rm -r`), a symlink, a file over
+  64 MiB — needs a ruling first: refuse the command, or run it and say that undo will not restore that
+  file. ⚠ The store's agnos arm has never run: verify it in QEMU with the first caller.
 - ADMIN routes through `execute_with_privileges` (`security.cyr`, compiled in since 2.0.2 with no
   caller). ⚠ It launches through `execute_command` → lib `exec_vec`: an empty environment and a second
   host launcher, which ADR-008 § 3 rules out — route it through `host_exec` first. A restricted session
@@ -96,8 +82,10 @@ Two of the equivalents take a `Str`: honour ADR-006 at that boundary. Checkpoint
 
 ### 2.0.5 — `undo`
 
-- `CheckpointManager_undo` behind a new `undo` builtin. `commands.cyr` stopped advertising `undo` in
-  1.9.1, when the audit found nothing behind it — add it to `is_builtin` and the dispatch together.
+- `ckpt_undo(ckpt_dir())` (ADR-009) behind a new `undo` builtin: it restores the newest group and
+  returns the lines to print, and how many entries were and were not undone — the exit status.
+  `commands.cyr` stopped advertising `undo` in 1.9.1, when the audit found nothing behind it — add it to
+  `is_builtin` and the dispatch together.
 - **Test**: a tempdir round trip — `mkdir foo; touch foo/a; agnsh -c "remove foo/a"; agnsh -c "undo"`.
 
 **Arc closeout**: re-run the benchmarks; README's "Not shipped yet", `SECURITY.md`'s four
@@ -329,7 +317,10 @@ one arch, and three gates had opened without anyone noticing.
   harness creates `/stop`) — a busy-count starved the keyboard and a fixed wall time expired before
   the ninth job was typed; both were tried. An agnos syscall clobbers `rcx, rdx, rsi, rdi, r8–r11`.
   `scripts/agnos-qemu-bench.py` boots a driver (`tests/agnos_hostsh.cyr`) that spawns agnsh itself,
-  so an agnos `-c` exit-status case is one `hs_c` line there, gated by the bench.
+  so an agnos `-c` exit-status case is one `hs_c` line there, gated by the bench. Its idle gate
+  samples agnsh's state once per tick and wants BLOCKED in most samples. Do not go back to one read:
+  agnos wakes a blocked pipe read every 100 ms to re-check it, so one read can land on READY. Do not
+  trust ticks alone either: a `#44` poller is charged 0 ticks.
 - **Honour ADR-006** at every new Str/cstring boundary: `_in_str` suffix, per-arch syscall wrappers,
   `str_clone` for static-buffer escape, every cstring path NUL-terminated.
 - **The lint shield's next free category is I** (A–H are taken; H is the 1.9.10 audit-path seam). Its

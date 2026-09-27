@@ -19,6 +19,7 @@ include "lib/process.cyr"
 include "tests/harness.cyr"
 
 include "src/sanitize.cyr"
+include "src/statepaths.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
 include "src/intent.cyr"
@@ -27,6 +28,7 @@ include "src/translate.cyr"
 include "src/interpreter.cyr"
 include "src/history.cyr"
 include "src/security.cyr"
+include "src/checkpoint.cyr"
 
 var _interp = 0;
 var _s_list = 0;
@@ -102,6 +104,16 @@ fn work_safe_path() {
 # syscalls and the two sudo probes. The username is looked up on first use, so no /etc/passwd read.
 fn work_security_ctx() { SecurityContext_new(0); return 0; }
 
+# checkpoint/remove_4k — one command's checkpoint of a 4 KiB file against a full store (2.0.3): the
+# group's start (the folder checks and its one prune) and the entry (header and copy). What
+# approval-gated exec (roadmap 2.0.x) will add before a REMOVE.
+var _ck_store = 0;
+var _ck_file = 0;
+fn work_ckpt_remove() {
+    ckpt_remove(ckpt_group_new(_ck_store), _ck_file);
+    return 0;
+}
+
 var N = 10000;
 
 fn main() {
@@ -172,6 +184,25 @@ fn main() {
     var b12 = bench_new("security/context_new");
     bench_run(b12, &work_security_ctx, N);
     vec_push(all, b12);
+
+    # A scratch store, filled to CKPT_KEEP groups first so every timed run prunes one: the steady state.
+    var ck_base = tmp_state_path("agnsh_bench_ckpt");
+    _ck_store = str_cat3_cstr(ck_base, "/", "store");
+    _ck_file = str_cat3_cstr(ck_base, "/", "f4k");
+    xmkdir_p(ck_base, 448);
+    var ck_fill[4096];
+    for (var cf = 0; cf < 4096; cf = cf + 1) { store8(&ck_fill + cf, 120); }
+    var ck_fd = file_open(_ck_file, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 384);
+    file_write(ck_fd, &ck_fill, 4096);
+    file_close(ck_fd);
+    for (var ci = 0; ci < CKPT_KEEP; ci = ci + 1) { work_ckpt_remove(); }
+    var b13 = bench_new("checkpoint/remove_4k");
+    bench_run(b13, &work_ckpt_remove, 2000);
+    vec_push(all, b13);
+    ckpt_prune(_ck_store, 0);
+    xrmdir(_ck_store);
+    xunlink(_ck_file);
+    xrmdir(ck_base);
 
     bench_report_all(all);
     return 0;

@@ -170,10 +170,10 @@ program's and agnsh files its report in the report folder
 
 ## Undo — not available yet
 
-`src/checkpoint.cyr` implements checkpoint-before-destructive-op and an `undo`
-builtin, but it is **not compiled into the binary**: there is no `undo` command
-and no `~/.agnoshi/checkpoints/` directory. Do not rely on rollback. (Its wire-up
-is blocked on seven stdlib symbols that no longer exist.)
+There is **no `undo` command**, and nothing is checkpointed. The checkpoint store
+it will use is in the binary since 2.0.3 (`src/checkpoint.cyr`, kept in
+`~/.local/state/agnoshi/checkpoints/`), but nothing calls it until
+approval-gated exec and `undo` arrive (roadmap 2.0.x). Do not rely on rollback.
 
 ## Next Steps
 

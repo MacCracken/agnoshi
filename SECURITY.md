@@ -91,10 +91,14 @@ All user-controlled strings flowing to syscalls must pass validation:
 
 ### Checkpoint/undo — ⚠ NOT IN THE SHIPPED BINARY YET
 
-`src/checkpoint.cyr` implements backup-before-destructive-op and `undo`, but it
-is **not in the binary's include graph** and there is no `undo` builtin. Do not
-rely on any rollback guarantee. (It calls seven stdlib helpers that no longer
-exist, so its wire-up is a re-implementation — roadmap 2.0.x — checkpointing.)
+The checkpoint store (`src/checkpoint.cyr`, [ADR-009](docs/adr/009-checkpoint-store.md))
+is compiled in, but **nothing calls it yet**: no command is checkpointed and there
+is no `undo` builtin. Do not rely on any rollback guarantee. Both arrive with
+approval-gated exec and `undo` (roadmap 2.0.x). What the store guarantees once it
+is called: a private folder (below); each saved file 0600, created exclusively and
+never through a symlink; regular files only, up to 64 MiB, with anything else
+refused and the caller told; and a restore that never overwrites what is at a path
+now.
 
 ### Audit log
 Every action is logged as a JSON line to `~/.agnsh_audit.log`. All fields
@@ -136,7 +140,10 @@ protection is a future property, not a current one.
   report 0600 and created exclusively with `O_NOFOLLOW`. On the host a folder that
   is a symlink, belongs to another user or is writable by group or others is
   refused and no report is written.
-- Checkpoint directory: mode 0700 — *in the unwired module; see above*
+- Checkpoint store (2.0.3, no caller yet): `$XDG_STATE_HOME/agnoshi/checkpoints/`
+  (default `~/.local/state/agnoshi/checkpoints/`; `/.agnsh_checkpoints/` on
+  AGNOS), under the report folder's rules — 0700, and on the host refused unless
+  it is a real directory you own that nobody else can write; each entry 0600.
 
 ⚠ When `$HOME` is unset the history and audit log fall back to `/tmp/<name>.<uid>`
 (the report folder to `/tmp/agnoshi-reports.<uid>`, which the ownership check

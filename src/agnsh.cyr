@@ -49,6 +49,9 @@ include "src/run_agnos.cyr"
 include "src/run_host.cyr"
 # 2.0.2: who agnsh runs as — a host session as root is restricted, and nlexec reads that.
 include "src/security.cyr"
+# 2.0.3: the checkpoint store — compiled in so every target builds it; nothing calls it until
+# approval-gated exec (roadmap 2.0.x).
+include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
 
 var VERSION_STR = "agnoshi 2.0.2";

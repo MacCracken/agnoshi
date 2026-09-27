@@ -95,6 +95,63 @@ fn history_path() {
     store8(buf + hlen + slen, 0);
     return buf;
 }
+# ---- Private state folders: the report folder and the checkpoint store ----
+#
+# Both keep what nobody else should read — the command lines agnsh ran, and copies of the files it
+# removed — so both follow one set of rules, gathered here when the checkpoint store (2.0.3) became
+# the second user. On the host they are XDG state: $XDG_STATE_HOME/agnoshi/<name>, by default
+# $HOME/.local/state/agnoshi/<name>. agnos keeps its root-dotfile style (report_dir, ckpt_dir).
+
+# 0700 — what a private state folder is created with.
+var STATE_DIR_MODE = 448;
+
+# `base` + `suffix` as a fresh cstring, dropping one trailing '/' from `base` so that HOME=/
+# gives /.local/... rather than //.local/... — the same rule history_path follows.
+fn state_join(base, suffix) {
+    var blen = strlen(base);
+    if (blen > 0) { if (load8(base + blen - 1) == 47) { blen = blen - 1; } }
+    var slen = strlen(suffix);
+    var buf = alloc(blen + slen + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, base, blen);
+    memcpy(buf + blen, suffix, slen);
+    store8(buf + blen + slen, 0);
+    return buf;
+}
+
+# The host folder for the state called `name` ("reports", "checkpoints"), from its inputs: `xdg` and
+# `home` are $XDG_STATE_HOME and $HOME, 0 when unset — split out so the rule is testable without an
+# environment. The XDG base-directory rule: an unset, empty or RELATIVE $XDG_STATE_HOME is ignored and
+# the default is $HOME/.local/state. HOME must be absolute too; without a usable one the folder falls
+# back to /tmp, qualified by uid (tmp_state_path says what that does and does not defend against —
+# state_dir_prepare's ownership check covers the rest).
+fn state_dir_from(xdg, home, name) {
+    if (xdg != 0) { if (load8(xdg) == 47) { return state_join(xdg, str_cat3_cstr("/agnoshi/", name, "")); } }
+    if (home != 0) {
+        if (load8(home) == 47) { return state_join(home, str_cat3_cstr("/.local/state/agnoshi/", name, "")); }
+    }
+    return tmp_state_path(str_cat3_cstr("agnoshi-", name, ""));
+}
+
+# Make a private state folder usable: create it 0700 (parents too) and, on the host, refuse it unless
+# it is a real directory — not a symlink — that this user owns and nobody else can write. A folder
+# someone else pre-created, which the /tmp fallback invites, would hand them everything in it. `what`
+# names the folder in the reason ("report folder"). Returns 0 when usable, otherwise the reason as a
+# cstring for the caller's notice.
+fn state_dir_prepare(dir, what) {
+    if (dir == 0) { return str_cat3_cstr("no ", what, ""); }
+    if (xmkdir_p(dir, STATE_DIR_MODE) != 0) { return str_cat3_cstr("cannot create the ", what, ""); }
+    #ifndef CYRIUS_TARGET_AGNOS
+    var st[STAT_BUFSZ];
+    if (sys_lstat(dir, &st) != 0) { return str_cat3_cstr("cannot inspect the ", what, ""); }
+    var mode = load32(&st + STAT_MODE);
+    if ((mode & 61440) != 16384) { return str_cat3_cstr("the ", what, " is not a directory"); }   # S_IFMT/S_IFDIR
+    if (load32(&st + STAT_UID) != sys_getuid()) { return str_cat3_cstr("the ", what, " belongs to another user"); }
+    if ((mode & 18) != 0) { return str_cat3_cstr("others can write the ", what, ""); }   # 0022
+    #endif
+    return 0;
+}
+
 # ---- The audit-log path seam ----
 #
 # ⛔ THIS IS A TEST SEAM AND NOTHING ELSE. NOTHING IN THE SHELL MAY CALL THE

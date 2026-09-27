@@ -9,14 +9,16 @@
 # rootfs are copied, never modified or restaged.
 #
 # What it measures (2.0.1 -- agnos issue 2026-09-26 poll-and-yield-loops-should-block):
-#   idle   the #99 cpu ticks a pipe-hosted agnsh is charged over 1 s blocked on its empty stdin, and its
-#          state (6 = BLOCKED). The issue's gate: 0 % -- this is the one number that is a pass/fail.
+#   idle   the #99 cpu ticks a pipe-hosted agnsh is charged over 1 s blocked on its empty stdin, and how
+#          many of its per-tick state samples found it BLOCKED (6). The issue's gate: 0 % -- this is the
+#          one number that is a pass/fail.
 #   run    N queued `echo hs` lines through one agnsh, spawn to exit: the foreground launch-and-reap
 #          round trip (agnsh's parse, audit and history work included, identically for both shells).
 #   pipe   N queued `echo hs | wc` pipelines, the same way: both stages' reaps.
 # And what it checks, once per shell after the timings: `agnsh -c <line>`'s exit status against ADR-008 § 4
 # (126 refused, 127 nothing to run or not launched, 1 usage) for each agnos launcher -- plain, `&`, `|` and `>` --
-# spawned with SPAWN_F_ARGV so the line keeps its spaces. The typed session in scripts/agnos-qemu-test.py
+# and for a natural-language line, which also files its report; each spawned with SPAWN_F_ARGV so the line
+# keeps its spaces. The typed session in scripts/agnos-qemu-test.py
 # cannot read a `-c` status, so this is the only place one is checked on agnos. A check also wants the
 # shell's own stderr message, so a right status for the wrong reason fails. Fixtures: /bin/notelf (not an
 # ELF: every launch of it fails with NOEXEC) and /hs-link (a symlink `>` must refuse to open).
@@ -27,9 +29,9 @@
 #   AGNOS_QEMU_SMP=4 python3 scripts/agnos-qemu-bench.py                 # on 4 CPUs
 # Env: AGNOS_ROOT (default ../agnos), GNOBOOT_ROOT (default ../gnoboot), AGNOS_QEMU_TCG=1 forces TCG.
 # ⚠ Timing under QEMU: compare a and b from the SAME boot only (they alternate for that reason), and
-# check /proc/loadavg first -- a loaded host reads slow. Exit 0 when every shell idled at <= 5 ticks
-# in state 6, every batch exited 0 and every `-c` check of b (this tree) held; the timings, and a
-# baseline's `-c` statuses, are reported, not gated.
+# check /proc/loadavg first -- a loaded host reads slow. Exit 0 when every shell idled at <= 5 ticks,
+# BLOCKED in most of its samples, every batch exited 0 and every `-c` check of b (this tree) held; the
+# timings, and a baseline's `-c` statuses, are reported, not gated.
 import os, re, shutil, statistics, subprocess, sys, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,6 +48,7 @@ PART_BLOCKS = (67 * 1048576) // 4096
 EXT2_FEATURES = "^resize_inode,^dir_index,^metadata_csum,^64bit,^uninit_bg"
 SMP = int(os.environ.get("AGNOS_QEMU_SMP", "1"))
 IDLE_TICKS_MAX = 5                                      # agnos wait-ring3 P2c's bound for a parked caller
+IDLE_SAMPLES_MIN = 20                                   # one per tick is ~100; fewer means the sampler broke
 
 
 def p(*a):
@@ -55,6 +58,16 @@ def p(*a):
 def die(msg):
     p("FAIL:", msg)
     sys.exit(1)
+
+
+# The idle gate: few ticks, and BLOCKED in MOST of the samples, not in one read at the end. agnos's 100 ms
+# backstop on a blocked pipe read (rd5_wait) leaves a blocked reader READY for an instant about every 11th
+# tick, which a sample can land on; a #44 poller is never BLOCKED, and its halt is not charged, so ticks
+# alone would pass it.
+def idle_held(idle):
+    n = idle.get("samples", 0)
+    return (idle.get("ticks", 99) <= IDLE_TICKS_MAX and n >= IDLE_SAMPLES_MIN
+            and 2 * idle.get("blocked", 0) > n and idle.get("exit") == 0)
 
 
 def sh(cmd):
@@ -224,11 +237,11 @@ shells = [s for s in ("/bin/agnsh-a", "/bin/agnsh-b") if ("IDLE", s) in rows]
 if "/bin/agnsh-b" not in shells:
     die("no HS-IDLE line for /bin/agnsh-b")
 p("")
-p(f"{'shell':<14}{'idle ticks':>11}{'state':>7}   {'run: us per line (median, min-max)':<38}"
+p(f"{'shell':<14}{'idle ticks':>11}{'blocked':>10}   {'run: us per line (median, min-max)':<38}"
   f"{'pipe: us per line (median, min-max)'}")
 for s in shells:
     idle = rows[("IDLE", s)][0]
-    held = idle.get("ticks", 99) <= IDLE_TICKS_MAX and idle.get("state") == 6 and idle.get("exit") == 0
+    held = idle_held(idle)
     cols = []
     for kind in ("RUN", "PIPE"):
         rs = rows.get((kind, s), [])
@@ -238,7 +251,8 @@ for s in shells:
         cols.append(f"{statistics.median(per):8.0f}  ({min(per):.0f}-{max(per):.0f}, {len(per)} runs)"
                     if per else "(none)")
     ok = ok and held
-    p(f"{s[5:]:<14}{idle.get('ticks', -1):>11}{idle.get('state', -1):>7}   {cols[0]:<38}{cols[1]}"
+    blk = f"{idle.get('blocked', -1)}/{idle.get('samples', -1)}"
+    p(f"{s[5:]:<14}{idle.get('ticks', -1):>11}{blk:>10}   {cols[0]:<38}{cols[1]}"
       + ("" if held else "   <- FAIL"))
 
 # `-c` exit statuses (ADR-008 § 4). b is gated; a baseline is shown beside it, so an a/b run against an

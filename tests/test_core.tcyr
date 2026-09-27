@@ -39,6 +39,7 @@ include "src/history.cyr"
 include "src/run_agnos.cyr"
 include "src/run_host.cyr"
 include "src/security.cyr"
+include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
 
 # Compose a SecurityContext (56 bytes — uid, gid, euid, username,
@@ -209,6 +210,382 @@ fn _t_stdin_restore(savefd): i64 {
 fn _t_capture_end(fd, savefd): i64 {
     sys_dup2(savefd, fd);
     file_close(savefd);
+    return 0;
+}
+
+# ---- 2.0.3: the checkpoint store (src/checkpoint.cyr) ----
+# Round trips in a scratch folder: a file checkpointed, removed, and put back by undo; moves renamed
+# back; a group undone together; nothing overwritten; the newest groups kept.
+
+fn _t_ck_write(path, content, mode) {
+    _t_write_cstr(path, content);
+    sys_chmod(path, mode);
+    return 0;
+}
+
+# The permission bits of `path` (-1 when it is missing).
+fn _t_ck_mode(path) {
+    var st[144];
+    if (xstat(path, &st) != 0) { return 0 - 1; }
+    return load32(&st + STAT_MODE) % 4096;
+}
+
+# Does the file at `path` hold exactly `content`?
+fn _t_ck_is(path, content) {
+    var n = _t_slurp(path);
+    if (n != strlen(content)) { return 0; }
+    return _t_mem_find(&_t_cap_buf, n, content);
+}
+
+fn _t_ck_count(dir) { return vec_len(ckpt_names(dir)); }
+
+# Remove what the checkpoint tests make: the store's entries, the known work files, the folders.
+fn _t_ck_clean(base, store, work) {
+    ckpt_prune(store, 0);
+    xunlink(str_cat3_cstr(store, "/", "20250924T035531.123456789Z-0000000007-000003-0001.ckpt"));
+    xunlink(str_cat3_cstr(store, "/", "notes.txt"));
+    var files = vec_new();
+    vec_push(files, "a.txt");
+    vec_push(files, "b.txt");
+    vec_push(files, "c.txt");
+    vec_push(files, "d.txt");
+    vec_push(files, "empty");
+    vec_push(files, "link");
+    vec_push(files, "big");
+    vec_push(files, "copy.txt");
+    vec_push(files, "sub/b.txt");
+    for (var i = 0; i < vec_len(files); i = i + 1) { xunlink(str_cat3_cstr(work, "/", vec_get(files, i))); }
+    xrmdir(str_cat3_cstr(work, "/", "sub2/b.txt"));
+    xrmdir(str_cat3_cstr(work, "/", "sub2"));
+    xrmdir(str_cat3_cstr(work, "/", "sub"));
+    xrmdir(work);
+    xrmdir(store);
+    xunlink(str_cat3_cstr(base, "/", "storefile"));
+    xrmdir(base);
+    return 0;
+}
+
+fn _t_checkpoint() {
+    # Where the store is: the report folder's rule, with its own name (statepaths.cyr).
+    check("ckpt_dir_from: XDG state",
+      streq(ckpt_dir_from("/x/state", "/home/u"), "/x/state/agnoshi/checkpoints") == 1);
+    check("ckpt_dir_from: HOME's .local/state",
+      streq(ckpt_dir_from(0, "/home/u"), "/home/u/.local/state/agnoshi/checkpoints") == 1);
+    check("ckpt_dir_from: a relative XDG_STATE_HOME is ignored",
+      streq(ckpt_dir_from("rel", "/home/u"), "/home/u/.local/state/agnoshi/checkpoints") == 1);
+    check("ckpt_dir_from: no usable HOME falls back to /tmp, by uid",
+      streq(ckpt_dir_from(0, 0), tmp_state_path("agnoshi-checkpoints")) == 1);
+    check("ckpt_dir follows the environment",
+      streq(ckpt_dir(), ckpt_dir_from(getenv("XDG_STATE_HOME"), getenv("HOME"))) == 1);
+    check("state_dir_from names the state", streq(state_dir_from("/s", 0, "n"), "/s/agnoshi/n") == 1);
+    check("state_dir_prepare names its folder in the reason", streq(state_dir_prepare(0, "thing"), "no thing") == 1);
+
+    # Scratch: <base>/store is the store, <base>/work holds the files.
+    var base = tmp_state_path("agnsh_selftest_ckpt");
+    var store = str_cat3_cstr(base, "/", "store");
+    var work = str_cat3_cstr(base, "/", "work");
+    _t_ck_clean(base, store, work);
+    xmkdir_p(work, 448);
+    var fa = str_cat3_cstr(work, "/", "a.txt");
+    var fb = str_cat3_cstr(work, "/", "b.txt");
+    var fc = str_cat3_cstr(work, "/", "c.txt");
+    var fdd = str_cat3_cstr(work, "/", "d.txt");
+    var fe = str_cat3_cstr(work, "/", "empty");
+    var fl = str_cat3_cstr(work, "/", "link");
+    var fbig = str_cat3_cstr(work, "/", "big");
+    var sub = str_cat3_cstr(work, "/", "sub");
+    _t_ck_write(fa, "alpha\n", 416);                # 0640
+    _t_ck_write(fb, "bravo\n", 384);                # 0600
+    _t_ck_write(fe, "", 420);                       # 0644
+    xmkdir_p(sub, 448);
+    sys_symlink(fa, fl);
+
+    # Names and numbers: fixed width, so they sort in the order they were made.
+    var gid = ckpt_group_id(1758686131123456789, 7, 3);
+    check("a group id is the time to the nanosecond, the pid and the group, fixed width",
+      streq(gid, "20250924T035531.123456789Z-0000000007-000003") == 1);
+    var en = ckpt_entry_name(gid, 12);
+    check("an entry name is its group and a four-digit index",
+      streq(en, "20250924T035531.123456789Z-0000000007-000003-0012.ckpt") == 1);
+    check("...which ckpt_is_name recognises", ckpt_is_name(str_from(en)) == 1);
+    check("a name one byte short is not an entry",
+      ckpt_is_name(str_from("20250924T035531.123456789Z-0000000007-000003-012.ckpt")) == 0);
+    check("a letter where a digit belongs is not",
+      ckpt_is_name(str_from("2025092xT035531.123456789Z-0000000007-000003-0012.ckpt")) == 0);
+    check("another extension is not",
+      ckpt_is_name(str_from("20250924T035531.123456789Z-0000000007-000003-0012.ckpx")) == 0);
+    check("names order by time first", _ckpt_less("20250924T035531.123456789Z-0000000007-000003-0012.ckpt",
+        "20250924T035531.123456790Z-0000000001-000001-0001.ckpt", CKPT_NAME_LEN) == 1);
+    check("...and a name is not less than itself", _ckpt_less(en, en, CKPT_NAME_LEN) == 0);
+    check("an entry and its group id are the same group", _ckpt_same_group(en, gid) == 1);
+    # _ckpt_sort: a merge sort — any order in, name order out.
+    var sarr = alloc(7 * 8);
+    var stmp = alloc(7 * 8);
+    var sorder = "3610524";
+    for (var si = 0; si < 7; si = si + 1) {
+        store64(sarr + si * 8, ckpt_entry_name(gid, load8(sorder + si) - 47));
+    }
+    _ckpt_sort(sarr, stmp, 7);
+    var sorted = 1;
+    for (var sj = 0; sj < 6; sj = sj + 1) {
+        if (_ckpt_less(load64(sarr + sj * 8), load64(sarr + sj * 8 + 8), CKPT_NAME_LEN) == 0) { sorted = 0; }
+    }
+    check("_ckpt_sort puts seven scrambled names in order", sorted == 1
+      && streq(load64(sarr), ckpt_entry_name(gid, 1)) == 1 && streq(load64(sarr + 48), ckpt_entry_name(gid, 7)) == 1);
+    store64(sarr, ckpt_entry_name(gid, 2));
+    store64(sarr + 8, ckpt_entry_name(gid, 1));
+    _ckpt_sort(sarr, stmp, 2);
+    check("...a reversed pair", streq(load64(sarr), ckpt_entry_name(gid, 1)) == 1);
+    _ckpt_sort(sarr, stmp, 1);
+    check("...and leaves one name alone", streq(load64(sarr), ckpt_entry_name(gid, 1)) == 1);
+    var pf[8];
+    _ckpt_put_fixed(&pf, 42, 4);
+    store8(&pf + 4, 0);
+    check("_ckpt_put_fixed zero-pads", streq(&pf, "0042") == 1);
+    _ckpt_put_fixed(&pf, 123456, 4);
+    check("...and keeps the low digits of a longer number", streq(&pf, "3456") == 1);
+    check("_ckpt_octal", streq(_ckpt_octal(420), "644") == 1 && streq(_ckpt_octal(0), "0") == 1
+      && streq(_ckpt_octal(2541), "4755") == 1);
+    check("_ckpt_number reads decimal and octal", _ckpt_number("644", 8) == 420 && _ckpt_number("12", 10) == 12);
+    check("...and refuses anything else", _ckpt_number("", 10) == 0 - 1 && _ckpt_number("1a", 10) == 0 - 1
+      && _ckpt_number("8", 8) == 0 - 1 && _ckpt_number(0, 10) == 0 - 1);
+    check("_ckpt_field finds a header line", streq(_ckpt_field("op: move\npath: /a\n", 18, "path"), "/a") == 1);
+    check("...not an absent one", _ckpt_field("op: move\n", 9, "to") == 0);
+    check("...and only a whole key", _ckpt_field("pathx: /a\n", 10, "path") == 0);
+    var hh = _ckpt_header("move", "/a", "/b", 0 - 1, 0);
+    check("a move header without a saved file",
+      str_starts_with(hh, str_from("agnsh-checkpoint 1\nop: move\npath: /a\nto: /b\nsize: 0\ntime: ")) == 1
+      && str_ends_with(hh, str_from("Z\n\n")) == 1);
+    check("a remove header carries the mode",
+      str_starts_with(_ckpt_header("remove", "/a", 0, 33188, 6),
+        str_from("agnsh-checkpoint 1\nop: remove\npath: /a\nmode: 644\nsize: 6\ntime: ")) == 1);
+    check("ckpt_base", streq(ckpt_base("/a/b/c.txt"), "c.txt") == 1 && streq(ckpt_base("/a/dir/"), "dir") == 1
+      && streq(ckpt_base("x"), "x") == 1);
+    check("ckpt_path_ok", ckpt_path_ok("/ok/path") == 1 && ckpt_path_ok("rel") == 0
+      && ckpt_path_ok("/bad\nline") == 0 && ckpt_path_ok(0) == 0);
+    check("ckpt_abs keeps an absolute path", streq(ckpt_abs("/abs/p"), "/abs/p") == 1);
+    var rel = ckpt_abs("rel/p");
+    check("...joins a relative one to the working directory",
+      rel != 0 && load8(rel) == 47 && _t_ends_with(rel, "/rel/p") == 1);
+    check("...and has none for an empty path", ckpt_abs("") == 0 && ckpt_abs(0) == 0);
+    check("ckpt_exists sees a file, a folder and a symlink",
+      ckpt_exists(fa) == 1 && ckpt_exists(sub) == 1 && ckpt_exists(fl) == 1);
+    check("...and not a missing path", ckpt_exists(fc) == 0);
+    var cst[144];
+    check("_ckpt_stat without follow sees the symlink itself",
+      _ckpt_stat(fl, &cst, 0) == 0 && (load32(&cst + STAT_MODE) & CKPT_S_IFMT) == CKPT_S_IFLNK);
+    check("...and with follow, its target",
+      _ckpt_stat(fl, &cst, 1) == 0 && (load32(&cst + STAT_MODE) & CKPT_S_IFMT) == CKPT_S_IFREG);
+    check("the buffers are allocated once and kept",
+      _ckpt_head_buf() != 0 && _ckpt_head_buf() == _ckpt_head_buf() && _ckpt_io_buf() != 0);
+
+    # A removal round trip: checkpoint, remove, undo.
+    check("a fresh store is usable", ckpt_prepare(store) == 0);
+    check("...and private (0700)", _t_ck_mode(store) % 512 == 448);
+    var g = ckpt_group_new(store);
+    check("a group starts at entry 1, in a usable store", load64(g + 16) == 1 && load64(g + 24) == 0);
+    check("a file about to be removed is checkpointed", ckpt_remove(g, fa) == 0);
+    var names = ckpt_names(store);
+    check("...as one entry in the store", vec_len(names) == 1);
+    var epath = str_cat3_cstr(store, "/", vec_get(names, 0));
+    check("...private (0600)", _t_ck_mode(epath) % 512 == 384);
+    var e = ckpt_read_entry(epath);
+    check("...whose header reads back: a remove of the file, its mode and size",
+      e != 0 && load64(e) == 0 && streq(load64(e + 8), fa) == 1 && load64(e + 16) == 0
+      && load64(e + 24) % 512 == 416 && load64(e + 32) == 6);
+    check("...and whose bytes follow the header", _t_file_has(epath, "\n\nalpha\n") == 1);
+    xunlink(fa);
+    var u = ckpt_undo(store);
+    check("undo restores it", load64(u + 8) == 1 && load64(u + 16) == 0 && _t_ck_is(fa, "alpha\n") == 1);
+    check("...with its permission bits", _t_ck_mode(fa) % 512 == 416);
+    check("...says what it did", streq(vec_get(load64(u), 0), str_cat3_cstr("restored ", fa, "")) == 1);
+    check("...and the entry leaves the store", _t_ck_count(store) == 0);
+    u = ckpt_undo(store);
+    check("with nothing to undo, undo does nothing", vec_len(load64(u)) == 0 && load64(u + 8) == 0);
+    check("_ckpt_write_back never replaces a file", streq(_ckpt_write_back(epath, e, fa), "it cannot be created") == 1);
+    check("...and removes what it made when the saved copy is gone",
+      streq(_ckpt_write_back(epath, e, fc), "its saved copy could not be read") == 1 && ckpt_exists(fc) == 0);
+    g = ckpt_group_new(store);
+    check("an empty file is checkpointed", ckpt_remove(g, fe) == 0);
+    xunlink(fe);
+    u = ckpt_undo(store);
+    check("...and comes back empty", load64(u + 8) == 1 && ckpt_exists(fe) == 1 && _t_slurp(fe) == 0);
+
+    # What is refused, and never reaches the store.
+    g = ckpt_group_new(store);
+    check("a directory is refused", streq(ckpt_remove(g, sub), "a directory") == 1);
+    check("a symlink is refused", streq(ckpt_remove(g, fl), "a symbolic link") == 1);
+    check("a missing file is refused", streq(ckpt_remove(g, fc), "no such file") == 1);
+    check("a path with a newline is refused",
+      streq(ckpt_remove(g, "/tmp/a\nb"), "a path the checkpoint cannot record") == 1);
+    var bfd = file_open(fbig, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 384);
+    xlseek(bfd, CKPT_MAX_BYTES, 0);
+    file_write(bfd, "x", 1);
+    file_close(bfd);
+    check("a file over 64 MiB is refused", streq(ckpt_remove(g, fbig), "too large to keep (over 64 MiB)") == 1);
+    xunlink(fbig);
+    check("...and nothing refused reaches the store", _t_ck_count(store) == 0);
+    check("a file whose size changed since it was inspected is not copied", _ckpt_open_source(fb, 999) == 0 - 1);
+    var osrc = _ckpt_open_source(fb, 6);
+    check("...one that matches opens", osrc >= 0);
+    if (osrc >= 0) { file_close(osrc); }
+    store64(g + 16, 10000);
+    check("a group stops at 9999 entries", streq(_ckpt_put(g, hh, 0 - 1, 0), "too many files for one checkpoint") == 1);
+
+    # Moves: renamed back; into a folder; over a file, which is saved and put back too.
+    g = ckpt_group_new(store);
+    check("a move is recorded", ckpt_move(g, fb, fc) == 0);
+    file_rename(fb, fc);
+    u = ckpt_undo(store);
+    check("undo moves it back", load64(u + 8) == 1 && _t_ck_is(fb, "bravo\n") == 1 && ckpt_exists(fc) == 0);
+    check("...and says so",
+      streq(vec_get(load64(u), 0), str_cat3_cstr(str_cat3_cstr("moved ", fc, " back to "), fb, "")) == 1);
+    var fsb = str_cat3_cstr(sub, "/", "b.txt");
+    check("a move into a folder lands inside it", streq(ckpt_move_target(fb, sub), fsb) == 1);
+    check("...a move to a new name does not", streq(ckpt_move_target(fb, fc), fc) == 1);
+    g = ckpt_group_new(store);
+    check("a move into a folder is recorded", ckpt_move(g, fb, sub) == 0);
+    file_rename(fb, fsb);
+    u = ckpt_undo(store);
+    check("...and undone", load64(u + 8) == 1 && _t_ck_is(fb, "bravo\n") == 1 && ckpt_exists(fsb) == 0);
+    _t_ck_write(fdd, "delta\n", 420);
+    g = ckpt_group_new(store);
+    check("a move over a file saves that file", ckpt_move(g, fb, fdd) == 0);
+    file_rename(fb, fdd);
+    u = ckpt_undo(store);
+    check("undo moves it back and restores the file it replaced", load64(u + 8) == 1
+      && _t_ck_is(fb, "bravo\n") == 1 && _t_ck_is(fdd, "delta\n") == 1 && _t_ck_mode(fdd) % 512 == 420);
+    check("...and says both", _t_ends_with(vec_get(load64(u), 0), ", and restored the file it replaced") == 1);
+    var sub2 = str_cat3_cstr(work, "/", "sub2");
+    xmkdir_p(str_cat3_cstr(sub2, "/", "b.txt"), 448);
+    g = ckpt_group_new(store);
+    check("a move that would replace a folder is refused",
+      streq(ckpt_move(g, fb, sub2), "it would replace a directory") == 1);
+    check("_ckpt_what names what a move would replace", streq(_ckpt_what(1, "x"), "it would replace x") == 1
+      && streq(_ckpt_what(0, "x"), "x") == 1);
+    store64(g + 16, 10000);
+    check("a store-side failure in a move is not blamed on what it replaces",
+      streq(ckpt_move(g, fb, fdd), "too many files for one checkpoint") == 1);
+    store64(g + 16, 1);
+    check("a move of a missing file is refused", streq(ckpt_move(g, fc, fdd), "no such file") == 1);
+    check("...and a move to a path it cannot record", streq(ckpt_move(g, fb, "/tmp/x\ny"),
+        "a path the checkpoint cannot record") == 1);
+    check("nothing refused reached the store", _t_ck_count(store) == 0);
+
+    # A restore never overwrites.
+    g = ckpt_group_new(store);
+    check("_ckpt_save saves a regular file", _ckpt_save(g, "remove", fa, 0, fa, 0) == 0);
+    xunlink(fa);
+    _t_ck_write(fa, "newer\n", 384);
+    u = ckpt_undo(store);
+    check("undo will not overwrite what is there now", load64(u + 8) == 0 && load64(u + 16) == 1
+      && _t_ck_is(fa, "newer\n") == 1);
+    check("...says why", _t_ends_with(vec_get(load64(u), 0), " -- something is there now") == 1);
+    check("...and keeps the entry for another try", _t_ck_count(store) == 1);
+    xunlink(fa);
+    u = ckpt_undo(store);
+    check("...which works once the path is free: the saved file, not the newer one",
+      load64(u + 8) == 1 && _t_ck_is(fa, "alpha\n") == 1);
+
+    # A group is undone together, newest entry first — and only the newest group.
+    g = ckpt_group_new(store);
+    ckpt_remove(g, fa);
+    ckpt_remove(g, fb);
+    check("a group holds each file its command checkpoints", load64(g + 16) == 3 && _t_ck_count(store) == 2);
+    xunlink(fa);
+    xunlink(fb);
+    u = ckpt_undo(store);
+    check("undo restores the whole group", load64(u + 8) == 2
+      && _t_ck_is(fa, "alpha\n") == 1 && _t_ck_is(fb, "bravo\n") == 1);
+    check("...newest first", streq(vec_get(load64(u), 0), str_cat3_cstr("restored ", fb, "")) == 1
+      && streq(vec_get(load64(u), 1), str_cat3_cstr("restored ", fa, "")) == 1);
+    var g1 = ckpt_group_new(store);
+    ckpt_remove(g1, fa);
+    var g2 = ckpt_group_new(store);
+    ckpt_remove(g2, fb);
+    xunlink(fa);
+    xunlink(fb);
+    u = ckpt_undo(store);
+    check("undo takes only the newest group", load64(u + 8) == 1 && ckpt_exists(fb) == 1 && ckpt_exists(fa) == 0);
+    u = ckpt_undo(store);
+    check("...and the next undo the one before it", load64(u + 8) == 1 && ckpt_exists(fa) == 1);
+
+    # Pruning keeps the newest groups; a new group prunes to CKPT_KEEP - 1 before its first entry.
+    var gk1 = ckpt_group_new(store);
+    ckpt_remove(gk1, fa);
+    var gk2 = ckpt_group_new(store);
+    ckpt_remove(gk2, fa);
+    var gk3 = ckpt_group_new(store);
+    ckpt_remove(gk3, fa);
+    ckpt_remove(gk3, fb);
+    check("three groups, four entries", _t_ck_count(store) == 4);
+    check("pruning to two groups removes the oldest", ckpt_prune(store, 2) == 1 && _t_ck_count(store) == 3);
+    check("...leaving the newest", ckpt_prune(store, 1) == 1 && _t_ck_count(store) == 2);
+    check("pruning with room to spare removes nothing", ckpt_prune(store, 5) == 0);
+    var keep_was = CKPT_KEEP;
+    CKPT_KEEP = 2;
+    var gk4 = ckpt_group_new(store);
+    ckpt_remove(gk4, fb);
+    check("two groups in a store that keeps two", _t_ck_count(store) == 3);
+    var gk5 = ckpt_group_new(store);
+    check("a new group prunes the store to make room for itself: the oldest group goes",
+      _t_ck_count(store) == 1);
+    ckpt_remove(gk5, fa);
+    ckpt_remove(gk5, fb);
+    check("...once, when it starts: a group's own entries never prune each other", _t_ck_count(store) == 3);
+    CKPT_KEEP = keep_was;
+    ckpt_prune(store, 0);
+    check("pruning to none empties the store", _t_ck_count(store) == 0);
+
+    # A file in the store that is not an entry this build wrote is never restored.
+    var junk = str_cat3_cstr(store, "/", "20250924T035531.123456789Z-0000000007-000003-0001.ckpt");
+    _t_write_cstr(junk, "not a checkpoint\n");
+    check("a malformed entry is not read", ckpt_read_entry(junk) == 0);
+    u = ckpt_undo(store);
+    check("...and undo says so, leaving it alone", load64(u + 16) == 1 && ckpt_exists(junk) == 1
+      && _t_ends_with(vec_get(load64(u), 0), " -- not a checkpoint this build can read") == 1);
+    var rok[8];
+    var rline = _ckpt_restore(store, "20250924T035531.123456789Z-0000000007-000003-0009.ckpt", &rok);
+    check("_ckpt_restore of a missing entry does nothing",
+      load64(&rok) == 0 && _t_ends_with(rline, " -- not a checkpoint this build can read") == 1);
+    _t_write_cstr(junk, "agnsh-checkpoint 1\nop: remove\npath: /x\nsize: 3\n\nabc");
+    check("a remove without its mode is not read", ckpt_read_entry(junk) == 0);
+    _t_write_cstr(junk, "agnsh-checkpoint 1\nop: copy\npath: /x\nsize: 0\n\n");
+    check("an unknown op is not read", ckpt_read_entry(junk) == 0);
+    _t_write_cstr(junk, "agnsh-checkpoint 1\nop: move\npath: /x\nto: rel\nsize: 0\n\n");
+    check("a relative path is not read", ckpt_read_entry(junk) == 0);
+    _t_write_cstr(junk, "agnsh-checkpoint 1\nop: move\npath: /x\nto: /y\nsize: 0\n\n");
+    check("a well-formed move is read", ckpt_read_entry(junk) != 0);
+    xunlink(junk);
+    _t_write_cstr(str_cat3_cstr(store, "/", "notes.txt"), "mine\n");
+    check("other files in the store are not entries", _t_ck_count(store) == 0);
+
+    # The low-level pieces on their own.
+    var cpy = str_cat3_cstr(work, "/", "copy.txt");
+    var wfd = file_open(cpy, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 384);
+    check("_ckpt_write_all writes every byte", _ckpt_write_all(wfd, "abcdef", 6) == 0);
+    file_close(wfd);
+    var rfd = file_open(cpy, 0, 0);
+    var wfd2 = file_open(fc, OPEN_WRONLY | OPEN_CREAT | OPEN_TRUNC, 384);
+    check("_ckpt_copy stops past its limit", _ckpt_copy(rfd, wfd2, 4) == 0 - 1);
+    file_close(rfd);
+    file_close(wfd2);
+    xunlink(fc);
+
+    # An unusable store refuses the group, and every entry with the same reason.
+    var sfile = str_cat3_cstr(base, "/", "storefile");
+    _t_write_cstr(sfile, "a file, not a folder\n");
+    var gbad = ckpt_group_new(sfile);
+    check("a store that cannot be a folder refuses the group", load64(gbad + 24) != 0);
+    check("...and every entry, with the reason", streq(ckpt_remove(gbad, fa), load64(gbad + 24)) == 1
+      && streq(ckpt_move(gbad, fa, fc), load64(gbad + 24)) == 1);
+    sys_chmod(store, 511);
+    check("a store others can write is refused",
+      streq(ckpt_prepare(store), "others can write the checkpoint folder") == 1);
+    sys_chmod(store, 448);
+
+    _t_ck_clean(base, store, work);
+    check("the scratch folder is gone", ckpt_exists(base) == 0);
     return 0;
 }
 
@@ -2671,8 +3048,8 @@ fn main() {
       streq(report_dir_from(0, 0), tmp_state_path("agnoshi-reports")) == 1);
     check("report_dir follows the host rule",
       streq(report_dir(), report_dir_from(getenv("XDG_STATE_HOME"), getenv("HOME"))) == 1);
-    check("_report_join drops one trailing slash", streq(_report_join("/a/", "/b"), "/a/b") == 1);
-    check("_report_join from the root", streq(_report_join("/", "/x"), "/x") == 1);
+    check("state_join drops one trailing slash", streq(state_join("/a/", "/b"), "/a/b") == 1);
+    check("state_join from the root", streq(state_join("/", "/x"), "/x") == 1);
     var rdig[24];
     check("_report_put_uint writes zero", _report_put_uint(&rdig, 0) == 1 && load8(&rdig) == 48);
     check("_report_put_uint writes every digit", _report_put_uint(&rdig, 12345) == 5
@@ -3118,6 +3495,8 @@ fn main() {
     xunlink(caperr);
     audit_path_override_set(0);
     xunlink(hlog);
+
+    _t_checkpoint();
 
     return report();
 }
