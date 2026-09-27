@@ -32,7 +32,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.4** — approval-gated exec (the checkpoint store is done, in `[Unreleased]`) | none |
+| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.4** — approval-gated exec (the checkpoint store shipped in 2.0.3) | none |
 | **2.1.x** | Interactive shell — `cd`, an rc file, a line editor | **2.1.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | host: none; agnos: the socket adapter |
 

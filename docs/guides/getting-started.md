@@ -19,7 +19,7 @@ The install script places:
 ### Verify
 
 ```bash
-agnsh --version    # "agnoshi 1.9.9"
+agnsh --version    # "agnoshi 2.0.3"
 agnsh --help       # usage summary
 man agnsh          # full reference
 ```
@@ -31,42 +31,42 @@ current mode (default is `[ASSIST]`):
 
 ```
 $ agnsh
-agnoshi 1.9.9
+agnoshi 2.0.3
 AI-native shell -- type a natural-language command, or 'exit' to quit.
-Built-ins: help, version, mode, history, clear, exit, reboot, poweroff, halt
-Run: run /abs/path   (bareword / pipeline / redirect launching is AGNOS-only)
+Built-ins: help, version, mode, history, clear, exit
+Run: a program's name, or run /abs/path   (pipelines, > and & are AGNOS-only)
 
-[ASSIST] > show me all files in /tmp
+[ASSIST] > show me all files in /tmp/demo
 Intent: 0  Command: ls
   Risk: [LOW]
-
-[ASSIST] > install vim
+.  ..  notes.txt  old  todo.md
+[ASSIST] > please install the vim package
 Intent: 14  Command: apt
   Risk: [HIGH]
   Approval required -- not executed (no approval prompt in this build)
-
-[ASSIST] > rm -rf /tmp/foo
-Intent: 8  Command: rm
-  Risk: [CRIT]
-  WARNING: BLOCKED -- not executed, and there is no override
-
+[ASSIST] > rm -rf /tmp/demo/old
+  ⚠ BLOCKED: run /usr/bin/rm -rf /tmp/demo/old ? [y/N] n
+  (aborted)
 [ASSIST] > mode strict
 Mode -> STRICT
-
 [STRICT] > history
-  1  show me all files in /tmp
-  2  install vim
-  3  rm -rf /tmp/foo
-  4  mode strict
-
+  1  show me all files in /tmp/demo
+  2  please install the vim package
+  3  rm -rf /tmp/demo/old
 [STRICT] > exit
 bye
 ```
 
+The first line is read-only, so it runs. The second would install software, so it is
+reported and not run. The third starts with a program's name, so it is your own shell
+line — but a BLOCKED one, so it asks first, and anything but `y` declines. (`install vim`
+on its own would run `/usr/bin/install`: a sentence that starts with a program's name is
+that program's command line.)
+
 Or run a single command:
 
 ```bash
-agnsh -c "install vim"
+agnsh -c "show me all files in /tmp"
 ```
 
 The output carries `Intent: <tag>  Command: <cmd>` plus a `Risk: [LOW|MED|HIGH|CRIT]` line and, when appropriate, a `Hint:` line explaining why a particular input isn't directly runnable (LLM-routed question, pipeline without an exec wire-up yet, or a translator safety-check rejection).
@@ -82,8 +82,9 @@ Agnsh has four modes:
 | `auto` | Same, without the assist framing | No |
 | `strict` | Most conservative posture | **Yes** |
 
-Change mode interactively with `mode <name>`, or start with `--mode <name>`
-(an unrecognised name is an error — it will not silently fall back).
+Change mode interactively with `mode <name>`. A one-shot takes `--mode <name>`
+with `-c` (without `-c` the flag prints usage and exits 1); an unrecognised name is
+an error — it will not silently fall back.
 
 ⚠ **What the mode does NOT change today.** No mode hands you a raw shell, and no
 mode disables classification — every mode classifies, reports risk and writes an

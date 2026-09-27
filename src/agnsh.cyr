@@ -54,7 +54,7 @@ include "src/security.cyr"
 include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 2.0.2";
+var VERSION_STR = "agnoshi 2.0.3";
 
 fn print_version() {
     println(VERSION_STR);

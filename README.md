@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**2.0.2 · Cyrius 6.6.6 · 26 modules · ~6.8 K src lines · 227 KB static binary (DCE, x86_64) · 663 KB aarch64 · 0 runtime deps · 939 unit + 26 security + 358 parse-corpus + 137 smoke tests · 100% host-reachable fn coverage**
+**2.0.3 · Cyrius 6.6.6 · 26 modules · ~7.6 K src lines · 228 KB static binary (DCE, x86_64) · 664 KB aarch64 · 0 runtime deps · 1052 unit + 26 security + 358 parse-corpus + 137 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
@@ -24,7 +24,7 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-
 ⚠ **Not shipped yet, though the modules exist in `src/`**: interactive approval
 prompts — so USER_WRITE, SYSTEM_WRITE and ADMIN natural-language lines report
 `Approval required` and do not run — `undo`, and privilege escalation. `src/checkpoint.cyr`
-(the checkpoint store, ADR-009) is compiled in but nothing calls it yet, so nothing is
+(the checkpoint store, ADR-009) is compiled in (2.0.3) but nothing calls it yet, so nothing is
 checkpointed; `src/security.cyr` is compiled in (2.0.2), but only its root restriction
 runs — its `sudo` path has no caller; and
 `src/approval.cyr` is compiled in only for its risk classifier —

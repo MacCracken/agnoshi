@@ -3,7 +3,7 @@
 > # ⛔ DO NOT DEPLOY THIS AS WRITTEN — IT DESCRIBES A SHELL THAT DOES NOT EXIST YET
 >
 > This guide was written against an intended design, not the shipped binary.
-> Verified against **2.0.2**, the following load-bearing claims below are FALSE:
+> Verified against **2.0.3**, the following load-bearing claims below are FALSE:
 >
 > | The guide says | Reality |
 > |---|---|

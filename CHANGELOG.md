@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-09-26 — a checkpoint store for undo, and an agnos idle gate that no longer fails an idle shell
+
+The roadmap's 2.0.3 slot — the checkpoint store that the approval-gated tiers need before anything
+destructive runs ([ADR-009](docs/adr/009-checkpoint-store.md)) — and a fix to the agnos bench's
+idle gate, which could fail a shell that was idle.
+
 ### Added
 
 - **The checkpoint store** (`src/checkpoint.cyr`, rewritten; [ADR-009](docs/adr/009-checkpoint-store.md)),
@@ -68,6 +74,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     agnsh keeps only while a background job runs — reads **0/100** at `-smp 1` and **0/101** at
     `-smp 4`, with 0 ticks, and fails. This tree reads **91/100** and **94/100**; at `-smp 1` its 9
     READY samples are the backstop ticks.
+
+### Documentation
+
+- **`docs/guides/getting-started.md`'s sample session was 1.9.9's.** Its banner listed builtins
+  that are gone, and its `install vim` now runs `/usr/bin/install` — a line that starts with a
+  program's name is that program's command line (ADR-007). It is re-recorded from the 2.0.3 binary
+  in a pseudo-terminal: a read-only line that runs, one that needs approval and is not run, and a
+  BLOCKED shell line declined at its prompt. It also said an interactive shell takes `--mode`;
+  only `-c` does, and alone the flag prints usage and exits 1.
 
 ### Performance
 
