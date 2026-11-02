@@ -95,6 +95,20 @@ agnsh build defines it.
   `bayan_json_*` functions, up from 69. The 6.6.20 agnos peer still stubs `sys_chdir` to -38, so 2.1.0's
   agnos `cd` stays agnsh-owned.
 
+### Fixed — CI's lint step failed on `src/main.cyr`
+
+6.6.20 refuses a redefined function whose parameter types disagree with the first definition.
+`src/main.cyr`, the v1.0 entry that is in no build, kept its own untyped `str_to_int(s)` beside
+`lib/str.cyr`'s `str_to_int(s: Str)`, so `cyrius lint` could not compile the file and exited 1. CI's
+lint loop runs under `bash -e`, so that exit ended the step before it printed the file's output: the
+log stops after `src/interpreter.cyr` with no message. The two bodies did the same thing (an
+optional leading `-`, then the digits, skipping anything else), so the local copy is deleted and the
+file uses the stdlib's. No build includes `src/main.cyr`, so no binary changes.
+
+The local run missed it because it only grepped each file's lint output for `warn` lines, and so
+never saw an exit status. Every build-and-test step of `ci.yml` has since been run verbatim under
+`bash -eo pipefail`, the runner's shell: 18 of 18 pass.
+
 ### Fixed — comments that described the stdlib's old agnos `run()`
 
 `src/agnsh.cyr` and `src/run_agnos.cyr` said the vendored agnos `run()` was `spawn` #3 + `waitpid` #4,
@@ -105,8 +119,8 @@ the binaries are byte-identical.
 
 ### Verified
 
-- All CI gates, first on a clean `git archive` of 2.0.3 with only the pin moved, then on the tree:
-  unit 1052/1052, security 26/26, parse corpus 358/358, smoke 137/137; the same three suites on
+- All CI gates, first on a clean `git archive` of 2.0.3 with only the pin moved, then on the tree —
+  ⚠ except lint, whose exit status the first local runs did not read (see Fixed): unit 1052/1052, security 26/26, parse corpus 358/358, smoke 137/137; the same three suites on
   aarch64 under qemu-user; host-reachable coverage 282/282; `cyrius deps --verify` 39/39.
 - The comment fixes change no byte: with the same `VERSION_STR`, the tree and the pin-only copy build
   identical binaries on all three targets.

@@ -306,7 +306,9 @@ one arch, and three gates had opened without anyone noticing.
    tagged, args, chrono, process); CLI changes to fmt / lint / check / vet / capacity / build / deps;
    the bench row format (`scripts/bench-history.sh` parses ` avg ` lines); every "consumers must".
 4. All CI gates on a clean `git archive` copy first — CI's own starting state — then on the tree,
-   including the aarch64 suites under qemu-user and the agnos build. Then
+   including the aarch64 suites under qemu-user and the agnos build. Run each `ci.yml` step as written,
+   under `bash -eo pipefail` (the runner's shell): a local loop that grepped lint output for `warn`
+   passed 2.0.4 while CI's lint step exited 1 on a file that no longer compiled. Then
    `python3 scripts/agnos-qemu-test.py` and `python3 scripts/agnos-qemu-bench.py`: CI builds the agnos
    target but cannot run it, and these are the repo's only tests that do.
 5. **Re-verify every gate in § Gated and every upstream claim in the arcs.** A pin bump is when a

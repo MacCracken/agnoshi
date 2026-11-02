@@ -1247,7 +1247,7 @@ fn main() {
     # print_str_safe is io-side; just anchor the name via a direct call.
     print_str_safe(str_from(""));
 
-    # str_to_int (sanitize-adjacent helper in main.cyr / commands flow)
+    # str_to_int (lib/str.cyr; interpreter.cyr parses a numeric argument with it)
     check("str_to_int basic", str_to_int(str_from("42")) == 42);
 
     # split_command_line (commands.cyr) — exercise through SHELL_COMMAND
