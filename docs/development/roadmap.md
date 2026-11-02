@@ -1,5 +1,22 @@
 # Development Roadmap
 
+> **⚠ P1, after the language bump work: agnoshi cannot run as a kybernet service.** Raised
+> 2026-11-02 by kybernet 1.12.0 / argonaut 1.20.0.
+>
+> - **No terminal.** argonaut's `default_services` starts agnoshi in BOOT_MINIMAL (console) and
+>   BOOT_DESKTOP. Every service kybernet starts gets `/dev/null` on fds 0, 1 and 2 (kybernet
+>   standing rule 20). `Session_run_interactive` reads its lines from fd 0, so as a default
+>   service agnoshi reads EOF on its first prompt and exits.
+> - **Not root any more.** Since argonaut 1.20.0 the default agnoshi runs as the interactive
+>   user, 1000:1000, with no supplementary groups. Whatever terminal it ends up with has to be
+>   one that uid can open. kybernet runs no udev, so a console or tty node is `root:root 0600`.
+> - **Which side builds what is open.** agnoshi could open its own terminal, or argonaut and
+>   kybernet could give a service a tty (kybernet roadmap, Gated: "a design, in argonaut, for a
+>   service that owns a terminal"). Settle that before writing code on either side.
+>
+> Done when a BOOT_MINIMAL board started by kybernet reaches an agnoshi prompt on its console, as
+> uid 1000.
+
 > **Open work only, and forward-facing.** Anything shipped is removed from this file — what landed
 > and why lives in [`CHANGELOG.md`](../../CHANGELOG.md). This file answers one question: *what
 > next, in what order, against what gate.*
