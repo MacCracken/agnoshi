@@ -57,9 +57,11 @@ jobs:
         run: cyrius deps
 
       - name: Verify dep hashes
-        # Skip on the first push that introduces a new dep before
-        # `cyrius.lock` has been generated and committed. Once the
-        # lockfile lands in-tree, this step starts enforcing hashes.
+        # `cyrius.lock` is tracked since 2.0.4 (`cyrius deps` writes it from
+        # cyrius 6.6.9). With it in the tree, the step above already refuses a
+        # snapshot that disagrees with it under an unchanged pin; this one
+        # re-hashes every file in ./lib/ and fails on any file it does not list.
+        # The skip is for a checkout without a lock.
         run: |
           if [ -f cyrius.lock ]; then
             cyrius deps --verify

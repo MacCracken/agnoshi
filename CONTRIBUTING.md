@@ -6,8 +6,9 @@ Thank you for your interest in contributing to Agnoshi.
 
 1. Fork the repository
 2. Create a feature branch
-3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "6.6.6"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
-4. `cyrius deps` — resolves the version-pinned stdlib snapshot into `./lib/` (gitignored)
+3. Install Cyrius (the pin lives in `cyrius.cyml`: `cyrius = "6.6.20"`). Toolchain releases: https://github.com/MacCracken/cyrius/releases
+4. `cyrius deps` — resolves the version-pinned stdlib snapshot into `./lib/` (gitignored) and checks it
+   against the hashes in `cyrius.lock` (tracked)
 5. Make your changes
 6. Run the cleanliness gates + `sh tests/test.sh` to verify
 7. Submit a pull request

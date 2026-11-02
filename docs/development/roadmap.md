@@ -24,15 +24,16 @@
 > **Pinned release arcs.** Each arc is a minor version, and each slot in it names the patch it is
 > planned to land in. Slots are ordered by dependency, so the next unblocked slot is the lowest open
 > number. ⚠ An unplanned release — a toolchain bump, a response to an upstream issue — takes the next
-> free patch number and pushes the planned slots down by one (1.9.11, 1.9.12 and 2.0.1 all did — 2.0.1
-> answered two agnos 1.57.9 issues). Renumber the arc in the same change.
+> free patch number and pushes the planned slots down by one (1.9.11, 1.9.12, 2.0.1 and 2.0.4 all
+> did — 2.0.1 answered two agnos 1.57.9 issues, 2.0.4 moved the pin to cyrius 6.6.20). Renumber the
+> arc in the same change.
 >
 > **Cite a slot by arc and title** — `roadmap 2.0.x — NL exec` — never by patch number alone:
 > titles survive a renumber. References name functions and files, not line numbers.
 >
-> Verified against `src/` and the sibling repos on **2026-09-26** (tree at 2.0.2, cyrius 6.6.6, agnos
-> 1.57.9). Every upstream gate was re-checked at the 6.6.6 pin (1.9.13), and the agnos rows again at
-> 2.0.1 — all seven had resolved upstream; § Gated says what each left for agnsh.
+> Verified against `src/` and the sibling repos on **2026-11-02** (tree at 2.0.4, cyrius 6.6.20, agnos
+> 1.57.14). Every upstream gate was re-checked at the 6.6.20 pin (2.0.4); the socket adapter had
+> shipped (cyrius 6.6.7), and § Gated says what each opened gate left for agnsh.
 
 ## How this file is organised
 
@@ -49,9 +50,9 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.4** — approval-gated exec (the checkpoint store shipped in 2.0.3) | none |
+| **2.0.x** | NL execution — the natural-language path runs what it proposes | **2.0.5** — approval-gated exec (the checkpoint store shipped in 2.0.3) | none |
 | **2.1.x** | Interactive shell — `cd`, an rc file, a line editor | **2.1.0** — `cd` / `pwd` | host: none; agnos pieces gated |
-| **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | host: none; agnos: the socket adapter |
+| **2.2.x** | hoosh / LLM — answer questions, suggest commands | **2.2.0** — hoosh client (host) | none — agnos's socket adapter shipped in cyrius 6.6.7, not yet run by agnsh |
 
 2.0.x is the headline: **agnoshi's premise is that natural language becomes execution.** 2.0.0
 shipped the first tier — SAFE and READ_ONLY lines run, under the `-c` contract of
@@ -77,7 +78,7 @@ place before anything destructive runs. 2.0.0 shipped SAFE and READ_ONLY (see th
 slots below are ordered so that nothing destructive executes before checkpointing exists. Standing
 from 2.0.0: `proc_set_timeout_ms` (host only) could give NL exec a command timeout — unscheduled.
 
-### 2.0.4 — Approval-gated exec: USER_WRITE, SYSTEM_WRITE, ADMIN
+### 2.0.5 — Approval-gated exec: USER_WRITE, SYSTEM_WRITE, ADMIN
 
 - `ApprovalManager_request` is compiled in and has no caller. Call it before executing these tiers.
   It reads fd 0 directly, so `-c` (no stdin) declines by default, as today. ⚠ Its prompt writes to
@@ -97,7 +98,7 @@ from 2.0.0: `proc_set_timeout_ms` (host only) could give NL exec a command timeo
 - ADR the approval-vs-execute split. `docs/examples/server-hardening.md`'s do-not-deploy banner comes
   down only when `strict` mode actually gates.
 
-### 2.0.5 — `undo`
+### 2.0.6 — `undo`
 
 - `ckpt_undo(ckpt_dir())` (ADR-009) behind a new `undo` builtin: it restores the newest group and
   returns the lines to print, and how many entries were and were not undone — the exit status.
@@ -124,11 +125,11 @@ proposal, and never changes directory.
   from `session.cyr`, whose `cd` block also treats args as `Str` where `split_command_line` emits
   cstrings).
 - **agnos — agnsh-owned, permanently.** agnos's roadmap lists a userland-owned cwd among its standing
-  boundaries: no chdir/getcwd syscall, by design. The 6.6.6 peer stubs `sys_chdir` to -38. So agnsh
-  tracks its own cwd, resolves its own relative paths against it (a `>` target must be absolute
-  today), and exports `PWD` through the env blob `sh_build_env_blob` hands to `#37` / `#43`. Children
-  currently inherit kybernet's `PWD=/`. ⚠ Check whether kriya and owl resolve relative operands against
-  `$PWD` before promising `cd` semantics to them.
+  boundaries: no chdir/getcwd syscall, by design. The 6.6.20 peer still stubs `sys_chdir` to -38.
+  So agnsh tracks its own cwd, resolves its own relative paths against it (a `>` target must be
+  absolute today), and exports `PWD` through the env blob `sh_build_env_blob` hands to `#37` /
+  `#43`. Children currently inherit kybernet's `PWD=/`. ⚠ Check whether kriya and owl resolve
+  relative operands against `$PWD` before promising `cd` semantics to them.
 - If `session.cyr` code is reused, its `ui_show_*` calls need real bodies first: agnsh has no stubs
   for them (the two dead `return 0` ones were deleted in 1.9.15), so the build fails until they exist.
 
@@ -178,17 +179,19 @@ man-page pair; `explain` is 2.2.2), and **history fuzzy search** (after 2.1.3).
 
 ## 2.2.x — hoosh / LLM
 
-The host client is unblocked: hoosh 2.6.10's modernization has shipped, and the stdlib carries the
-transport. On agnos the client is § Gated on the socket adapter (the kernel half shipped in agnos 1.57.7).
+The host client is unblocked: hoosh's modernization has shipped, and the stdlib carries the
+transport. On agnos the socket adapter it waited on shipped in cyrius 6.6.7 (§ Gated → *Opened
+upstream*), so the same client can be built `--agnos`; nobody has run it there yet.
 
 ### 2.2.0 — hoosh client, host (`src/llm.cyr`)
 
 - `src/llm.cyr` has never existed, and the binary has no network code at all.
-- hoosh 2.6.10 serves an **OpenAI-compatible** API on `127.0.0.1:8088`; bearer auth optional; requests
-  must carry `Content-Length`.
+- hoosh (2.8.1, re-checked at 2.0.4) serves an **OpenAI-compatible** API on `127.0.0.1:8088`;
+  bearer auth optional; requests must carry `Content-Length`.
 - Transport: `lib/http.cyr` is HTTP/1.0 **GET-only** and cannot make the call. The bundled sandhi has
-  `sandhi_http_post` and `sandhi_http_stream`; JSON is bayan's 69 `bayan_json_*` functions (standalone
-  `json.cyr` was folded into bayan at cyrius 6.2.25). Add both to `[deps] stdlib`; `net` is already there.
+  `sandhi_http_post` and `sandhi_http_stream`; JSON is bayan's 71 `bayan_json_*` functions at 6.6.20
+  (standalone `json.cyr` was folded into bayan at cyrius 6.2.25). Add both to `[deps] stdlib`; `net`
+  is already there.
 - Port `sanitize_llm_input` (prompt-injection sanitization) from the deleted Rust tree:
   `git log --all --diff-filter=D -- rust-old/src/llm.rs`.
 - Measure the size and capacity cost; this is the biggest include-graph jump since the port.
@@ -213,7 +216,7 @@ transport. On agnos the client is § Gated on the socket adapter (the kernel hal
 
 | Decision | Needed by | The question |
 |---|---|---|
-| **Power verbs and confirmation** | 2.0.4 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
+| **Power verbs and confirmation** | 2.0.5 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
 | **Metacharacter pass-through in `human` mode** | any redirection-lane work | Let `;` `\|` `&` `$()` `<` `>` through in `human` only (user-flagged 2026-07-07). `is_shell_metachar` and its four wrappers are mode-blind with no mode parameter, so this threads one. On Linux it must warn: metachar → `execve` is a real injection vector (audit C2). |
 | **Install location** | the next zugot recipe bump | `scripts/install.sh` → `/usr/local/bin`; the zugot recipe (ark) → `/usr/bin`; agnos images → `/bin/agnsh`. The first two are FHS-correct as a pair (local build vs package), so the likely ruling is "no change" — but the recipe ships no man page, which is a real gap. |
 
@@ -221,26 +224,28 @@ transport. On agnos the client is § Gated on the socket adapter (the kernel hal
 
 ## Gated — not on the arc sequence
 
-Open, with the trigger outside agnoshi. Re-verified at pin 6.6.6, and the agnos rows against agnos
-1.57.9 at 2.0.1.
+Open, with the trigger outside agnoshi. Re-verified at pin 6.6.20 (2.0.4) against agnos 1.57.14 —
+itself on cyrius 6.6.20 — puka 0.6.25 and hoosh 2.8.1. One gate had opened: the socket adapter (below,
+under *Opened upstream*). puka's line discipline still drops arrow-key sequences because "agnsh has
+no line editor" (`puka/src/line_discipline.cyr`).
 
 ### agnos kernel and userland
 
 | Gate | Filed as | What it unblocks in agnsh |
 |---|---|---|
 | Raw keyboard input | puka (line discipline) | 2.1.3's editor on agnos. `kbscan #42` works from ring 3 but loses keys (0–4 of 9 at a 100 ms hold). |
-| The socket consumer adapter | cyrius — the adapter agnos's `2026-09-23-tcp-server-cannot-be-loopback-only` names as pending | 2.2.x on agnos. The kernel half shipped in agnos 1.57.7: a loopback-only listen, `127.0.0.0/8` as a destination, EOF once the peer's FIN is read, and `#47` / `#48` that block only their caller. Under QEMU a host hoosh is reachable at `10.0.2.2:8088`. |
 
 ### Opened upstream — agnsh's half, not yet scheduled
 
-The kernel halves shipped in agnos 1.57.6 and 1.57.7 (the issues are archived there, resolved); what
-is left is agnsh's. Each lands in an arc on demand.
+The kernel halves shipped in agnos 1.57.6 and 1.57.7 (the issues are archived there, resolved), and
+the socket adapter in cyrius 6.6.7; what is left is agnsh's. Each lands in an arc on demand.
 
-| agnos gave | Issue | What agnsh has to do |
+| Upstream gave | Issue | What agnsh has to do |
 |---|---|---|
 | 1.57.6: `spawn_path` #43 fails with `-SPAWN_E_*` — −2 table full, −3 no memory, −4 no such program, −5 not an executable, −6 bad arguments | `2026-09-23-spawn-path-failure-gives-no-reason` | Say which in the launch error and the `error` audit record: agnsh still prints one message for all of them. `execwait` #37 — the `>` path — still folds them to −1. |
 | 1.57.6: `SPAWN_F_ARGV`, an argv blob whose entries may contain spaces (≤ 1,024 bytes) | `2026-09-23-spawn-path-args-cannot-contain-spaces` | A quoting parser — agnsh has none — then launch through the argv form, which also lifts the 127-byte line cap. |
 | 1.57.6: `SPAWN_F_CLEANFD`, multi-pair `exec_redirect`, arms cleared on every #43 / #37 return | `2026-09-23-child-inherits-every-fd-and-spawn-arms-leak` | **Pipeline stages: done in 2.0.1.** The `>` child still inherits agnsh's table — 0/1/2 and its target — because #37 takes no flags; `2>` and `2>&1` wait on the redirection lane (§ Demand-gated backlog). |
+| cyrius 6.6.7: the agnos socket adapter — `lib/net.cyr` over `sock_connect` #47, `sock_listen` #56, `sock_accept` #57 and `sock_peer` #106 (agnos 1.57.7's kernel half: a loopback-only listen, `127.0.0.0/8` as a destination, EOF after the peer's FIN, `#47` / `#48` that block only their caller). 6.6.17 adds the portable `sys_socket` / `sys_connect` names; agnos 1.57.14 boots sandhi's HTTP server under 6.6.20 | `2026-09-23-tcp-server-cannot-be-loopback-only` (agnos); `2026-09-25-agnos-sock-peer-spawn-limits-wait-block-kill-tree-peer` (cyrius, resolved 6.6.7) | 2.2.x on agnos: build 2.2.0's client `--agnos` and run it in QEMU against a host hoosh at `10.0.2.2:8088`. agnos's smoke runs sandhi's server; the client side has not been run there from this repo. |
 | 1.57.7: `kill` #16 ends (9), stops (19) and continues (18) a child | `2026-09-23-parent-cannot-end-stop-or-continue-a-child` | Job control — `kill %n`, `fg` / `bg`, Ctrl-C to the foreground child — which needs a keypress to reach agnsh while it waits: agnos has no default action for SIGINT. (A killed child's status has read 128 + N since 2.0.1.) |
 
 ### Consumer app translators
@@ -293,7 +298,9 @@ one arch, and three gates had opened without anyone noticing.
 
 1. `cyrius.cyml` `cyrius = "…"` is the source of truth; CI reads it from there.
 2. **`rm -rf lib && cyrius deps`.** `cyrius deps` never deletes what an earlier pin vendored — the
-   local `lib/` had grown to 114 files against CI's 38.
+   local `lib/` had grown to 114 files against CI's 38. `cyrius.lock` is tracked since 2.0.4: a moved
+   pin re-locks on this run, so the lock changes in the same diff as the pin. Under an unchanged pin
+   a changed snapshot is refused; do not reach for `--relock` without finding out why.
 3. Read the cyrius CHANGELOG for **every** version crossed: new compile errors; semantics of the
    stdlib modules in the include graph (string, fmt, alloc, vec, str, syscalls + peers, io, fs, hashmap,
    tagged, args, chrono, process); CLI changes to fmt / lint / check / vet / capacity / build / deps;
@@ -346,5 +353,5 @@ one arch, and three gates had opened without anyone noticing.
   (`CONTRIBUTING.md`). `sh_env_blob[128]` is 1 KB, not 128 bytes.
 - **Coverage**: every wire-up grows the fn denominator; add `test_core` anchors for the new module's
   pure functions. The 80% gate is CI-enforced, and agnos-only functions are reported, not gated.
-- **Benchmarks** after 2.0.4 and 2.2.1 — both add new code paths (2.0.0's NL exec is dominated by
+- **Benchmarks** after 2.0.5 and 2.2.1 — both add new code paths (2.0.0's NL exec is dominated by
   process creation, which the in-process suite does not measure).

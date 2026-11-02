@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**2.0.3 · Cyrius 6.6.6 · 26 modules · ~7.6 K src lines · 228 KB static binary (DCE, x86_64) · 664 KB aarch64 · 0 runtime deps · 1052 unit + 26 security + 358 parse-corpus + 137 smoke tests · 100% host-reachable fn coverage**
+**2.0.4 · Cyrius 6.6.20 · 26 modules · ~7.6 K src lines · 233 KB static binary (DCE, x86_64) · 537 KB aarch64 · 0 runtime deps · 1052 unit + 26 security + 358 parse-corpus + 137 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
@@ -38,7 +38,7 @@ does not hold today.
 
 ```bash
 # Resolve the version-pinned stdlib snapshot into ./lib/ (gitignored).
-# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.6.6").
+# Pin lives in cyrius.cyml ([deps] stdlib + cyrius = "6.6.20"); cyrius.lock pins each file's hash.
 cyrius deps
 
 # Build from source
@@ -162,7 +162,7 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.6.6 is 227 KB (x86_64, DCE) / 663 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 342 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.6.20 is 233 KB (x86_64, DCE) / 537 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 235 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 

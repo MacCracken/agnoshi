@@ -11,7 +11,8 @@ helpers that no longer exist (`fs_copy`, `fs_mkdir_p`, …). The roadmap's 2.0.3
 cyrius 6.6.6, but porting the calls would not have been enough:
 
 - **Its index lived in memory.** Which backup belonged to which file lasted as long as the process,
-  and 2.0.5's own test — `agnsh -c "remove foo/a"`, then `agnsh -c "undo"` — runs in two processes.
+  and the `undo` slot's own test (roadmap 2.0.x — `undo`) — `agnsh -c "remove foo/a"`, then
+  `agnsh -c "undo"` — runs in two processes.
 - **Backups were named by an in-process counter** that restarted at 0 in every process, so each run
   overwrote the last one's files.
 - **It followed symlinks** both when saving and when restoring, and kept no permission bits.

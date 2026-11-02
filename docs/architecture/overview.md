@@ -171,11 +171,11 @@ Every command is classified into one of six levels:
 ## Dependencies
 
 **Build-time:**
-- Cyrius 6.6.6 (pinned in `cyrius.cyml`: `cyrius = "6.6.6"`)
-- Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step (38 files at 6.6.6 on a clean checkout; it does not delete files an earlier pin vendored, so clear `./lib/` first after a pin bump). (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
+- Cyrius 6.6.20 (pinned in `cyrius.cyml`: `cyrius = "6.6.20"`)
+- Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step (39 files at 6.6.20 on a clean checkout; it does not delete files an earlier pin vendored, so clear `./lib/` first after a pin bump). `cyrius.lock` (tracked since 2.0.4) records each vendored file's sha256: `cyrius deps` refuses a snapshot that disagrees with it under an unchanged pin, and CI runs `cyrius deps --verify`. (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
 
 **Runtime:**
-- None (statically linked ELF, ~227 KB x86_64 (DCE) / ~663 KB aarch64 on Cyrius 6.6.6; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so much of the aarch64 figure is unreachable code)
+- None (statically linked ELF, ~233 KB x86_64 (DCE) / ~537 KB aarch64 on Cyrius 6.6.20; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so much of the aarch64 figure is unreachable code)
 - On AGNOS: agnos 1.57.7 or later (2.0.1: `WAIT_BLOCK`, `SPAWN_F_CLEANFD`), and 1.57.8 for a PTY-hosted shell to wait in the kernel
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers

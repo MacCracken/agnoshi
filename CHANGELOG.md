@@ -6,6 +6,143 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-11-02 — cyrius 6.6.20, and the stdlib is hash-pinned
+
+An unplanned toolchain and dependency release. It takes the next free patch number, so the roadmap's
+approval-gated exec moves to 2.0.5 and `undo` to 2.0.6. The tree needed **no code change for
+6.6.20**: every CI gate passed on a clean `git archive` of 2.0.3 with only the pin moved, which is
+CI's own starting state. Reading the toolchain's changelog did find comments made stale by it.
+
+### Changed — toolchain `6.6.6` → `6.6.20`
+
+- **No code change needed.** All CI gates passed first on the clean copy, then on the tree: the
+  aarch64 cross-build with its three suites under qemu-user, and the agnos-target build. Test counts
+  are unchanged.
+- **Read: the cyrius CHANGELOG for every version crossed, 6.6.7 – 6.6.20.** None of the new compile
+  errors has a site here. agnoshi is almost entirely untyped, and the few constructs that changed
+  meaning were checked one by one:
+  - 6.6.11 makes `Enum.VARIANT` name the variant's own enum: every qualified access in `src/` and
+    `tests/` does.
+  - 6.6.17 scopes a `var` in an `elif` / `else` body to that body: the sites (`src/nlexec.cyr`'s
+    `nl_run_line`, `src/sanitize.cyr`'s UTF-8 check) use theirs only inside the arm.
+  - 6.6.20 fixes a `continue` patched to the wrong loop in a `for` → `while` → `for` nest: there is
+    no such nest here.
+- **Inherited on agnos — short syscalls block as documented** (6.6.7; the cyrius entry names agnsh).
+  Every agnos syscall site with fewer than four arguments handed the kernel whatever `r10` held as
+  a4, and agnos takes a nonzero a4 as O_NONBLOCK. So `println` and the stdlib's other 3-argument
+  writes were non-blocking or blocking by accident, and output past a full 4,080-byte pipe ring
+  could be lost. They now pass 0 and block. agnsh's own stdin reads always passed a4 explicitly and
+  are unchanged. The QEMU bench below hosts agnsh on a pipe, which is this path.
+- **The stdlib's agnos `run()` was rewritten** (6.6.8): `spawn_path` #43 with argv and
+  `SPAWN_F_CLEANFD`, then a blocking wait — no longer `spawn` #3 + `waitpid` #4. agnsh calls
+  neither the agnos nor the host `run()`, so nothing changes; comments in `src/agnsh.cyr` and
+  `src/run_agnos.cyr` still described the old pair and are corrected (see Fixed).
+- Smaller inherited fixes on paths agnsh reaches: `getenv` no longer caches an empty environment
+  after a failed `/proc` read (6.6.7); `fmt_int_buf` wrote 24 bytes whatever the length
+  (CYRIUS-2026-0028, 6.6.18) — agnsh reaches it only through `str_from_int`, whose buffer is 24
+  bytes, so it never overran here; 6.6.20's `cyrius build --agnos` can no longer emit a Linux
+  binary while reporting OK, which a large environment could cause before.
+- **aarch64 is smaller because syscall translation is.** 6.6.5 emitted the whole x86_64 → aarch64
+  translation chain inline at every literal `syscall` site; 6.6.18 emits only the rows that apply.
+  That shrinks every function with a syscall, the NOPed dead ones included.
+- **Binary sizes** (bytes):
+
+  | Target | 6.6.6 | 6.6.20 | Change | Unreachable code in the file |
+  |---|---|---|---|---|
+  | x86_64, DCE | 233,224 | 238,952 | +5,728 (+2.5 %) | removed |
+  | aarch64, DCE | 679,512 | 550,080 | −129,432 (−19 %) | 373,020 → 240,524 NOPed in place |
+  | agnos (CI's build, no DCE) | 388,128 | 451,600 | +63,472 (+16 %) | 145,404 → 199,270 kept |
+
+  The code that can actually run grew by 1–4 % on every target: x86_64 +2.5 %; aarch64 306,492 →
+  309,556 (+1 %); agnos 242,724 → 252,330 (+4 %). The large swings are dead code. agnos's CI build
+  keeps every function, and the 6.6.20 stdlib has more of them. With `CYRIUS_DCE=1` the agnos binary
+  is 244,768 → 250,896 (+2.5 %).
+
+### Changed — `cyrius.lock` is tracked
+
+Since 6.6.9, `cyrius deps` writes `cyrius.lock` for a stdlib-only project too: one sha256 per
+vendored file, 39 of them here. It is now in the tree, as it is in the sibling repos checked (bote,
+kybernet, argonaut, patra, kriya, owl, puka, sakshi, yukti).
+
+- Under an unchanged pin, `cyrius deps` refuses to vendor a stdlib file whose snapshot disagrees
+  with the lock, and names the file.
+- CI's *Verify dep hashes* step now has a committed lock to check: it re-hashes every file in
+  `./lib/` and fails on any file the lock does not list. Before, it had nothing real to check — 6.6.6
+  wrote no lock, and at 6.6.20 without one it would only check the lock CI's own `cyrius deps` had
+  just written.
+- Both were tried on a scratch copy: a lock with one hash altered stops `cyrius deps`, and an edited
+  `lib/vec.cyr` fails `--verify`.
+- A moved pin re-locks on its own (tried: moving it to 6.6.19 re-locked all 39 files), so the next
+  bump's lock changes in the same diff as its pin. The roadmap's pin-bump checklist says so.
+
+### Changed — `./lib/` re-vendored from a clean slate
+
+`rm -rf lib && cyrius deps`: **39 files** (38 at 6.6.6), byte-identical to the 6.6.20 snapshot. The
+new one is `lib/poison.cyr`, which `lib/alloc.cyr` includes only under `#ifdef CYRIUS_POISON`; no
+agnsh build defines it.
+
+### Changed — roadmap
+
+- Renumbered for this release: approval-gated exec is **2.0.5**, `undo` **2.0.6**. ADR-009's patch
+  citation now names the slot.
+- § Gated re-verified at 6.6.20, against agnos 1.57.14 (itself moved to 6.6.20), puka 0.6.25 and
+  hoosh 2.8.1. **One gate had opened:** the agnos socket adapter that 2.2.x waits on shipped in
+  cyrius 6.6.7. `lib/net.cyr` drives `sock_connect` #47 / `sock_listen` #56 / `sock_accept` #57 /
+  `sock_peer` #106, and agnos 1.57.14 boots sandhi's HTTP server on it. It moves to *Opened upstream*:
+  what is left is agnsh's — build the hoosh client `--agnos` and run it in QEMU against a host hoosh.
+  puka still drops arrow-key sequences, so the line editor's agnos half stays gated.
+- The 2.2.x notes cite hoosh 2.8.1 (still OpenAI-compatible on `127.0.0.1:8088`) and bayan's 71
+  `bayan_json_*` functions, up from 69. The 6.6.20 agnos peer still stubs `sys_chdir` to -38, so 2.1.0's
+  agnos `cd` stays agnsh-owned.
+
+### Fixed — comments that described the stdlib's old agnos `run()`
+
+`src/agnsh.cyr` and `src/run_agnos.cyr` said the vendored agnos `run()` was `spawn` #3 + `waitpid` #4,
+that `lib/` is regenerated by `cyrius update` (it is `cyrius deps`), and that the host build launches
+through the stdlib's `run()` (it has used `src/run_host.cyr`'s fork + execve since 2.0.0). The comments
+now say why `run_agnos.cyr` exists — the old `run()` — and that agnsh calls neither. Comments only:
+the binaries are byte-identical.
+
+### Verified
+
+- All CI gates, first on a clean `git archive` of 2.0.3 with only the pin moved, then on the tree:
+  unit 1052/1052, security 26/26, parse corpus 358/358, smoke 137/137; the same three suites on
+  aarch64 under qemu-user; host-reachable coverage 282/282; `cyrius deps --verify` 39/39.
+- The comment fixes change no byte: with the same `VERSION_STR`, the tree and the pin-only copy build
+  identical binaries on all three targets.
+- **agnos 1.57.14 in QEMU (KVM)**:
+  - `scripts/agnos-qemu-test.py`: **49/49 at `-smp 1` and 49/49 at `-smp 4`**, each with 64 complete
+    audit records on disk matching the guest's read-back. The `-smp 1` run built its binary just
+    before the version bump, so it printed 2.0.3; the `-smp 4` run is the final tree.
+  - `scripts/agnos-qemu-bench.py`, in one boot against the 6.6.6 build: both shells idle at 0 ticks
+    and BLOCKED in 91 of 100 samples; all 20 `-c` statuses held, identical for both builds; and the
+    round trips agree within 0.1 % (`run` 78,994 → 79,073 µs per line, `pipe` 151,708 → 151,922 µs).
+    The host load was 3.9, so read the timings as a comparison, not as figures.
+
+### Performance — neutral, with one small parse cost
+
+Five alternating runs of each toolchain's bench binary, taken with the 1-minute load at 1.9–2.0:
+10 of 13 medians within ±2 % of 6.6.6. The three that are not:
+
+| Benchmark | 6.6.6 | 6.6.20 | Change | With 6.6.6's `bench.cyr` |
+|---|---|---|---|---|
+| `parse/shell_cmd` | 3,342 ns (3,307–3,400) | 3,507 ns (3,428–3,539) | +4.9 % | 3,550 ns (+6.2 %) |
+| `translate/cd` | 196 ns (195–211) | 212 ns (209–223) | +8.2 % | 205 ns (+4.6 %) |
+| `sanitize/safe_path` | 35 ns (35–36) | 59 ns (57–60) | +69 % | 54 ns |
+
+- The bench harness itself changed in 6.6.9 (how it windows a run). To separate harness from code,
+  a third binary built the 6.6.20 tree against 6.6.6's `bench.cyr` and ran in the same alternation.
+  `parse/shell_cmd` keeps its +5–6 % there, so that one is the code: `Interpreter_parse` of
+  `ls -la /tmp` takes about 165 ns more, not attributed further. Next to a process launch it is
+  noise, but it is real. `translate/cd` halves to +4.6 %, so part of it is the harness.
+- `sanitize/safe_path`: its function is unchanged, and it has jumped between ~36 and ~59 ns before
+  with no change to it (2.0.3 recorded 59 → 36). Layout, not a claim.
+- An earlier set of five pairs, taken while the host was still settling from other work (5-minute
+  load ~5), read 1–12 % slower across the board, with wider ranges. It agrees on direction; the
+  table rests on the quieter set.
+- One `bench-history.csv` row (`1a7b02f-dirty`), the first at 6.6.20 — a fresh baseline, since the
+  harness changed.
+
 ## [2.0.3] - 2026-09-26 — a checkpoint store for undo, and an agnos idle gate that no longer fails an idle shell
 
 The roadmap's 2.0.3 slot — the checkpoint store that the approval-gated tiers need before anything
