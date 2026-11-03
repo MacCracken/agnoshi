@@ -6,6 +6,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-02 — cyrius 6.7.9
+
+A toolchain and dependency release. The tree needed **no code change for 6.7.9**: every build-and-test
+step of `ci.yml`, run as written under `bash -eo pipefail`, passed on a clean `git archive` of 2.0.4
+with only the pin moved, then on the tree. ⚠ `docs/development/roadmap.md` is not updated for this
+release: it still plans 2.1.0 as `cd` / `pwd` and lists the 2.0.x slots as open. Renumbering the arcs
+is deferred (2026-11-02), and `docs/doc-health.md` marks the file stale until then.
+
+### Changed — toolchain `6.6.20` → `6.7.9`
+
+- **No code change needed**, and test counts are unchanged.
+- **Read: the cyrius CHANGELOG for 6.7.0 – 6.7.9.** None of its new compile errors has a site here:
+  - new reserved words — `trait` (6.7.0), `const` (6.7.2), `true` / `false` (6.7.3), `do` (6.7.5),
+    `dyn` (6.7.8) — are names nothing in agnoshi uses;
+  - 6.7.3 makes a lone `!` an operator; the lexer used to drop it, so `!x` meant `x`. There is no
+    such `!` in `src/` or `tests/`;
+  - 6.7.7 checks the arity of every forward call; the binary and the tests compile, so none of
+    theirs is wrong;
+  - 6.7.9 refuses an unmatched `}` at module scope, which `cyrius lint` now reports too; all 32 files
+    CI lints pass.
+- **Code generation barely moves.** A disassembly diff of `src/agnsh.cyr` built with each compiler
+  over the same stdlib: two `jmp +0` on x86_64 and ten on agnos — 6.7.3's selector for a tail call
+  inside a loop, which keeps the call — and nothing else in live code. The stdlib's change to live
+  code is one global initialiser.
+- **Inherited stdlib changes agnsh does not reach:**
+  - 6.7.9's `process.cyr` resets SIGPIPE and SIGXFSZ to their defaults and clears the signal mask in
+    the child of `run`, `spawn` and every `exec_*`. agnsh's host launcher is its own fork + execve
+    (`src/run_host.cyr`), and its one `exec_vec` call, in `execute_command`, has no caller.
+  - The agnos peer's argv and env blob caps become constants, still 1,024 bytes, and it gains
+    `sys_ppoll`, `sys_ioctl` and `sys_fstatat` stubs that decline with -38. agnsh launches through raw
+    `#43` / `#37` in `src/run_agnos.cyr` and calls none of them.
+- **Binary sizes** (bytes):
+
+  | Target | 6.6.20 | 6.7.9 | Change |
+  |---|---|---|---|
+  | x86_64, DCE | 238,952 | 238,920 | −32 |
+  | aarch64, DCE | 550,080 | 550,024 | −56 |
+  | agnos (CI's build, no DCE) | 451,600 | 451,584 | −16 |
+
+### Changed — `cyrius.lock` re-locked, and CI checks it
+
+- `rm -rf lib && cyrius deps`: still **39 files**, byte-identical to the 6.7.9 snapshot. The moved pin
+  re-locked 23 of the 39 hashes and the `cyrius` line; a fresh resolve on a clean copy writes the
+  same lock byte for byte.
+- **New CI step, *Check the committed lock*: `cyrius deps --locked`**, in `ci.yml` and `release.yml`
+  before *Resolve dependencies*. Since 6.7.6 it resolves the pin, compares the result with the
+  committed `cyrius.lock`, writes nothing, and fails naming each difference.
+  - ⚠ This corrects the 2.0.4 entry, which said CI checks the committed lock. It did only under an
+    unchanged pin. When the pin moves, plain `cyrius deps` re-locks on its own, so a bump committed
+    without its lock passed CI against a lock CI had just written.
+  - Tried on scratch copies: the 2.0.4 lock under the 6.7.9 pin exits 1 with 24 differences named; the
+    committed lock exits 0, with or without a vendored `lib/`; an edited `lib/vec.cyr` exits 1.
+
+### Verified
+
+- Every job of `ci.yml` on the tree: the 19 build-and-test steps, the security scan and the docs
+  checks. Unit 1052/1052, security 26/26, parse corpus 358/358, smoke 137/137; the same three suites
+  on aarch64 under qemu-user; host-reachable coverage 282/282; lint clean on all 32 files.
+- ⚠ **Correction to 2.0.4**: its entry, and the roadmap's pin-bump checklist, call
+  `bash -eo pipefail` "the runner's shell". A `run:` step with no `shell:` key runs under
+  `bash -e {0}`, without pipefail. Running the build-and-test steps under `-eo pipefail` is stricter
+  and so still sound: a step that passes there passes on the runner. But the security scan's
+  `grep … | awk` finds nothing on a clean tree, so it fails under pipefail and passes on the runner —
+  run it under `bash -e`. (The roadmap line waits for its renumbering pass.)
+- **agnos 1.57.14 in QEMU (KVM)**, on the tree that prints 2.1.0:
+  - `scripts/agnos-qemu-test.py`: **49/49 at `-smp 1` and 49/49 at `-smp 4`**, each with 64 complete
+    audit records on disk matching the guest's read-back.
+  - `scripts/agnos-qemu-bench.py`, in one boot against the 6.6.20 build: both idle at 0 ticks and
+    BLOCKED in 91 of 100 samples; all 20 `-c` statuses held, identical for both builds; round trips
+    within 0.5 % (`run` 80,107 → 80,456 µs per line, `pipe` 154,784 → 153,988 µs; host load 4.7, so
+    a comparison, not figures).
+
+### Performance — neutral
+
+Five alternating runs of each toolchain's bench binary, with the 1-minute load at 1.96–1.97: all 13
+medians within −2.2 % to +1.8 % of 6.6.20, and the ranges are tight (most within 1 %). The largest
+moves are `parse/shell_cmd` 3,415 → 3,476 ns (+1.8 %) and `parse/cd` 1,553 → 1,574 ns (+1.4 %); both
+ranges are disjoint, so they are small but real. `sanitize/safe_path` holds at 59 ns. The bench
+harness, `lib/bench.cyr`, is byte-identical across the two snapshots, so these compare like with like.
+One `bench-history.csv` row (`e53a3a2-dirty`).
+
 ## [2.0.4] - 2026-11-02 — cyrius 6.6.20, and the stdlib is hash-pinned
 
 An unplanned toolchain and dependency release. It takes the next free patch number, so the roadmap's

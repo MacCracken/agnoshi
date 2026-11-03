@@ -53,6 +53,10 @@ jobs:
         # `cc5` was renamed to `cycc` in Cyrius 6.0; use the wrapper.
         run: cyrius --version
 
+      - name: Check the committed lock
+        # See ci.yml: fails when cyrius.lock is not what the pin resolves.
+        run: cyrius deps --locked
+
       - name: Resolve deps
         run: cyrius deps
 

@@ -49,6 +49,15 @@ jobs:
         # breaks the CI install on every 6.x release.
         run: cyrius --version
 
+      - name: Check the committed lock
+        # `cyrius deps --locked` (cyrius >= 6.7.6) resolves the pin, compares the result with the
+        # committed cyrius.lock, writes nothing, and fails naming each difference. It must run
+        # BEFORE `cyrius deps`: that one re-locks on its own when the pin has moved, so a pin bump
+        # committed without its lock used to pass CI against a lock CI had just written.
+        # Tried at 2.1.0: the 2.0.4 (6.6.20) lock under the 6.7.9 pin exits 1 with 24 differences
+        # named; the committed lock exits 0.
+        run: cyrius deps --locked
+
       - name: Resolve dependencies
         # `./lib/` is gitignored — `cyrius deps` populates it from
         # the version-pinned stdlib snapshot. Must run before any
