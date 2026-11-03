@@ -1,4 +1,4 @@
-.TH AGNSH 1 "November 2026" "agnoshi 2.1.1" "User Commands"
+.TH AGNSH 1 "November 2026" "agnoshi 2.1.2" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -23,6 +23,18 @@ with a
 .B Hint:
 line when the translation is not a runnable command \(em and then runs it
 if it may.
+.PP
+On a Linux host, an interactive shell started with both standard input and
+standard output on
+.I /dev/null
+\(em as kybernet starts a service \(em opens
+.I /dev/console
+and runs its session there, on standard input, output and error. It does
+not take the console as its controlling terminal. If the console cannot be
+opened, it says why on standard error and exits 1. Any other standard
+input, including
+.I /dev/null
+alone, is read as before.
 .SH OPTIONS
 .TP
 .B -c, --command \fICMD\fR
@@ -120,7 +132,10 @@ Nothing to run: not understood, a question, no such program, or it could
 not be launched.
 .TP
 .B 1
-Usage error.
+Usage error; or, for the interactive shell, no usable input: a read error,
+or standard input and output on
+.I /dev/null
+with no console to open.
 .PP
 Under
 .B --dry-run

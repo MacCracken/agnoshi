@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-02 — a session on the console, and the whole environment
+
+agnoshi's side of the roadmap's P1 kybernet item. Since kybernet 1.12.0 and argonaut 1.20.0, the
+default agnoshi service runs as 1000:1000 with `/dev/null` on fds 0, 1 and 2. That reached agnoshi,
+and the interactive session read EOF at its first prompt and exited 0. Nothing owns the terminal
+(ADR-010): agnsh now opens the console itself, as a plain process. Also in this release, a host
+child gets agnsh's whole environment instead of its first 64 KiB.
+
+### Added
+
+- **console** (`src/console.cyr`, host only; ADR-010).
+  - **When:** an interactive agnsh starts with both fd 0 and fd 1 on `/dev/null` — the same device
+    and inode, which is how kybernet starts a service.
+  - **What:** it opens `/dev/console` with `O_RDWR | O_NOCTTY` and puts it on fds 0, 1 and 2 before
+    its banner. Programs it runs inherit the console.
+  - **No controlling terminal:** there is no `setsid` or `TIOCSCTTY`, and the open does not take
+    one. argonaut makes each service a session leader, which would take a tty opened without
+    `O_NOCTTY`. ^C and ^Z on the console therefore send no signals.
+  - **When the console cannot be opened**, agnsh writes the errno to stderr and **exits 1**, instead
+    of exiting 0 on EOF. The exit status is what reaches the supervisor's log.
+  - **Nothing else changes.** A pipe, a file or a terminal on stdin is still input, and so is
+    `agnsh < /dev/null > out`, which still reads EOF and says `bye`.
+
+### Fixed
+
+- **A host child lost every variable past 64 KiB of agnsh's environment.**
+  - `host_environ_envp` read `/proc/self/environ` into a 64 KiB buffer and stopped there, so the
+    variable at the edge was cut short and every later one was dropped.
+  - It now builds the envp from lib/io.cyr's `env_block` (cyrius 6.7.16), which reads to EOF and
+    caches the block. envp points into that shared block and writes nothing.
+
+### Not done here
+
+- **On a kybernet board the console is `root:root 0600`** (there is no udev), and agnos-init grants
+  only `/dev/fb0` and `/dev/input/event*`. So the default agnoshi, as uid 1000, now exits 1 with
+  errno 13 where it used to exit 0.
+- The item's "done when" — a prompt on the console as uid 1000 — needs `/dev/console` granted to
+  that uid on the kybernet side.
+- `docs/development/roadmap.md` is untouched (the renumbering pass is deferred), so its P1 text still
+  describes the EOF exit. `docs/doc-health.md` notes it.
+
+### Tests
+
+- **test_core 1052 → 1062.** `fd_is_file` against `/dev/null` and against a file. With a file on
+  stdin, or a file on stdout, nothing is attached. With no console, the -errno comes back and fds
+  0 – 2 are untouched. With both on `/dev/null`, the console (a scratch file) goes on fds 0, 1 and 2
+  and output reaches it. With fd 2 closed, the console's own fd becomes stderr.
+- **Smoke 137 → 142.**
+  - Two 70,000-byte variables reach a child whole.
+  - Started on `/dev/null` with no console, agnsh exits 1 and says why. This check is skipped when
+    the user can open `/dev/console`.
+  - `agnsh < /dev/null` with stdout kept still exits 0 with `bye`.
+  - Against 2.1.1's binary, the first three of these fail: no variable arrives, the exit status is
+    0, and there is no message.
+- **Every job of `ci.yml`** was run on the tree under `bash -e` and passed: unit 1062/1062 on
+  x86_64 and under qemu-aarch64, smoke 142/142, host-reachable coverage 285/285, and lint clean on
+  all 33 files.
+- **agnos** builds a binary that differs from 2.1.1's in one byte, the version digit. Nothing here
+  is on an agnos path, so the QEMU checks were not rerun.
+
+### Performance — unchanged
+
+The bench binary is byte-identical to 2.1.1's, because `tests/bench_core.bcyr` includes neither
+`run_host.cyr` nor `console.cyr`. The x86_64 agnsh grows 160 B (178,752 → 178,912) and aarch64 160 B
+(489,864 → 490,024). One `bench-history.csv` row (`935e632-dirty`).
+
 ## [2.1.1] - 2026-11-02 — cyrius 6.7.18
 
 A toolchain and dependency release. The tree needed **no code change for 6.7.18**. Every step of

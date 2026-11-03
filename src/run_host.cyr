@@ -58,25 +58,17 @@ fn path_lookup(word, wl) {
     return path_lookup_in(word, wl, getenv("PATH"));
 }
 
-# agnsh's environment as an execve envp (NULL-terminated), read from /proc/self/environ: a child of
-# the shell sees what the shell was given — PATH, HOME, LANG — as it does on agnos. Until 2.0.0 the
-# host `run` passed an empty environment. Returns 0 when it cannot be read; the caller then passes an
-# empty one.
+# agnsh's environment as an execve envp (NULL-terminated): a child of the shell sees what the shell
+# was given — PATH, HOME, LANG — as it does on agnos. Until 2.0.0 the host `run` passed an empty
+# environment. Returns 0 when there is none; the caller then passes an empty one.
+# 2.1.2: the block is lib/io.cyr's `env_block` (cyrius 6.7.16), which reads /proc/self/environ to EOF.
+# This used to read it here into a 64 KiB buffer and stop there, so a child lost every variable past
+# 64 KiB and got the one at the edge cut short. The block is shared and its entries already end in a
+# NUL, so envp points into it and nothing writes it.
 fn host_environ_envp() {
-    var fd = file_open("/proc/self/environ", 0, 0);
-    if (fd < 0) { return 0; }
-    var cap = 65536;
-    var blob = alloc(cap + 1);
-    if (blob == 0) { file_close(fd); return 0; }
     var n = 0;
-    var more = 1;
-    while (more == 1) {
-        var r = file_read(fd, blob + n, cap - n);
-        if (r <= 0) { more = 0; } else { n = n + r; }
-        if (n >= cap) { more = 0; }
-    }
-    file_close(fd);
-    store8(blob + n, 0);
+    var blob = env_block(&n);
+    if (blob == 0) { return 0; }
     var count = 0;
     for (var i = 0; i < n; i = i + 1) {
         if (load8(blob + i) == 0) { count = count + 1; }

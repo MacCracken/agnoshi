@@ -1,0 +1,70 @@
+# console.cyr — where an interactive host agnsh talks when it was started with no one to talk to (2.1.2).
+#
+# kybernet starts every service with /dev/null on fds 0, 1 and 2 (its standing rule 20), and argonaut's
+# default services run agnoshi with no arguments, so an interactive session read EOF at its first
+# prompt and exited (roadmap P1, raised by kybernet 1.12.0 / argonaut 1.20.0). When fd 0 and fd 1 are
+# BOTH /dev/null there is no one on them, so agnsh opens /dev/console and puts it on 0, 1 and 2 before
+# its banner; the programs it runs inherit the console as their stdio.
+#
+# As a plain process: O_NOCTTY, no setsid, no TIOCSCTTY. Nothing owns the console. argonaut makes each
+# service a session leader, and a session leader that opens a tty without O_NOCTTY takes it as its
+# controlling terminal. With none, the kernel sends agnsh no SIGINT, SIGHUP or job-control signal from
+# the console. Only the two-/dev/null case changes: a pipe, a file or a terminal on fd 0 is someone's input,
+# and `agnsh < /dev/null > out` still reads EOF and exits as before.
+#
+# ⚠ The console has to be one the uid can open. On a kybernet board /dev/console is root:root 0600
+# (no udev), and argonaut runs the default agnoshi as 1000:1000, so the open fails with -EACCES until
+# the node is granted to that uid. agnsh then says why on stderr and exits 1 rather than reading EOF.
+#ifndef CYRIUS_TARGET_AGNOS
+
+var CONSOLE_PATH = "/dev/console";
+# O_NOCTTY is octal 0400 on x86_64 and aarch64 Linux alike; lib/ does not name it.
+var CONSOLE_O_NOCTTY = 256;
+
+# 1 when `fd` is open on the file `path` names: the same device and inode, which are the first two
+# fields of struct stat on x86_64 and aarch64 Linux alike (lib/'s Stat enum has no offsets for them).
+fn fd_is_file(fd, path) {
+    var fst[STAT_BUFSZ];
+    var pst[STAT_BUFSZ];
+    if (sys_fstat(fd, &fst) != 0) { return 0; }
+    if (sys_stat(path, &pst) != 0) { return 0; }
+    if (load64(&fst) != load64(&pst)) { return 0; }
+    if (load64(&fst + 8) != load64(&pst + 8)) { return 0; }
+    return 1;
+}
+
+# Put the console at `path` on fds 0, 1 and 2 when fds 0 and 1 are both /dev/null. Returns 0 when that
+# is not the case (nothing changes), 1 when the console is attached, or a -errno when it is needed and
+# cannot be had — fds 0, 1 and 2 are then left as they were.
+fn console_attach_at(path) {
+    if (fd_is_file(0, "/dev/null") == 0) { return 0; }
+    if (fd_is_file(1, "/dev/null") == 0) { return 0; }
+    # No O_CLOEXEC: with fd 2 closed, this open IS fd 2, and it stays as stderr.
+    var fd = sys_open(path, O_RDWR | CONSOLE_O_NOCTTY, 0);
+    if (fd < 0) { return fd; }
+    for (var i = 0; i < 3; i = i + 1) {
+        if (fd != i) {
+            var r = sys_dup2(fd, i);
+            if (r < 0) {
+                if (fd > 2) { sys_close(fd); }
+                return r;
+            }
+        }
+    }
+    if (fd > 2) { sys_close(fd); }
+    return 1;
+}
+
+# main's call, before the interactive banner: /dev/console, and on failure the reason on stderr (fd 2
+# may be /dev/null too, so the exit status in the supervisor's log is what is sure to be seen).
+fn console_attach() {
+    var r = console_attach_at(CONSOLE_PATH);
+    if (r < 0) {
+        eprint_str(str_from("agnsh: stdin and stdout are /dev/null, and /dev/console cannot be opened (errno "));
+        eprint_str(str_from_int(0 - r));
+        eprintln_cstr("): no terminal to run an interactive session on");
+    }
+    return r;
+}
+
+#endif

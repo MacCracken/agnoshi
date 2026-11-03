@@ -200,6 +200,28 @@ ec=0
 check "run of an unsafe path is refused with 126 (2.0.1)" "^126$" "$ec"
 out=$(AGNSH_SMOKE_VAR=inherited "$BIN" -c "env" 2>/dev/null) || true
 check "a program inherits agnsh's environment" "AGNSH_SMOKE_VAR=inherited" "$out"
+# 2.1.2: the whole environment, not its first 64 KiB. Two 70,000-byte variables: through the old
+# 64 KiB read at least one of them was cut short or lost.
+big=$(head -c 70000 /dev/zero | tr '\0' x)
+out=$(AGNSH_SMOKE_BIG_A="$big" AGNSH_SMOKE_BIG_B="$big" "$BIN" -c "env" 2>/dev/null \
+  | grep -E '^AGNSH_SMOKE_BIG_[AB]=' | awk '{ print length($0) }' | tr '\n' ' ') || true
+check "a program inherits an environment past 64 KiB whole (2.1.2)" "^70018 70018 $" "$out"
+
+# 2.1.2: started with stdin and stdout on /dev/null, as kybernet starts a service, the session runs
+# on /dev/console. An ordinary user cannot open it (root 0600), so agnsh exits 1 saying why, where it
+# used to read EOF at its first prompt and exit 0.
+if [ -r /dev/console ] && [ -w /dev/console ]; then
+    echo "  (console checks skipped: this user can open /dev/console)"
+else
+    ec=0
+    err=$("$BIN" </dev/null 2>&1 >/dev/null) || ec=$?
+    check "no one on stdin and stdout, and no console: exit 1 (2.1.2)" "^1$" "$ec"
+    check "...saying why on stderr" "/dev/console cannot be opened" "$err"
+fi
+ec=0
+out=$("$BIN" </dev/null 2>/dev/null) || ec=$?
+check "stdin on /dev/null with stdout kept is still a session that reads EOF" "^0$" "$ec"
+check "...and says bye" "bye" "$out"
 
 # NL execution (2.0.0, ADR-008): SAFE and READ_ONLY lines run; the program's output is stdout.
 NL_DIR=$(mktemp -d -t agnsh-nl.XXXXXX)

@@ -46,6 +46,8 @@ include "src/audit.cyr"
 include "src/history.cyr"
 include "src/run_agnos.cyr"
 include "src/run_host.cyr"
+# 2.1.2: a session started with /dev/null on stdin and stdout (a kybernet service) opens the console.
+include "src/console.cyr"
 # 2.0.2: who agnsh runs as — a host session as root is restricted, and nlexec reads that.
 include "src/security.cyr"
 # 2.0.3: the checkpoint store — compiled in so every target builds it; nothing calls it until
@@ -53,7 +55,7 @@ include "src/security.cyr"
 include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 2.1.1";
+var VERSION_STR = "agnoshi 2.1.2";
 
 fn print_version() {
     println(VERSION_STR);
@@ -538,6 +540,11 @@ fn main() {
 
     var n_args = argc();
     if (n_args < 2) {
+        # 2.1.2: started as a kybernet service — /dev/null on stdin and stdout — the session runs on
+        # /dev/console, or exits 1 saying why instead of reading EOF (src/console.cyr).
+        #ifndef CYRIUS_TARGET_AGNOS
+        if (console_attach() < 0) { return 1; }
+        #endif
         return interactive_loop();
     }
 

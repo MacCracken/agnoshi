@@ -38,6 +38,7 @@ include "src/history.cyr"
 # reachable from the test suite.
 include "src/run_agnos.cyr"
 include "src/run_host.cyr"
+include "src/console.cyr"
 include "src/security.cyr"
 include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
@@ -3487,6 +3488,60 @@ fn main() {
     var hrun = sh_run_program("/bin/echo agnsh-run-args", Mode.AI_AUTONOMOUS);
     _t_capture_end(1, 9);
     check("run passes arguments on the host", hrun == 0 && _t_file_has(capout, "agnsh-run-args") == 1);
+    # The console for a session started on /dev/null (2.1.2, src/console.cyr). fds 0, 1 and 2 are
+    # saved into 20 – 22 and pointed at fixtures; check() writes to fd 1, so every result is held
+    # until they are restored.
+    var cons = tmp_state_path("agnsh_selftest_console");
+    var cons_in = tmp_state_path("agnsh_selftest_console_in");
+    _t_write_cstr(cons, "");
+    _t_write_cstr(cons_in, "");
+    var dnull = file_open("/dev/null", O_RDWR, 0);
+    var cfix = file_open(cons_in, 0, 0);
+    sys_dup2(0, 20);
+    sys_dup2(1, 21);
+    sys_dup2(2, 22);
+    var cn_null = fd_is_file(dnull, "/dev/null");
+    var cn_other = fd_is_file(cfix, "/dev/null");
+    sys_dup2(cfix, 0);
+    sys_dup2(dnull, 1);
+    var cn_file_in = console_attach_at(cons);
+    var cn_file_kept = fd_is_file(0, cons_in);
+    var cn_main = console_attach();
+    sys_dup2(dnull, 0);
+    sys_dup2(cfix, 1);
+    var cn_file_out = console_attach_at(cons);
+    sys_dup2(dnull, 1);
+    sys_dup2(dnull, 2);
+    var cn_fail = console_attach_at("/nonexistent/agnsh/selftest/console");
+    var cn_fail_kept = fd_is_file(0, "/dev/null") + fd_is_file(1, "/dev/null") + fd_is_file(2, "/dev/null");
+    var cn_ok = console_attach_at(cons);
+    var cn_on = fd_is_file(0, cons) + fd_is_file(1, cons) + fd_is_file(2, cons);
+    syscall(SYS_WRITE, 1, "on-the-console", 14);
+    sys_close(2);
+    sys_dup2(dnull, 0);
+    sys_dup2(dnull, 1);
+    var cn_fd2 = console_attach_at(cons);
+    var cn_fd2_on = fd_is_file(2, cons);
+    sys_dup2(20, 0);
+    sys_dup2(21, 1);
+    sys_dup2(22, 2);
+    file_close(20);
+    file_close(21);
+    file_close(22);
+    file_close(dnull);
+    file_close(cfix);
+    check("fd_is_file knows /dev/null", cn_null == 1);
+    check("...and that a file is not /dev/null", cn_other == 0);
+    check("a file on stdin is input: no console", cn_file_in == 0 && cn_file_kept == 1);
+    check("console_attach leaves a session with input alone", cn_main == 0);
+    check("a file on stdout is output: no console", cn_file_out == 0);
+    check("stdin and stdout on /dev/null and no console: the -errno", cn_fail == 0 - 2);
+    check("...with fds 0, 1 and 2 left as they were", cn_fail_kept == 3);
+    check("stdin and stdout on /dev/null: the console goes on 0, 1 and 2", cn_ok == 1 && cn_on == 3);
+    check("...and output reaches it", _t_file_has(cons, "on-the-console") == 1);
+    check("with fd 2 closed, the console's own fd is stderr", cn_fd2 == 1 && cn_fd2_on == 1);
+    xunlink(cons);
+    xunlink(cons_in);
     xunlink(pprog);
     xunlink(pnox);
     xrmdir(pdirp);

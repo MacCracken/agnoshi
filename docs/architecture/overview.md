@@ -29,13 +29,15 @@ agnoshi
 │   ├── statepaths.cyr      -- state-file paths ($HOME, or uid-qualified /tmp)
 │   ├── run_agnos.cyr       -- launch path: sh_run_program + (AGNOS) pipelines, redirect, bg jobs
 │   ├── run_host.cyr        -- the Linux host's $PATH lookup and argv launcher
+│   ├── console.cyr         -- a session started on /dev/null opens /dev/console (host, 2.1.2)
 │   ├── nlexec.cyr          -- the NL path: verdict, report, execution
 │   ├── report.cyr          -- the report folder (-c files what agnsh understood there)
 │   └── main.cyr            -- legacy pre-port entry, never linked
 │
 │   ⚠ COMPILED (src/agnsh.cyr's include graph): sanitize, statepaths, report,
 │     mode, permissions, intent, commands, translate, interpreter, approval,
-│     audit, history, run_agnos, run_host, security (2.0.2), checkpoint (2.0.3),
+│     audit, history, run_agnos, run_host, console (2.1.2), security (2.0.2),
+│     checkpoint (2.0.3),
 │     nlexec — plus agnsh.cyr itself. security's sudo path and the checkpoint
 │     store are compiled in with no caller.
 │     NOT COMPILED: session, completion, prompt, config, aliases, output, ui,
@@ -44,7 +46,7 @@ agnoshi
 ├── lib/                    -- Cyrius stdlib (gitignored; populated by `cyrius deps`
 │                              from the pinned snapshot in cyrius.cyml [deps] stdlib)
 ├── tests/
-│   ├── test_core.tcyr      -- 1052 unit tests
+│   ├── test_core.tcyr      -- 1062 unit tests
 │   ├── test_security.tcyr  -- 26 security regression tests
 │   ├── test_parse_corpus.tcyr -- 358 classifier checks against docs/examples
 │   ├── agnos_hostsh.cyr    -- agnos-only driver for scripts/agnos-qemu-bench.py
@@ -175,7 +177,7 @@ Every command is classified into one of six levels:
 - Cyrius stdlib snapshot — declared in `cyrius.cyml` under `[deps] stdlib` (string, fmt, alloc, vec, str, syscalls, io, fs, chrono, hashmap, args, tagged, process, fnptr, net, sakshi, assert, bench). `./lib/` is gitignored — `cyrius deps` repopulates from the version-pinned snapshot before any build/check/lint step (40 files at 6.7.18 on a clean checkout; it does not delete files an earlier pin vendored, so clear `./lib/` first after a pin bump). `cyrius.lock` (tracked since 2.0.4) records each vendored file's sha256: `cyrius deps` refuses a snapshot that disagrees with it under an unchanged pin, and CI runs `cyrius deps --locked` (since 2.1.0: it also catches a lock left stale by a moved pin) and `cyrius deps --verify`. (`json` was dropped from this list in v1.7.1: cyrius 6.2.25 folded standalone `json.cyr` into the `bayan` distlib, and agnoshi never consumed it — its `json_escape` is local to `src/sanitize.cyr`.)
 
 **Runtime:**
-- None (statically linked ELF, ~175 KB x86_64 (DCE) / ~478 KB aarch64 on Cyrius 6.7.18; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so much of the aarch64 figure is unreachable code)
+- None (statically linked ELF, ~175 KB x86_64 (DCE) / ~479 KB aarch64 on Cyrius 6.7.18; was 146 KB on 4.5.0 at v1.0.0 — toolchain-side codegen growth from richer stdlib + the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not from new agnoshi-side bloat. aarch64 DCE NOPs unreachable functions in place instead of removing them, so much of the aarch64 figure is unreachable code)
 - On AGNOS: agnos 1.57.7 or later (2.0.1: `WAIT_BLOCK`, `SPAWN_F_CLEANFD`), and 1.57.8 for a PTY-hosted shell to wait in the kernel
 - Optional: MCP gateway at `127.0.0.1:8090` for audit/agent/service queries
 - Optional: LLM gateway at `127.0.0.1:8088` for question-mode answers
