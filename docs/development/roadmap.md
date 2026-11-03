@@ -36,7 +36,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.1.x** | NL execution, finished — the approval-gated tiers and `undo` | **2.1.3** — approval-gated exec (the checkpoint store shipped in 2.0.3) | none |
+| **2.1.x** | NL execution, finished — the approval-gated tiers and `undo` | **2.1.4** — `undo` (approval-gated exec shipped in 2.1.3) | none |
 | **2.2.x** | Interactive shell — `cd`, an rc file, a line editor | **2.2.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **2.3.x** | hoosh / LLM — answer questions, suggest commands | **2.3.0** — hoosh client (host) | none — agnos's socket adapter shipped in cyrius 6.6.7, not yet run by agnsh |
 
@@ -44,8 +44,9 @@
 - **What has shipped:** 2.0.0, the first tier. SAFE and READ_ONLY lines run, under the `-c` contract
   of [ADR-008](../adr/008-nl-exec-contract.md). It was a major because that contract broke; the arc
   was 1.10.x until the ruling.
-- **What 2.1.x adds:** the approval-gated tiers, with rollback in place before anything destructive
-  runs.
+- **What 2.1.x adds:** the approval-gated tiers, which shipped in 2.1.3 with a checkpoint before
+  every remove and move ([ADR-011](../adr/011-approval-gated-exec.md)), and `undo`, which restores
+  them.
 - **Ordering:** 2.2.x and 2.3.x are independent of each other and may swap on demand. 2.3.2's
   suggested commands run through 2.1.x's exec path, so that one slot does follow it.
 
@@ -70,39 +71,19 @@ The natural-language path does what it proposes, one permission tier at a time, 
 place before anything destructive runs.
 - 2.0.0 shipped SAFE and READ_ONLY (see the CHANGELOG).
 - 2.0.4 – 2.1.2 went to the cyrius 6.6.20, 6.7.9 and 6.7.18 pins and kybernet's console P1, so this
-  arc's slots start at 2.1.3.
+  arc's slots started at 2.1.3.
+- 2.1.3 shipped approval-gated exec (ADR-011): every mode asks, a remove or move is checkpointed
+  first, and ADMIN runs as `sudo -n` on the host.
 - The slots are ordered so that nothing destructive executes before checkpointing exists.
 - Standing since 2.0.0, unscheduled: `proc_set_timeout_ms` (host only) could give NL exec a command
   timeout.
 
-### 2.1.3 — Approval-gated exec: USER_WRITE, SYSTEM_WRITE, ADMIN
-
-- **The prompt:** call `ApprovalManager_request` before executing these tiers. It is compiled in
-  with no caller; only `session.cyr` calls it, and that module is not in the binary.
-  - It reads fd 0 directly, so `-c` (no stdin) declines by default, as today.
-  - ⚠ Its prompt writes to **stdout**. Move it to stderr, as `verb_confirm` did in 2.0.0: `-c`'s
-    stdout is the program's (ADR-008).
-- **Checkpoints:** before every REMOVE / MOVE exec, use the store
-  ([ADR-009](../adr/009-checkpoint-store.md), `src/checkpoint.cyr`, compiled in with no caller): one
-  `ckpt_group_new(ckpt_dir())` per command, then `ckpt_remove` / `ckpt_move` per file.
-  - ⚠ A refusal — a directory (`rm -r`), a symlink, a file over 64 MiB — needs a ruling first: refuse
-    the command, or run it and say that undo will not restore that file.
-  - ⚠ The store's agnos arm has never run. Verify it in QEMU with the first caller.
-- **ADMIN** routes through `execute_with_privileges` (`security.cyr`, compiled in since 2.0.2 with no
-  caller).
-  - ⚠ It launches through `execute_command` → lib `exec_vec`: an empty environment and a second host
-    launcher, which ADR-008 § 3 rules out. Route it through `host_exec` first.
-  - A restricted session (root on a Linux host) runs no NL line at all since 2.0.2, and
-    `execute_with_privileges` refuses one (-1).
-  - BLOCKED stays blocked: `WARNING: BLOCKED` is final, with no approval path.
-- **Audit labels:** `approved` + outcome, `denied`, `timed_out`.
-- Settle the power-verb ruling first (§ Open decisions), so every confirmation follows one policy.
-- ADR the approval-vs-execute split. `docs/examples/server-hardening.md`'s do-not-deploy banner comes
-  down only when `strict` mode actually gates.
-
 ### 2.1.4 — `undo`
 
-- `ckpt_undo(ckpt_dir())` (ADR-009) goes behind a new `undo` builtin. It restores the newest group
+- `ckpt_undo(ckpt_dir())` (ADR-009) goes behind a new `undo` builtin. 2.1.3 writes the checkpoints:
+  one group per approved remove or move, none for a declined or failed one.
+- The approval prompt's note then changes from `checkpointed first` to say that `undo` can put the
+  file back (`nl_launch_gated`). It restores the newest group
   and returns the lines to print, and how many entries were and were not undone, which is the exit
   status.
 - `commands.cyr` stopped advertising `undo` in 1.9.1, when the audit found nothing behind it. Add it
@@ -235,7 +216,6 @@ upstream*), so the same client can be built `--agnos`; nobody has run it there y
 
 | Decision | Needed by | The question |
 |---|---|---|
-| **Power verbs and confirmation** | 2.1.3 | Should a typed `reboot` / `poweroff` / `halt` require the mode confirm that `run` does? They match by exact `streq` before classification, so today they never reach `is_admin_command`. Left for an operator ruling in 1.9.11. |
 | **Metacharacter pass-through in `human` mode** | any redirection-lane work | Let `;` `\|` `&` `$()` `<` `>` through in `human` only (user-flagged 2026-07-07). `is_shell_metachar` and its four wrappers are mode-blind with no mode parameter, so this threads one. On Linux it must warn: metachar → `execve` is a real injection vector (audit C2). |
 | **Install location** | the next zugot recipe bump | `scripts/install.sh` → `/usr/local/bin`; the zugot recipe (ark) → `/usr/bin`; agnos images → `/bin/agnsh`. The first two are FHS-correct as a pair (local build vs package), so the likely ruling is "no change" — but the recipe ships no man page, which is a real gap. |
 
@@ -407,5 +387,6 @@ one arch, and three gates had opened without anyone noticing.
   (`CONTRIBUTING.md`). `sh_env_blob[128]` is 1 KB, not 128 bytes.
 - **Coverage**: every wire-up grows the fn denominator; add `test_core` anchors for the new module's
   pure functions. The 80% gate is CI-enforced, and agnos-only functions are reported, not gated.
-- **Benchmarks** after 2.1.3 (approval-gated exec) and 2.3.1 (streaming): both add new code paths.
-  2.0.0's NL exec is dominated by process creation, which the in-process suite does not measure.
+- **Benchmarks** after 2.3.1 (streaming): it adds new code paths. NL exec, 2.1.3's approval tiers
+  included, is dominated by process creation and the prompt, which the in-process suite does not
+  measure.

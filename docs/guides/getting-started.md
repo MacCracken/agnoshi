@@ -169,12 +169,17 @@ program's and agnsh files its report in the report folder
 (`~/.local/state/agnoshi/reports/`); `agnsh -n -c "…"` classifies without running
 — see `docs/examples/scripting.md`.
 
-## Undo — not available yet
+## Approval, and undo — not available yet
 
-There is **no `undo` command**, and nothing is checkpointed. The checkpoint store
-it will use is in the binary since 2.0.3 (`src/checkpoint.cyr`, kept in
-`~/.local/state/agnoshi/checkpoints/`), but nothing calls it until
-approval-gated exec and `undo` arrive (roadmap 2.1.x). Do not rely on rollback.
+A natural-language line that changes something — `copy a to b`, `remove notes.txt`, `install vim`
+— asks first: `⚠ [MED] approve: … ? [y/N]` on stderr, in every mode (2.1.3).
+- **It runs only on a `y`.** A `remove` or `move` is checkpointed before you are asked, into
+  `~/.local/state/agnoshi/checkpoints/`.
+- **On a Linux host, an install or another ADMIN line runs as `sudo -n`.** If sudo wants a password,
+  it fails rather than asking.
+
+There is **no `undo` command yet** (roadmap 2.1.x — `undo`), so nothing restores a checkpoint. Do not
+rely on rollback until then.
 
 ## Next Steps
 

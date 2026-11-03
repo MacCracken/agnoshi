@@ -3,23 +3,25 @@
 > # ⛔ DO NOT DEPLOY THIS AS WRITTEN — IT DESCRIBES A SHELL THAT DOES NOT EXIST YET
 >
 > This guide was written against an intended design, not the shipped binary.
-> Verified against **2.0.3**, the following load-bearing claims below are FALSE:
+> Verified against **2.1.3**, the following load-bearing claims below are FALSE:
 >
 > | The guide says | Reality |
 > |---|---|
 > | `agnsh --strict` as a login shell | **`--strict` is not a flag.** It prints usage and exits **1**, so as a login shell the session ends at once. The flag is `--mode strict`. |
-> | strict mode = every command needs approval | **Every launch confirms** (`[y/N]`, since 2.0.0), but approval-gated execution does not exist: a HIGH-risk natural-language line reports `Approval required -- not executed` and cannot be approved, and a typed shell line skips the tiers (a BLOCKED one still confirms). `ApprovalManager` is not in the binary. |
 > | `/etc/agnoshi/agnsh.conf` configures it | **No config file is read at all** — no path, no parser, nothing in `src/`. |
-> | Checkpoint makes destructive ops reversible | **No checkpointing, no `undo`.** The checkpoint store is compiled in (2.0.3) but nothing calls it. |
-> | Restricted mode blocks privilege escalation | **There is no privilege escalation to block** — nothing invokes `sudo` — and **no `--restricted` flag** (it prints usage and exits 1). The one restriction that exists is automatic (2.0.2): agnsh running as root runs no natural-language line. |
+> | Checkpoint makes destructive ops reversible | **Checkpointed, not yet reversible.** Since 2.1.3 an approved natural-language remove or move is checkpointed first, but there is no `undo` to restore it (roadmap 2.1.x), and typed shell lines are never checkpointed. |
+> | Restricted mode blocks privilege escalation | **No `--restricted` flag** (it prints usage and exits 1). The one restriction that exists is automatic (2.0.2): agnsh running as root runs no natural-language line, so it never escalates. Escalation itself exists since 2.1.3: an approved ADMIN natural-language line runs as `sudo -n`. |
 >
-> **What IS true and useful today**: permission classification with basename
-> extraction, argument/path sanitization, and a complete audit trail — every
-> classification, every launch, and every refusal, JSON-escaped and UTF-8
-> validated. That is a real auditing posture. It is **not** an enforcement one.
+> **What IS true and useful today**:
+> - permission classification with basename extraction, and argument and path sanitization;
+> - `--mode strict`: every launch confirms (`[y/N]`, since 2.0.0), and since 2.1.3 every
+>   natural-language line that changes something asks for approval;
+> - a complete audit trail of every classification, approval, launch and refusal, JSON-escaped and
+>   UTF-8 validated.
 >
-> Treat this document as a design target for the roadmap's 2.1.x exec +
-> approval slots, not as deployment instructions.
+> It is still **not** a sandbox.
+>
+> Treat this document as a design target, not as deployment instructions.
 
 This guide demonstrates using agnsh as the default shell on a hardened
 Linux server.
@@ -34,7 +36,7 @@ Linux server.
      |
      v
 Every command -> Intent classified -> risk REPORTED -> Audit logged
-                                      (approval is not enforced; see the banner)
+                                      (strict confirms every launch; see the banner)
 ```
 
 ## Install as Login Shell

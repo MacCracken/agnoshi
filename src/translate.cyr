@@ -175,13 +175,20 @@ fn translate_remove(intent) {
     if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
-    if (load64(intent + 40) == 1) { vec_push(args, "-r"); }
+    # 2.1.3 (ruled 2026-11-02): a plain remove is USER_WRITE — it runs after an approval, with the file
+    # checkpointed first so `undo` can put it back (ADR-011). A recursive one stays BLOCKED: the
+    # checkpoint store saves files, not directories (ADR-009 § 4), so nothing could put it back.
+    var perm = PermissionLevel.USER_WRITE;
+    if (load64(intent + 40) == 1) {
+        vec_push(args, "-r");
+        perm = PermissionLevel.BLOCKED;
+    }
     vec_push(args, arg_cstr(load64(intent + 8)));
     return Translation_new(
       "rm",
       args,
       "Remove files",
-      PermissionLevel.BLOCKED,
+      perm,
       "rm permanently deletes files -- use with caution"
       );
 }

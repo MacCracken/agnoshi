@@ -1,4 +1,4 @@
-.TH AGNSH 1 "November 2026" "agnoshi 2.1.2" "User Commands"
+.TH AGNSH 1 "November 2026" "agnoshi 2.1.3" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -84,10 +84,15 @@ Programs run from an argument vector \(em never through a shell \(em and
 inherit agnsh's environment.
 .TP
 .B Natural language
-A SAFE or READ_ONLY translation runs. USER_WRITE, SYSTEM_WRITE and ADMIN
-translations report
-.I "Approval required"
-and do not run in this release; BLOCKED ones never run.
+A SAFE or READ_ONLY translation runs. A USER_WRITE, SYSTEM_WRITE or ADMIN
+translation asks
+.B "approve: ... ? [y/N]"
+on standard error, in every mode, and runs only on y. A remove or move is
+checkpointed first, and one that cannot be checkpointed is refused; on a
+Linux host an ADMIN line runs as
+.BR "sudo -n" .
+With no answer (end of input, or 300 seconds on a Linux host) nothing runs.
+BLOCKED translations, a recursive remove among them, never run.
 .TP
 .B Restricted sessions
 On a Linux host, agnsh running as root (uid or euid 0) is restricted: it
@@ -101,7 +106,9 @@ A typed line the classifier calls BLOCKED (rm -rf, dd, mkfs, chmod, chown,
 shred) asks for confirmation in every mode; with no answer it is declined.
 .SH MODES
 Every mode classifies, reports risk and writes an audit record. What the
-mode changes is whether a launch is confirmed first.
+mode changes is whether a launch is confirmed first. A natural-language line
+that needs approval asks in every mode, once: its approval prompt stands in
+for the mode's confirmation.
 .TP
 .B human, strict
 Every launch asks for a y/n confirmation on stderr.
@@ -123,7 +130,8 @@ when signal
 killed it \(em on AGNOS too, since 2.0.1).
 .TP
 .B 126
-Understood but not run: approval required, BLOCKED, declined at a prompt,
+Understood but not run: BLOCKED, declined or not answered at a prompt,
+a file that could not be checkpointed, a sudo that could not be used,
 arguments refused by the safety checks, or a restricted session (root on
 a Linux host).
 .TP

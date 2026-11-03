@@ -112,9 +112,9 @@ check "risk MED for user-write" "Risk: \[MED\]" "$out"
 out=$("$BIN" --dry-run -c "install vim" 2>&1) || true
 check "risk HIGH for admin" "Risk: \[HIGH\]" "$out"
 check "high-risk approval hint" "Approval required" "$out"
-# 1.9.15: the line says what happened. It used to promise "(interactive prompt in shell
-# mode)", and no prompt exists in any mode.
-check "high-risk line says nothing ran" "Approval required -- not executed" "$out"
+# 2.1.3: the approval tiers run after an approval (ADR-011), so the line says the prompt comes first.
+# 1.9.15 to 2.1.2 it said "not executed" -- no prompt existed in any mode.
+check "high-risk line says it asks first" "Approval required -- asks before it runs" "$out"
 
 out=$("$BIN" --dry-run -c "rm -rf /tmp/foo" 2>&1) || true
 check "risk CRIT for blocked" "Risk: \[CRIT\]" "$out"
@@ -154,15 +154,41 @@ esac
 # 127 (nothing to run).
 C_STATE=$(mktemp -d -t agnsh-report.XXXXXX)
 REPORTS="$C_STATE/agnoshi/reports"
+# 2.1.3: an approval-tier line asks on stderr and reads its answer from stdin; with nothing there it
+# is not run (126). stdin is explicit here and below, so no check can wait on a prompt.
 ec=0
-out=$(XDG_STATE_HOME="$C_STATE" "$BIN" -c "copy a to b" 2>/dev/null) || ec=$?
+out=$(XDG_STATE_HOME="$C_STATE" "$BIN" -c "copy a to b" 2>/dev/null </dev/null) || ec=$?
 check "a line that does not run exits 126" "^126$" "$ec"
 check "...and leaves stdout empty" "^$" "$out"
-err=$(XDG_STATE_HOME="$C_STATE" "$BIN" -c "copy a to b" 2>&1 >/dev/null) || true
-check "...and says why on stderr, naming the report" "agnsh: not executed: approval required -- report: " "$err"
+err=$(XDG_STATE_HOME="$C_STATE" "$BIN" -c "copy a to b" 2>&1 >/dev/null </dev/null) || true
+check "...the approval prompt is on stderr" "approve: .*cp a b ? \[y/N\]" "$err"
+check "...and with no answer says why, naming the report" "agnsh: not executed: approval required, no answer -- report: " "$err"
 check "the report is filed as latest.txt" "Intent: 6  Command: cp" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
 check "the report records the input" "input: copy a to b" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
-check "the report records the result" "result: not executed: approval required" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
+check "the report records the result" "result: not executed: approval required, no answer" "$(cat "$REPORTS/latest.txt" 2>/dev/null)"
+# Approved (2.1.3): a remove is checkpointed first, then runs; a declined one leaves the file.
+G_DIR=$(mktemp -d -t agnsh-gated.XXXXXX)
+G_STATE="$G_DIR/state"
+echo keep > "$G_DIR/a.txt"
+ec=0
+err=$(printf 'n\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "remove $G_DIR/a.txt" 2>&1 >/dev/null) || ec=$?
+check "a declined remove exits 126" "^126$" "$ec"
+check "...and the file stays" "^keep$" "$(cat "$G_DIR/a.txt" 2>/dev/null)"
+check "...and says declined" "agnsh: not executed: declined" "$err"
+ec=0
+err=$(printf 'y\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "remove $G_DIR/a.txt" 2>&1 >/dev/null) || ec=$?
+check "an approved remove exits 0" "^0$" "$ec"
+check "...the prompt says it is checkpointed first" "checkpointed first ? \[y/N\]" "$err"
+check "...the file is gone" "^gone$" "$([ -e "$G_DIR/a.txt" ] && echo here || echo gone)"
+check "...and its checkpoint holds it" "^1$" "$(ls "$G_STATE/agnoshi/checkpoints" 2>/dev/null | grep -c '\.ckpt$')"
+check "the checkpoint folder is private" "^700$" "$(stat -c %a "$G_STATE/agnoshi/checkpoints" 2>/dev/null)"
+mkdir "$G_DIR/d"
+ec=0
+err=$(printf 'y\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "remove $G_DIR/d" 2>&1 >/dev/null) || ec=$?
+check "a remove that cannot be checkpointed exits 126" "^126$" "$ec"
+check "...unasked, saying why" "agnsh: not executed: cannot checkpoint $G_DIR/d" "$err"
+check "...and the directory stays" "^here$" "$([ -d "$G_DIR/d" ] && echo here || echo gone)"
+rm -rf "$G_DIR"
 check "the report folder is private" "^700$" "$(stat -c %a "$REPORTS" 2>/dev/null)"
 check "a report is private" "^600$" "$(stat -c %a "$REPORTS/latest.txt" 2>/dev/null)"
 ec=0
@@ -241,8 +267,8 @@ ec=0
 (cd "$NL_DIR/work" && HOME="$NL_DIR" XDG_STATE_HOME="$NL_STATE" "$BIN" --mode human -c "show me all files" >/dev/null 2>&1 </dev/null) || ec=$?
 check "human mode confirms first, and no answer declines (126)" "^126$" "$ec"
 ec=0
-(HOME="$NL_DIR" XDG_STATE_HOME="$NL_STATE" "$BIN" -c "copy a to b" >/dev/null 2>&1) || ec=$?
-check "a user-write NL line does not run yet (126)" "^126$" "$ec"
+(HOME="$NL_DIR" XDG_STATE_HOME="$NL_STATE" "$BIN" -c "copy a to b" >/dev/null 2>&1 </dev/null) || ec=$?
+check "a user-write NL line with no approval does not run (126)" "^126$" "$ec"
 check "...and the audit says it needs approval" '"input":"copy a to b","action":"cp","approved":0,"result":"needs_approval"' "$(cat "$NL_DIR/.agnsh_audit.log" 2>/dev/null)"
 rm -rf "$NL_DIR"
 
@@ -361,11 +387,12 @@ rm -rf "$SMOKE_HOME"
 # needs_approval, blocked, needs_llm, needs_exec, rejected_safety.
 RES_HOME=$(mktemp -d -t agnsh-result.XXXXXX)
 # NB: `rm /tmp/x` would now run the rm builtin (literal command). Use the
-# NL phrasing `delete /tmp/x`, which the intent parser classifies BLOCKED
-# (result "blocked") exactly as the old `rm /tmp/x` did — preserving the
-# safety-classification coverage without colliding with the rm verb.
+# NL phrasing `delete -r /tmp/x`, which the intent parser classifies BLOCKED
+# (result "blocked"). Since 2.1.3 a plain `delete /tmp/x` is USER_WRITE —
+# it runs after an approval, checkpointed — so it is needs_approval.
 HOME="$RES_HOME" "$BIN" --dry-run -c "show files" > /dev/null 2>&1 || true
 HOME="$RES_HOME" "$BIN" --dry-run -c "install vim" > /dev/null 2>&1 || true
+HOME="$RES_HOME" "$BIN" --dry-run -c "delete -r /tmp/x" > /dev/null 2>&1 || true
 HOME="$RES_HOME" "$BIN" --dry-run -c "delete /tmp/x" > /dev/null 2>&1 || true
 HOME="$RES_HOME" "$BIN" --dry-run -c "what is dns" > /dev/null 2>&1 || true
 HOME="$RES_HOME" "$BIN" --dry-run -c "ls | grep foo" > /dev/null 2>&1 || true
@@ -374,7 +401,8 @@ RES_LOG="$RES_HOME/.agnsh_audit.log"
 res_content=$(cat "$RES_LOG" 2>/dev/null)
 check "result proposed for read-only" '"input":"show files".*"result":"proposed"' "$res_content"
 check "result needs_approval for admin" '"input":"install vim".*"result":"needs_approval"' "$res_content"
-check "result blocked for rm" '"input":"delete /tmp/x".*"result":"blocked"' "$res_content"
+check "result blocked for a recursive rm" '"input":"delete -r /tmp/x".*"result":"blocked"' "$res_content"
+check "result needs_approval for a plain rm (2.1.3)" '"input":"delete /tmp/x".*"result":"needs_approval"' "$res_content"
 check "result needs_llm for question" '"input":"what is dns".*"result":"needs_llm"' "$res_content"
 check "result needs_exec for pipeline" '"input":"ls | grep foo".*"result":"needs_exec"' "$res_content"
 # For REMOVE inputs both "rejected_safety" (translator catches the

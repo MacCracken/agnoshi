@@ -36,7 +36,7 @@ fn AuditEntry_new_x(user, mode, input, action, approved, result, exit_code) {
 # re-decides it. Negative = launch failure (every launcher's convention),
 # 0 = clean exit, positive = the child's own non-zero status.
 #
-# These five labels (launched / executed / failed / error / denied) are
+# These labels (launched / executed / failed / error / denied, and since 2.1.3 approved / timed_out) are
 # deliberately DISJOINT from classify_audit_result's six parse-time labels, so
 # one `select` separates what the shell DID from what it merely considered.
 fn audit_exec_outcome(exit_code) {
@@ -269,8 +269,9 @@ fn classify_audit_result(tag, perm, desc_cstr) {
     #                       streaming isn't wired yet.
     #   needs_exec       -- PIPELINE intent: no translator arm yet.
     #   blocked          -- BLOCKED permission: caller-must-approve.
-    #   needs_approval   -- USER_WRITE / SYSTEM_WRITE / ADMIN: not run until
-    #                       approval-gated exec (roadmap 2.1.x). USER_WRITE
+    #   needs_approval   -- USER_WRITE / SYSTEM_WRITE / ADMIN: runs only after an
+    #                       approval (2.1.3, ADR-011); the exec records say
+    #                       whether it was approved and what happened. USER_WRITE
     #                       joined in 2.0.0: once SAFE and READ_ONLY started
     #                       running (ADR-008), "proposed" + approved:1 for a
     #                       `cp` that did not run would have said the opposite
@@ -346,7 +347,10 @@ fn audit_one_shot(input_cstr, cmd_cstr, perm, mode_label_cstr, tag, desc_cstr) {
 #   failed    -- child ran to completion, non-zero exit
 #   error     -- the launch itself failed (missing binary, exec refused)
 #   denied    -- refused before any launch (mode confirm declined, unsafe path,
-#                non-absolute path, usage error)
+#                non-absolute path, usage error; 2.1.3: an approval declined or not
+#                answered, a file that could not be checkpointed, sudo unusable)
+#   approved  -- 2.1.3: an approval-tier NL line was approved; `launched` follows
+#   timed_out -- 2.1.3: nobody answered the approval prompt in time (host only)
 #
 # WHY A `launched` RECORD IS WRITTEN BEFORE THE EXEC: a foreground child can
 # hang forever, kill the shell, or (reboot/poweroff/halt) take the whole
@@ -387,6 +391,7 @@ fn audit_exec(input_cstr, cmd_cstr, mode_label_cstr, result_label_cstr, exit_cod
     # explicit refusal is 0. A child that ran and failed was still approved.
     var approved = 1;
     if (streq(result_label_cstr, "denied") == 1) { approved = 0; }
+    if (streq(result_label_cstr, "timed_out") == 1) { approved = 0; }
     var entry = AuditEntry_new_x(
       str_from("user"),
       str_from(mode_label_cstr),

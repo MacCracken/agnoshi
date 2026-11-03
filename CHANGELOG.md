@@ -6,6 +6,83 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-11-02 — approval-gated exec
+
+The natural-language path now does what it proposes for the approval tiers
+([ADR-011](docs/adr/011-approval-gated-exec.md)). A USER_WRITE, SYSTEM_WRITE or ADMIN line asks
+`[y/N]` on stderr, in every mode, and runs on a yes.
+- **Checkpoints:** a remove or move is checkpointed first, and one that cannot be checkpointed is
+  refused.
+- **ADMIN:** on a Linux host it runs as `sudo -n`.
+- **Until now:** these tiers printed `Approval required -- not executed`, and the prompt, the
+  checkpoint store and the sudo path were compiled in with no caller.
+
+Four rulings came first (2026-11-02):
+1. A plain remove is approvable, and a recursive one stays BLOCKED.
+2. A file that cannot be checkpointed refuses its command.
+3. ADMIN runs as `sudo -n` after the approval.
+4. Typed power verbs keep no confirmation. This closes the roadmap's open decision.
+
+### Added
+
+- **Approval-gated NL exec** (`nl_launch_gated`, `src/nlexec.cyr`).
+  - **The order:** ADMIN's `sudo -n` line on the host, then a checkpoint of a remove or move, then
+    the approval prompt, then an `approved` record and the launch.
+  - **One question:** the prompt stands in for the mode gate, so `human` and `strict` ask once.
+  - **Nothing left behind:** a declined command, or one that ran and failed, leaves no checkpoint
+    (`ckpt_group_drop`).
+  - **BLOCKED never gets here**, and neither does a restricted session.
+- **`security_sudo_line`** (`src/security.cyr`): the line an approved ADMIN line runs as,
+  `<sudo> -n <line>`.
+  - sudo is re-verified as root-owned at escalation time.
+  - The line runs through the one host launcher with agnsh's environment.
+  - `-n` means agnsh never collects a password.
+- **Audit:** two exec labels, `approved` (written before `launched`) and `timed_out`. `denied` now
+  also covers a declined or unanswered prompt, a file that cannot be checkpointed, and a sudo that
+  cannot be used.
+- **`ckpt_group_drop`** and **`ckpt_dir_override_set`** (`src/checkpoint.cyr`). The second is the
+  test seam that keeps the suite out of your own checkpoint folder.
+- **`sh_launch_ungated`** (`src/run_agnos.cyr`): the launch without the mode gate, for a line that
+  has already asked.
+- **ADR-011**, the approval-vs-execute split.
+
+### Changed
+
+- **`ApprovalManager_request`** now draws an action line with an optional note:
+  `  ⚠ [MED] approve: <line> -- checkpointed first ? [y/N]`.
+  - **Before:** it wrote to stdout and read fd 0 raw, past `read_line`'s carry buffer, so a
+    typed-ahead line was lost to it. It reported EOF as a timeout and offered a `[m]odify` that
+    nothing implemented.
+  - **Now:** the prompt goes to stderr, and the answer is one line through `read_line`. `y` or `Y`
+    approves; anything else declines. EOF is a new `NO_ANSWER`, and on a host, 300 seconds with no
+    line is `TIMED_OUT`, through `approval_input_wait`'s poll of fd 0.
+- **`translate_remove`:** a plain remove is USER_WRITE, and `-r` is BLOCKED. Until now every remove
+  was BLOCKED.
+- **The report block** for an approval tier reads `Approval required -- asks before it runs`, where
+  it said `not executed (no approval prompt in this build)`.
+- **`-c`:** the prompt reads stdin. With nothing there the line is not run: still **126**, now with
+  the reason `approval required, no answer`. `--dry-run` gives no approval, so it stays 126 for a
+  gated line.
+- **The test harness's `read_line`** returns -1 at EOF, as the real one does, and
+  `approval_input_wait` is a scripted stub.
+- **`session.cyr`'s two prompt calls** use the new form. The module is outside the binary, but
+  `cyrius lint src/main.cyr` compiles it and checks the arity.
+
+### Removed
+
+- **`execute_command` and `execute_with_privileges`** (`src/security.cyr`). They launched through lib
+  `exec_vec` with an empty environment — a second host launcher, which ADR-008 § 3 rules out — and
+  had no caller in the binary. `session.cyr` (outside the binary) still names them.
+
+### Security
+
+- **H5 — control bytes in a confirmation line.** The approval prompt and `verb_confirm`, the
+  mode-gate confirmation, now strip control bytes from the line they show (`strip_control_chars`).
+  - Until now `verb_confirm` wrote the action raw.
+  - `is_safe_path` rejects shell metacharacters and traversal but not control bytes, so a path
+    carrying an ESC sequence could restyle or reposition the line being confirmed.
+  - `docs/guides/security-model.md` had this gap tracked "for the approval wire-up".
+
 ### Changed — docs
 
 - **`docs/development/roadmap.md` is renumbered into 2.1.x – 2.3.x.** 2.0.4 – 2.1.2 went to the
@@ -19,6 +96,85 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Roadmap citations in `src/`, `tests/` and the docs moved with it; these are comment and doc
     changes only.
 - **`SECURITY.md`'s supported line is 2.1.x.** It still said 2.0.x.
+- **For 2.1.3:**
+  - ADR-008 is amended (§ 1) and ADR-009 notes its first caller and the ruling on refused checkpoints.
+  - SECURITY.md's approval, checkpoint and escalation sections, `security-model.md` § 4, § 6 and § 7,
+    README, CLAUDE.md's security note, the man page (WHAT RUNS, MODES, EXIT STATUS),
+    `getting-started.md`, `scripting.md`, the overview and the server-hardening banner now describe
+    what ships.
+  - The roadmap drops the 2.1.3 slot and the power-verb decision; `undo` is next.
+
+### Tests
+
+- **test_core 1062 → 1103.** `_t_gated` covers:
+  - the prompt's answers: y, n, Enter, EOF, timeout, a prompt it cannot draw, auto-approve;
+  - control bytes stripped, in both prompts;
+  - `ckpt_group_drop`;
+  - an approved remove (checkpointed, run, asked once, `approved` / `launched` / `executed`);
+  - a declined remove (the file stays, no checkpoint left, `denied`);
+  - a directory refused unasked;
+  - an approved move;
+  - `human` asking once for a mkdir;
+  - a timeout (`timed_out`);
+  - ADMIN with no session context refused unasked, on both paths.
+
+  Also: `security_sudo_line`'s refusals and line, the new verdicts (gated, its 126 under
+  `--dry-run`, a recursive remove BLOCKED), and the restricted-session verdict for a gated line.
+  The new functions are called directly too, so host-reachable coverage stays 100 % (291 / 291).
+- **Smoke 142 → 155.** End to end:
+  - the prompt on stderr, and no answer;
+  - a declined remove keeps the file;
+  - an approved remove deletes it into a private checkpoint folder;
+  - a directory is refused unasked;
+  - the parse-time `needs_approval` for a plain remove, and `blocked` for `-r`.
+
+  Every gated `-c` line now pins its stdin, so no smoke can wait on a prompt.
+- **`scripts/agnos-qemu-test.py` gains § 1b:** an approved and a declined remove, typed. Their audit
+  records, the disk image's file state, and the checkpoint entry are read back with `debugfs`.
+
+### Verified
+
+- Every job of `ci.yml` on a copy of the tree, under `bash -e`: all 23 steps.
+  - Unit 1103/1103, security 26/26, parse corpus 358/358, smoke 155/155.
+  - The same three suites on aarch64 under qemu-user.
+  - Host-reachable coverage 291/291 (100 %), and lint clean on all 33 files.
+- **agnos 1.57.14 in QEMU (KVM)**, on the tree that prints 2.1.3:
+  - `scripts/agnos-qemu-test.py`: **58/58 at `-smp 1` and 58/58 at `-smp 4`**, 9 of them new.
+    - The typed `remove` asks first and runs on `y`; a typed `n` declines it.
+    - On disk, the approved file is gone and the declined one stays.
+    - `/.agnsh_checkpoints` holds exactly one entry, with its `op: remove` header and the removed
+      file's bytes: **the checkpoint store's agnos arm, run for the first time** (ADR-009 § 6).
+    - The audit trail reads `needs_approval, approved, launched, executed` and
+      `needs_approval, denied`.
+    - 70 complete records are on disk, and the guest's read-back of 68 matches them.
+  - `scripts/agnos-qemu-bench.py`, in one boot against the 2.1.2 build:
+    - Both idle at 0 ticks and are BLOCKED in 91 of 100 samples.
+    - All 20 `-c` statuses held, identical for both builds.
+    - Round trips are within 0.3 %: `run` 79,325 → 79,069 µs per line, `pipe` 151,869 → 151,632 µs.
+      The host load was 3.8, so read these as a comparison, not as absolute figures.
+- **Binary sizes:**
+  - x86_64 178,912 → 195,712 B (+16,800). The checkpoint store, the approval prompt and the sudo
+    path have callers now, so DCE keeps them.
+  - aarch64 490,024 → 490,432 B, where DCE only NOPs dead code in place.
+  - agnos 399,752 → 400,136 B.
+
+### Performance — neutral; three moves are layout
+
+Five alternating runs of the 2.1.2 and 2.1.3 bench binaries, each started with the 1-minute load
+below 2 (1.86 – 1.93). Ten of the 13 medians are within −2.3 % to +0.5 %. Three moved more:
+
+| Benchmark | 2.1.2 | 2.1.3 | Change |
+|---|---|---|---|
+| `sanitize/safe_path` | 54 ns | 37 ns | −31.5 % |
+| `parse/find_files` | 2,272 ns | 2,134 ns | −6.1 % |
+| `sanitize/basename` | 45 ns | 43 ns | −4.4 % |
+
+These are not claimed as wins. 2.1.3 changes no code on these three paths: `sanitize.cyr` changes
+only `verb_confirm`, and the parser and `is_safe_path` are untouched. Both paths have moved with
+layout before: `safe_path` was 35 → 59 ns at 2.0.4 and 59 → 53 at 2.1.1, and `find_files` +2.4 %
+in 2.1.1's matched-layout control. The approval prompt and the checkpoint sit behind a process
+launch and a human, which the in-process suite does not measure. One `bench-history.csv` row
+(`fc88fda-dirty`, recorded at load 1.86).
 
 ## [2.1.2] - 2026-11-02 — a session on the console, and the whole environment
 

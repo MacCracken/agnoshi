@@ -24,30 +24,39 @@ Agnoshi enforces defense in depth:
 Every command is classified before execution:
 - **SAFE** — no state change (cd, echo, help)
 - **READ_ONLY** — queries (ls, cat, ps)
-- **USER_WRITE** — user files (cp, mv, touch)
-- **SYSTEM_WRITE** — system paths (requires approval)
-- **ADMIN** — requires sudo (requires approval)
+- **USER_WRITE** — user files (cp, mv, mkdir, a plain rm; asks first since 2.1.3)
+- **SYSTEM_WRITE** — system paths (asks first)
+- **ADMIN** — asks first, then runs as `sudo -n` on a Linux host (2.1.3)
 - **BLOCKED** — never allowed for AI (rm -rf, dd, mkfs, chmod, chown, shred)
 
 Classification uses **basename extraction** so `/usr/bin/dd`, `./rm`,
 `../bin/chmod` cannot bypass the blocklist.
 
-### Approval workflow — ⚠ NOT IN THE SHIPPED BINARY YET
+### Approval workflow (2.1.3)
 
-**What ships today**: every translated command is classified into a permission
-tier and its risk is reported. Since 2.0.0 a SAFE or READ_ONLY translation
-**runs** (see *Execution*, below); a USER_WRITE, SYSTEM_WRITE or ADMIN one prints
-`Approval required -- not executed (no approval prompt in this build)` and a
-BLOCKED one prints `WARNING: BLOCKED -- not executed, and there is no override`.
-**Neither prompts, and neither runs**: with no approval prompt, "requires
-approval" means "does not run". Until 1.9.15 the HIGH-risk line promised an
-"interactive prompt in shell mode" that no mode had.
+Since 2.1.3 ([ADR-011](docs/adr/011-approval-gated-exec.md)), a natural-language line in the
+USER_WRITE, SYSTEM_WRITE or ADMIN tier **asks first, in every mode**, and runs only on a yes.
 
-**What does not ship**: `ApprovalManager_request` and the escape-stripped
-approval display (`print_str_safe`, the H5 mitigation) live in
-`src/approval.cyr` / `src/sanitize.cyr` but their only caller is
-`src/session.cyr`, which is **not in `src/agnsh.cyr`'s include graph**. Wiring
-them in is roadmap 2.1.x — approval-gated exec.
+- **The prompt:** it goes to stderr, as `  ⚠ [MED] approve: <line> ? [y/N]`.
+  - Control bytes in the line are stripped before it is shown (the H5 mitigation), so a crafted file
+    name cannot redraw what you are approving.
+  - `y` or `Y` approves. Anything else declines, including a bare Enter.
+  - With nothing on stdin (EOF), there is no answer and nothing runs.
+  - On a Linux host, no answer within 300 seconds times out and declines.
+- **The prompt stands in for the mode gate:** `human` and `strict` ask once, not twice.
+- **What it covers:**
+  - A plain remove is USER_WRITE; a recursive one stays BLOCKED.
+  - A remove or move is **checkpointed before the prompt**, and a file that cannot be checkpointed
+    refuses the command unasked (see *Checkpoint/undo*).
+  - On the host, an approved ADMIN line runs as `sudo -n` (see *Privilege escalation*).
+- **BLOCKED still never runs** (`WARNING: BLOCKED -- not executed, and there is no override`). In a
+  restricted session — agnsh as root on a Linux host — no natural-language line runs at all, so
+  nothing is asked.
+- **`agnsh -c`:** the answer is read from stdin, so a script that gives none gets 126, as before.
+- **Audit:** each prompt leaves a record — `approved` before the launch, `denied`, or `timed_out`.
+
+Until 2.1.3 these tiers printed `Approval required -- not executed` and never ran. The prompt
+(`ApprovalManager_request`) was compiled in with no caller.
 
 ### Execution — what can actually run
 
@@ -89,16 +98,28 @@ All user-controlled strings flowing to syscalls must pass validation:
 - `is_safe_branch_name` — only `[a-zA-Z0-9_/.-]`
 - `is_safe_commit_message` — rejects leading `-` (flag injection)
 
-### Checkpoint/undo — ⚠ NOT IN THE SHIPPED BINARY YET
+### Checkpoint/undo — the checkpoint ships, `undo` is next
 
-The checkpoint store (`src/checkpoint.cyr`, [ADR-009](docs/adr/009-checkpoint-store.md))
-is compiled in, but **nothing calls it yet**: no command is checkpointed and there
-is no `undo` builtin. Do not rely on any rollback guarantee. Both arrive with
-approval-gated exec and `undo` (roadmap 2.1.x). What the store guarantees once it
-is called: a private folder (below); each saved file 0600, created exclusively and
-never through a symlink; regular files only, up to 64 MiB, with anything else
-refused and the caller told; and a restore that never overwrites what is at a path
-now.
+Since 2.1.3 the checkpoint store (`src/checkpoint.cyr`,
+[ADR-009](docs/adr/009-checkpoint-store.md)) runs before every approved natural-language remove or
+move:
+- **A remove** saves each file it names.
+- **A move** records the move, and saves a file it would overwrite.
+- **What is refused:** anything the store cannot save refuses the command — a directory, a symlink,
+  a device or FIFO, a file over 64 MiB, an unreadable file, or an unusable store folder. Nothing
+  destructive runs without its checkpoint.
+- **Declined or failed commands** leave no checkpoint behind.
+
+⚠ **There is no `undo` builtin yet** (roadmap 2.1.x — `undo`). A checkpoint exists, but no command
+restores it, so do not rely on rollback until then. Two other gaps:
+- `cp` onto an existing file is not checkpointed.
+- Typed shell lines (`run`, barewords) are not checkpointed: they are your own commands, not the AI's.
+
+What the store guarantees:
+- a private folder (below);
+- each saved file 0600, created exclusively and never through a symlink;
+- regular files only, up to 64 MiB;
+- a restore that never overwrites what is at a path now.
 
 ### Audit log
 Every action is logged as a JSON line to `~/.agnsh_audit.log`. All fields
@@ -110,16 +131,22 @@ its last record behind (measured in QEMU; see
 `docs/guides/security-model.md` § Audit Log Integrity). Linux hosts were not
 affected.
 
-### Privilege escalation — ⚠ NOT IN THE SHIPPED BINARY YET
+### Privilege escalation (2.1.3)
 
-There is **no privilege-escalation path in the binary**: nothing invokes `sudo`.
-Since 2.0.2 `src/security.cyr` is compiled in, and one part of it is live: the
-root check that makes a Linux-host session running as root *restricted* (above).
-The escalation half — `execute_with_privileges` (`sudo -n`) and the sudo
-path/root-ownership re-verification at escalation time (`verify_sudo_path`) — is
-compiled in with **no caller** until approval-gated execution (roadmap 2.1.x). The
-environment whitelist (`build_safe_env`, `src/sanitize.cyr`) has no caller
-anywhere.
+Since 2.1.3 an **approved ADMIN natural-language line** on a Linux host runs as `<sudo> -n <line>`
+(`security_sudo_line`, `src/security.cyr`):
+- **sudo is re-verified** as a root-owned binary at the moment of escalation (`verify_sudo_path`), not
+  trusted from the session's start.
+- **`-n` means sudo never asks for a password.** A sudo that needs one fails, and the outcome record
+  says so.
+- **The line runs through the one host launcher**, with agnsh's environment, never a shell.
+- **Nothing else invokes sudo:** typed shell lines run as you.
+- **A restricted session** (agnsh as root) runs no natural-language line, so it never escalates.
+- **agnos has no sudo and no uid model**, so an approved ADMIN line there runs as agnsh does.
+
+The environment whitelist (`build_safe_env`, `src/sanitize.cyr`) still has no caller anywhere. Until
+2.1.3 the escalation code (`execute_with_privileges`) had no caller and launched through a second,
+empty-environment launcher; that is gone.
 
 ⚠ **Children inherit agnsh's environment on AGNOS, by design** — the opposite of
 a whitelist (`sh_build_env_blob`, `src/run_agnos.cyr`). Any `LD_PRELOAD`-style
@@ -140,7 +167,7 @@ protection is a future property, not a current one.
   report 0600 and created exclusively with `O_NOFOLLOW`. On the host a folder that
   is a symlink, belongs to another user or is writable by group or others is
   refused and no report is written.
-- Checkpoint store (2.0.3, no caller yet): `$XDG_STATE_HOME/agnoshi/checkpoints/`
+- Checkpoint store (2.0.3; written since 2.1.3): `$XDG_STATE_HOME/agnoshi/checkpoints/`
   (default `~/.local/state/agnoshi/checkpoints/`; `/.agnsh_checkpoints/` on
   AGNOS), under the report folder's rules — 0700, and on the host refused unless
   it is a real directory you own that nobody else can write; each entry 0600.
@@ -169,7 +196,7 @@ modules are marked.
   nothing is sent to a model and nothing is sanitized for one.
 - **ASI02 (Unauthorized Actions)**: permission tiers and basename classification
   ship and work (`/usr/bin/dd` → `dd` → BLOCKED). Since 2.0.0 they decide what a
-  natural-language line may run (SAFE and READ_ONLY only), and a typed BLOCKED
-  line confirms in every mode. ⚠ Approval *workflows* do not ship — see above.
+  natural-language line may run, and since 2.1.3 the USER_WRITE, SYSTEM_WRITE and ADMIN tiers run
+  only after an approval. A typed BLOCKED line confirms in every mode.
 - **ASI03 (Insecure Integration)**: ⚠ **not implemented** — there is no sandbox
   and no dotfile protection in the binary.

@@ -51,6 +51,7 @@ PART_OFFSET = 33 * 1048576
 PART_BLOCKS = (67 * 1048576) // 4096
 EXT2_FEATURES = "^resize_inode,^dir_index,^metadata_csum,^64bit,^uninit_bg"
 AUDIT = "/.agnsh_audit.log"
+CKPT = "/.agnsh_checkpoints"             # the checkpoint store on agnos (ADR-009)
 # The sleepers run until the harness creates /stop (checked every ~0.25 s), with a ~20 min safety
 # stop so a lost `touch` cannot hang the run. Neither an iteration count nor a fixed wall time
 # works: typing on agnos in QEMU runs at roughly a keystroke a second, so eight `sleeper &` lines
@@ -187,6 +188,10 @@ if not os.path.exists(os.path.join(SEED, CERT.lstrip("/"))):
 # the host's own `grep . | wc -c` over the same file.
 with open(os.path.join(SEED, CERT.lstrip("/")), "rb") as f:
     CERT_NONEMPTY = sum(len(l) + 1 for l in f.read().split(b"\n") if l)
+shutil.rmtree(os.path.join(SEED, CKPT.lstrip("/")), ignore_errors=True)
+for name, body in (("gated-a.txt", "GATED-A\n"), ("gated-b.txt", "GATED-B\n")):   # 2.1.3's fixtures
+    with open(os.path.join(SEED, name), "w") as f:
+        f.write(body)
 with open(os.path.join(SEED, "redir-target.txt"), "w") as f:  # a planted symlink points here
     f.write("REDIRECT-TARGET-ORIGINAL\n")
 os.symlink("/redir-target.txt", os.path.join(SEED, "redir-link"))
@@ -286,6 +291,11 @@ NL_OWL = "show contents of /redir-target.txt"
 # `..` was refused as "run: unsafe path" on agnos and never reached the parser -- the host was right.
 NL_META = "what is in $HOME"
 SHELL_META = "ls $HOME"                 # a program's line: still refused, now audited (and 126)
+# 2.1.3: an approval-tier NL line asks first (ADR-011). A plain remove is checkpointed into
+# /.agnsh_checkpoints before the prompt -- the store's agnos arm runs here for the first time (ADR-009 § 6)
+# -- and runs on a typed y; a typed n leaves the file. The disk image is checked after poweroff.
+GATED_YES = "remove /gated-a.txt"
+GATED_NO = "remove /gated-b.txt"
 REDIR_OK = "echo hello-redirect > /out.txt"
 REDIR_AUDIT = "echo pwned > " + AUDIT
 REDIR_LINK = "echo pwned > /redir-link"
@@ -384,6 +394,16 @@ try:
           "Intent:" in seg and "unsafe path" not in seg)
     seg = run_wait(SHELL_META, "] >")
     check("a program's line with `$` is refused", "run: unsafe path" in seg)
+
+    # ---- 1b. approval-gated exec (2.1.3): checkpoint, ask, then run ----
+    seg = run_wait(GATED_YES, "[y/N]", timeout=40)
+    check("an approval-tier remove asks first, and says it was checkpointed",
+          "Approval required -- asks before it runs" in seg and "checkpointed first ? [y/N]" in seg)
+    seg = run_wait("y", "] >", timeout=40)
+    check("...and a typed y runs it", "run:" not in seg and prompted(seg))
+    seg = run_wait(GATED_NO, "[y/N]", timeout=40)
+    seg = run_wait("n", "] >", timeout=40)
+    check("a typed n declines it", "(declined)" in seg)
 
     # ---- 2. redirection ----
     # Control first: a plain open FOLLOWS the planted symlink, so a later refusal to redirect onto
@@ -543,6 +563,23 @@ done = [r for r in disk if field(r, "input") == "/bin/sleeper"]
 check(f"each reaped job has its own outcome record ({JOB_CAP} x executed)",
       len(done) == JOB_CAP and all(field(r, "result") == "executed" for r in done))
 check("the poweroff launch is the last record", disk and field(disk[-1], "input") == "poweroff")
+check("approved remove: needs_approval, approved, launched, executed",
+      results_for(GATED_YES) == ["needs_approval", "approved", "launched", "executed"])
+check("declined remove: needs_approval, then denied", results_for(GATED_NO) == ["needs_approval", "denied"])
+
+
+def debugfs(cmd):
+    return subprocess.run(["debugfs", "-R", cmd, part], stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT).stdout.decode("latin1")
+
+
+check("the approved file is gone from the disk", "File not found" in debugfs("stat /gated-a.txt"))
+check("the declined file is still there", "File not found" not in debugfs("stat /gated-b.txt"))
+ck = [w for w in debugfs("ls " + CKPT).split() if w.endswith(".ckpt")]
+check(f"one checkpoint entry in {CKPT} (the store's agnos arm)", len(ck) == 1)
+entry = debugfs("cat " + CKPT + "/" + ck[0]) if ck else ""
+check("...holding the removed file: its header and its bytes",
+      "op: remove" in entry and "path: /gated-a.txt" in entry and "GATED-A" in entry)
 
 held = sum(1 for _, ok in checks if ok)
 p(f"agnos-qemu-test: {held}/{len(checks)} checks held")

@@ -7,10 +7,9 @@
 # them (nl_verdict, ADR-008 § 1). The user's own shell lines still run. The host builds the context
 # once, in main (security_init); agnos builds none (see SecurityContext_new), so it is never
 # restricted.
-# ⚠ The escalation half — execute_with_privileges (`sudo -n`) and verify_sudo_path's re-check at
-# escalation time — has no caller until approval-gated exec (roadmap 2.1.x): nothing in the binary
-# invokes sudo. When it gets one: execute_command launches through lib exec_vec with an EMPTY
-# environment, a second host launcher, which ADR-008 § 3 rules out (host_exec is the one).
+# ⭐ 2.1.3: the escalation half has a caller. An approved ADMIN line on the host runs as `sudo -n
+# <line>` (security_sudo_line), with sudo re-verified at escalation time, through the one host launcher
+# (ADR-011).
 struct SecurityContext {
     uid;
     gid;
@@ -193,51 +192,40 @@ fn security_warn_restricted(ctx) {
     eprintln_cstr("WARNING: agnsh is running as root -- natural-language lines are reported, not run");
     return 1;
 }
-fn execute_command(cmd, args, argc) {
-    # Build argv with cmd as argv[0], delegate fork+exec to lib/process's
-    # exec_vec (which handles the SIGCHLD-aware fork, the execve, and the
-    # parent-side waitpid). Pre-v1.2.1 this called the nonexistent
-    # `process_exec`, a v1.0-era stdlib name; exec_vec is the 5.10.x form.
-    var argv = vec_new();
-    vec_push(argv, cmd);
-    for (var i = 0; i < argc; i = i + 1) {
-        vec_push(argv, vec_get(args, i));
+# The command line an approved ADMIN line runs as on the host (2.1.3, ADR-011): `<sudo> -n <line>`,
+# launched through the one host launcher (run_host.cyr, ADR-008 § 3) like every other line. sudo is
+# re-verified as root-owned here, at escalation time, not trusted from the session's start (the TOCTOU
+# note at verify_sudo_path), and `-n` makes it fail rather than ask for a password agnsh could not show.
+# Returns the line, or 0 with security_sudo_why saying why not.
+#
+# ⛔ Until 2.1.3 this was execute_with_privileges → execute_command → lib exec_vec: an EMPTY
+# environment and a second host launcher, which ADR-008 § 3 rules out. Neither had a caller in the
+# binary; only session.cyr, outside it, called them.
+var security_sudo_why = 0;
+fn security_sudo_line(self, line) {
+    security_sudo_why = 0;
+    if (self == 0) {
+        security_sudo_why = "no session context";
+        return 0;
     }
-    return exec_vec(argv);
-}
-fn execute_with_privileges(self, cmd, args, argc) {
-    # Return codes:
-    #   0+  exit code from the elevated command
-    #   -1  session is in restricted mode (e.g. running as root)
-    #   -2  sudo unavailable at escalation time (binary missing)
-    #   -3  sudo binary present but not root-owned (rejected)
     if (load64(self + 40) == 1) {
-        return 0 - 1;
+        security_sudo_why = "a restricted session does not escalate";
+        return 0;
     }
     if (load64(self + 48) == 0) {
-        return 0 - 2;
+        security_sudo_why = "sudo is not installed";
+        return 0;
     }
-    # Re-verify sudo path AT ESCALATION TIME — don't trust the
-    # SecurityContext.sudo_available cache from session init. See the
-    # `verify_sudo_path` contract for the TOCTOU rationale.
     var sudo_path = "/usr/bin/sudo";
     if (verify_sudo_path(sudo_path) == 0) {
         sudo_path = "/bin/sudo";
         if (verify_sudo_path(sudo_path) == 0) {
-            # No verifiable sudo at escalation time. Distinguish "binary
-            # missing" from "binary not root-owned" by re-checking
-            # existence: if the binary exists but failed verify, that
-            # was the ownership failure.
-            if (file_exists("/usr/bin/sudo") == 1) { return 0 - 3; }
-            if (file_exists("/bin/sudo") == 1) { return 0 - 3; }
-            return 0 - 2;
+            # Missing, or present but failing the check — which was the ownership.
+            security_sudo_why = "sudo is not installed";
+            if (file_exists("/usr/bin/sudo") == 1) { security_sudo_why = "sudo is not owned by root"; }
+            if (file_exists("/bin/sudo") == 1) { security_sudo_why = "sudo is not owned by root"; }
+            return 0;
         }
     }
-    var sudo_args = vec_new();
-    vec_push(sudo_args, "-n");
-    vec_push(sudo_args, cmd);
-    for (var i = 0; i < argc; i = i + 1) {
-        vec_push(sudo_args, vec_get(args, i));
-    }
-    return execute_command(sudo_path, sudo_args, argc + 2);
+    return str_cat3_cstr(sudo_path, " -n ", line);
 }

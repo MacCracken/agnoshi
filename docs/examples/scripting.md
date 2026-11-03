@@ -17,8 +17,10 @@ agnsh -c "show running processes"
   on the Linux host those three are refused — they are shell syntax the host cannot run yet, never
   natural language.
 - A **natural-language line** is classified, and runs if its translation is SAFE or READ_ONLY
-  (`ls`, `cat`, `grep`, `find`, `ps`, `df`, `free`, `git status`, …). USER_WRITE, SYSTEM_WRITE and
-  ADMIN translations are not run yet (approval-gated execution is roadmap 2.1.x); BLOCKED never is.
+  (`ls`, `cat`, `grep`, `find`, `ps`, `df`, `free`, `git status`, …). A USER_WRITE, SYSTEM_WRITE or
+  ADMIN translation asks `[y/N]` on stderr and reads its answer from stdin (2.1.3). A script that
+  gives it nothing — `< /dev/null` — gets 126 and nothing runs; `printf 'y\n' | agnsh -c …` approves
+  it. BLOCKED never runs.
 - A typed line the classifier calls **BLOCKED** (`rm -rf`, `dd`, `mkfs`, `chmod`, `chown`, `shred`)
   asks `[y/N]` on stderr in every mode — `-c` with nothing on stdin declines it.
 - `--mode human` / `--mode strict` confirm every launch first; `-c` defaults to `auto`.

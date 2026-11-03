@@ -266,6 +266,215 @@ fn _t_ck_clean(base, store, work) {
     return 0;
 }
 
+# 2.1.3 — approval-gated NL exec (ADR-011): the prompt, the checkpoint before a remove or a move, the
+# sudo line ADMIN runs as, and the records each writes. Every store is a scratch one.
+fn _t_gated() {
+    var gerr = tmp_state_path("agnsh_selftest_gerr");
+    var gout = tmp_state_path("agnsh_selftest_gout");
+    var gaudit = tmp_state_path("agnsh_selftest_gaudit");
+    var greports = tmp_state_path("agnsh_selftest_greports");
+    var gckpt = tmp_state_path("agnsh_selftest_gckpt");
+    var gfile = tmp_state_path("agnsh_selftest_gfile");
+    var gfile2 = tmp_state_path("agnsh_selftest_gfile2");
+    var gdirx = tmp_state_path("agnsh_selftest_gdirx");
+    xunlink(gaudit);
+    xunlink(gfile);
+    xunlink(gfile2);
+    xrmdir(gdirx);
+    ckpt_prune(gckpt, 0);
+    xrmdir(gckpt);
+    report_prune(greports, 0);
+    xunlink(str_cat3_cstr(greports, "/", "latest.txt"));
+    xrmdir(greports);
+    audit_path_override_set(gaudit);
+    ckpt_dir_override_set(gckpt);
+    security_ctx = 0;
+
+    # The prompt: stderr, one line read, y approves, anything else declines.
+    var am = ApprovalManager_new();
+    _t_capture_begin(1, 9, gout);
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("y");
+    var a_yes = ApprovalManager_request(am, "/bin/true", "a note", RiskLevel.MEDIUM);
+    _t_stdin_set("n");
+    var a_no = ApprovalManager_request(am, "/bin/true", 0, RiskLevel.MEDIUM);
+    _t_stdin_set("");
+    var a_enter = ApprovalManager_request(am, "/bin/true", 0, RiskLevel.MEDIUM);
+    _t_stdin_set(0);
+    var a_eof = ApprovalManager_request(am, "/bin/true", 0, RiskLevel.MEDIUM);
+    _t_stdin_wait = 0;
+    _t_stdin_set("y");
+    var a_slow = ApprovalManager_request(am, "/bin/true", 0, RiskLevel.MEDIUM);
+    var a_slow_reads = _t_stdin_reads;
+    _t_stdin_wait = 1;
+    _t_stdin_set(0);
+    var a_null = ApprovalManager_request(am, 0, 0, RiskLevel.MEDIUM);
+    ApprovalManager_set_auto_approve(am, 1);
+    var a_auto = ApprovalManager_request(am, "/bin/true", 0, RiskLevel.LOW);
+    var a_auto_med = ApprovalManager_request(am, "/bin/true", 0, RiskLevel.MEDIUM);
+    _t_stdin_set("n");
+    ApprovalManager_request(am, "/bin/rm a\x1b[2Kb", 0, RiskLevel.MEDIUM);
+    _t_capture_end(2, 10);
+    _t_capture_end(1, 9);
+    check("approval: control bytes in the line never reach the terminal (H5)",
+      _t_file_has(gerr, "approve: /bin/rm a[2Kb ?") == 1 && _t_file_has(gerr, "\x1b") == 0);
+    check("approval: y approves", a_yes == ApprovalResponse.APPROVED);
+    check("...the prompt is on stderr, naming the risk, the line and the note",
+      _t_file_has(gerr, "[MED] approve: /bin/true -- a note ? [y/N]") == 1);
+    check("...and nothing goes to stdout", _t_slurp(gout) == 0);
+    check("approval: n declines", a_no == ApprovalResponse.DENIED);
+    check("approval: a bare Enter declines", a_enter == ApprovalResponse.DENIED);
+    check("approval: EOF is no answer", a_eof == ApprovalResponse.NO_ANSWER);
+    check("approval: no line in time is a timeout, and nothing is read",
+      a_slow == ApprovalResponse.TIMED_OUT && a_slow_reads == 0);
+    check("approval: a prompt it cannot draw declines", a_null == ApprovalResponse.DENIED);
+    check("approval: auto-approve covers LOW only",
+      a_auto == ApprovalResponse.APPROVED && a_auto_med == ApprovalResponse.NO_ANSWER);
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("n");
+    verb_confirm("run /bin/a\x1b[2Kb");
+    _t_capture_end(2, 10);
+    check("verb_confirm strips control bytes too (H5, 2.1.3)",
+      _t_file_has(gerr, "run /bin/a[2Kb ? [y/N]") == 1 && _t_file_has(gerr, "\x1b") == 0);
+
+    # ckpt_group_drop: a command that did not run leaves no checkpoint.
+    _t_write_cstr(gfile, "keep me\n");
+    var gg = ckpt_group_new(gckpt);
+    check("a group saves a file", ckpt_remove(gg, gfile) == 0 && vec_len(ckpt_names(gckpt)) == 1);
+    check("ckpt_group_drop removes what the group wrote",
+      ckpt_group_drop(gg) == 1 && vec_len(ckpt_names(gckpt)) == 0);
+    check("...and is safe twice, or on no group", ckpt_group_drop(gg) == 0 && ckpt_group_drop(0) == 0);
+
+    # An approved remove: checkpointed, then run, with one question.
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("y");
+    var g_rm = nl_run_c(str_cat3_cstr("remove ", gfile, ""), Mode.AI_AUTONOMOUS, 0, greports);
+    var g_rm_reads = _t_stdin_reads;
+    _t_capture_end(2, 10);
+    check("an approved remove runs: 0, and the file is gone", g_rm == 0 && file_exists(gfile) == 0);
+    check("...after its checkpoint", vec_len(ckpt_names(gckpt)) == 1);
+    check("...the prompt says so", _t_file_has(gerr, "-- checkpointed first ? [y/N]") == 1);
+    check("...one question", g_rm_reads == 1);
+    check("...the trail: approved, launched, executed",
+      _t_count_in(gaudit, "\"result\":\"approved\"") == 1 && _t_count_in(gaudit, "\"result\":\"launched\"") == 1
+      && _t_count_in(gaudit, "\"result\":\"executed\"") == 1);
+    # A declined remove: the file stays, and so does no checkpoint.
+    _t_write_cstr(gfile, "keep me\n");
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("n");
+    g_rm = nl_run_c(str_cat3_cstr("remove ", gfile, ""), Mode.AI_AUTONOMOUS, 0, greports);
+    _t_capture_end(2, 10);
+    check("a declined remove: 126, and the file stays", g_rm == 126 && file_exists(gfile) == 1);
+    check("...leaving no checkpoint behind", vec_len(ckpt_names(gckpt)) == 1);
+    check("...the notice says declined", _t_file_has(gerr, "agnsh: not executed: declined -- report: ") == 1);
+    check("...recorded as denied", _t_count_in(gaudit, "\"result\":\"denied\"") == 1);
+    # Nothing destructive runs without its checkpoint (ruled 2026-11-02): a directory is refused, unasked.
+    xmkdir(gdirx, 448);
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("y");
+    g_rm = nl_run_c(str_cat3_cstr("remove ", gdirx, ""), Mode.AI_AUTONOMOUS, 0, greports);
+    g_rm_reads = _t_stdin_reads;
+    _t_capture_end(2, 10);
+    _t_stdin_set(0);
+    check("a remove that cannot be checkpointed is refused: 126, the directory stays",
+      g_rm == 126 && file_exists(gdirx) == 1);
+    check("...before any prompt", g_rm_reads == 0 && _t_file_has(gerr, "approve:") == 0);
+    check("...saying why", _t_file_has(gerr, "agnsh: not executed: cannot checkpoint ") == 1);
+    xrmdir(gdirx);
+
+    # An approved move: recorded, then run.
+    xunlink(gfile2);
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("y");
+    var g_mv = nl_run_c(str_cat3_cstr(str_cat3_cstr("move ", gfile, " to "), gfile2, ""), Mode.AI_AUTONOMOUS, 0,
+      greports);
+    _t_capture_end(2, 10);
+    check("an approved move runs, checkpointed", g_mv == 0 && file_exists(gfile) == 0
+      && file_exists(gfile2) == 1 && vec_len(ckpt_names(gckpt)) == 2);
+
+    # HUMAN mode: the approval stands in for the mode gate — one question, not two.
+    _t_capture_begin(1, 9, gout);
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("y");
+    var g_mk = nl_run_c(str_cat3_cstr("create directory ", gdirx, ""), Mode.HUMAN, 0, greports);
+    var g_mk_reads = _t_stdin_reads;
+    _t_capture_end(2, 10);
+    _t_capture_end(1, 9);
+    check("HUMAN: an approved mkdir runs after one question", g_mk == 0 && file_exists(gdirx) == 1 && g_mk_reads == 1);
+    check("...and makes no checkpoint: nothing was destroyed", vec_len(ckpt_names(gckpt)) == 2);
+    xrmdir(gdirx);
+
+    # No answer in time: timed_out.
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_wait = 0;
+    var g_to = nl_run_c("copy a to b", Mode.AI_AUTONOMOUS, 0, greports);
+    _t_stdin_wait = 1;
+    _t_capture_end(2, 10);
+    check("an unanswered prompt times out: 126", g_to == 126
+      && _t_file_has(gerr, "agnsh: not executed: approval timed out -- report: ") == 1);
+    check("...recorded as timed_out", _t_count_in(gaudit, "\"result\":\"timed_out\"") == 1);
+
+    # ADMIN on the host runs as `sudo -n`; with no session context it cannot, and says so unasked.
+    if (path_lookup("kill", 4) != 0) {
+        _t_capture_begin(2, 10, gerr);
+        _t_stdin_set("y");
+        var g_ad = nl_run_c("kill process 12345", Mode.AI_AUTONOMOUS, 0, greports);
+        var g_ad_reads = _t_stdin_reads;
+        _t_capture_end(2, 10);
+        _t_stdin_set(0);
+        check("ADMIN that cannot escalate is refused: 126, unasked", g_ad == 126 && g_ad_reads == 0
+          && _t_file_has(gerr, "agnsh: not executed: cannot escalate: no session context") == 1);
+        _t_capture_begin(2, 10, gerr);
+        var g_adi = nl_run_interactive("kill process 12345", Mode.AI_AUTONOMOUS);
+        _t_capture_end(2, 10);
+        check("...and the interactive shell says why", g_adi == 126
+          && _t_file_has(gerr, "agnsh: not executed: cannot escalate: no session context") == 1);
+    }
+
+    # The pieces nl_run_c went through above, called directly.
+    check("approval_input_wait: the harness's seam answers ready by default", approval_input_wait(0) == 1);
+    check("sh_launch_ungated launches with no mode gate", sh_launch_ungated("/bin/false") == 1);
+    var gv = nl_verdict("copy a to b", "AI-AUTO");
+    check("_nl_refuse: LAUNCH_DECLINED, the reason kept, a record written",
+      _nl_refuse(gv, "x-refused", "a reason", "denied") == LAUNCH_DECLINED
+      && streq(load64(gv + NV_REASON), "a reason") == 1 && _t_count_in(gaudit, "\"action\":\"x-refused\"") == 1);
+    check("nl_checkpoint: no group, no checkpoint", streq(nl_checkpoint(0, IntentTag.REMOVE, 0),
+        "the checkpoint could not be started") == 1);
+    var gcg = ckpt_group_new(gckpt);
+    var gra = vec_new();
+    vec_push(gra, "-r");
+    vec_push(gra, gfile);
+    check("nl_checkpoint: a flag is a recursive remove, refused",
+      streq(nl_checkpoint(gcg, IntentTag.REMOVE, Translation_new("rm", gra, "d", 2, "e")), "a recursive remove") == 1);
+    var gma = vec_new();
+    vec_push(gma, gfile);
+    check("nl_checkpoint: a move needs exactly a source and a destination",
+      streq(nl_checkpoint(gcg, IntentTag.MOVE, Translation_new("mv", gma, "d", 2, "e")),
+        "a move of other than one file") == 1);
+    ckpt_group_drop(gcg);
+    _t_capture_begin(2, 10, gerr);
+    _t_stdin_set("n");
+    var gvl = nl_verdict(str_cat3_cstr("create directory ", gdirx, ""), "AI-AUTO");
+    var g_lg = nl_launch_gated(gvl, str_cat3_cstr("/bin/mkdir ", gdirx, ""));
+    _t_capture_end(2, 10);
+    check("nl_launch_gated: a declined line is LAUNCH_DECLINED, and nothing runs",
+      g_lg == LAUNCH_DECLINED && file_exists(gdirx) == 0 && load64(gvl + NV_ASKED) == 1);
+
+    ckpt_prune(gckpt, 0);
+    xrmdir(gckpt);
+    report_prune(greports, 0);
+    xunlink(str_cat3_cstr(greports, "/", "latest.txt"));
+    xrmdir(greports);
+    xunlink(gfile);
+    xunlink(gfile2);
+    xunlink(gerr);
+    xunlink(gout);
+    ckpt_dir_override_set(0);
+    audit_path_override_set(0);
+    xunlink(gaudit);
+    return 0;
+}
+
 fn _t_checkpoint() {
     # Where the store is: the report folder's rule, with its own name (statepaths.cyr).
     check("ckpt_dir_from: XDG state",
@@ -921,12 +1130,13 @@ fn main() {
     check("translate_move cmd", streq(load64(mv_t), "mv") == 1);
     check("translate_move perm", load64(mv_t + 24) == PermissionLevel.USER_WRITE);
 
-    # translate_remove — BLOCKED permission level (caller must approve)
+    # translate_remove — 2.1.3 (ruled 2026-11-02): a plain remove is USER_WRITE, run after an approval
+    # with the file checkpointed; a recursive one stays BLOCKED.
     var rm_intent = Intent_new(IntentTag.REMOVE);
     store64(rm_intent + 8, str_from("/tmp/foo"));
     var rm_t = translate_remove(rm_intent);
     check("translate_remove cmd", streq(load64(rm_t), "rm") == 1);
-    check("translate_remove perm BLOCKED", load64(rm_t + 24) == PermissionLevel.BLOCKED);
+    check("translate_remove perm: a plain remove is USER_WRITE", load64(rm_t + 24) == PermissionLevel.USER_WRITE);
     # translate_remove with recursive flag set
     var rm_r = Intent_new(IntentTag.REMOVE);
     store64(rm_r + 8, str_from("/tmp/dir"));
@@ -934,6 +1144,7 @@ fn main() {
     var rm_rt = translate_remove(rm_r);
     check("translate_remove recursive args has -r and path",
       vec_len(load64(rm_rt + 8)) == 2);
+    check("...and a recursive remove stays BLOCKED", load64(rm_rt + 24) == PermissionLevel.BLOCKED);
 
     # translate_show_processes — no fields needed
     var ps_t = translate_show_processes(Intent_new(IntentTag.SHOW_PROCESSES));
@@ -1578,15 +1789,22 @@ fn main() {
     check("a restricted session that is not root does not claim root", sw_flag == 0);
     check("no context, no warning", sw_none == 0);
     xunlink(sw_err);
-    # execute_command / execute_with_privileges: the escalation path has no caller in the binary
-    # (roadmap 2.1.x — approval-gated exec). The suite pins its refusals and never reaches sudo.
-    var ec_args = vec_new();
-    check("execute_command returns the child's status",
-      execute_command("/bin/true", ec_args, 0) == 0 && execute_command("/bin/false", ec_args, 0) == 1);
-    check("execute_with_privileges refuses a restricted session (-1)",
-      execute_with_privileges(_mock_sec(0, 1, 1), "/bin/true", ec_args, 0) == 0 - 1);
-    check("...and a session without sudo (-2)",
-      execute_with_privileges(_mock_sec(0, 0, 0), "/bin/true", ec_args, 0) == 0 - 2);
+    # security_sudo_line (2.1.3): the line an approved ADMIN line runs as. The suite builds lines and
+    # pins the refusals; it never runs sudo.
+    check("security_sudo_line refuses with no context", security_sudo_line(0, "/bin/true") == 0
+      && streq(security_sudo_why, "no session context") == 1);
+    check("...a restricted session", security_sudo_line(_mock_sec(0, 1, 1), "/bin/true") == 0
+      && streq(security_sudo_why, "a restricted session does not escalate") == 1);
+    check("...and a session without sudo", security_sudo_line(_mock_sec(0, 0, 0), "/bin/true") == 0
+      && streq(security_sudo_why, "sudo is not installed") == 1);
+    var ssl = security_sudo_line(_mock_sec(0, 0, 1), "/bin/true");
+    if (verify_sudo_path("/usr/bin/sudo") == 1) {
+        check("with a root-owned sudo: `<sudo> -n <line>`", streq(ssl, "/usr/bin/sudo -n /bin/true") == 1);
+    } elif (verify_sudo_path("/bin/sudo") == 1) {
+        check("with a root-owned sudo: `<sudo> -n <line>`", streq(ssl, "/bin/sudo -n /bin/true") == 1);
+    } else {
+        check("with no verifiable sudo: refused", ssl == 0 && security_sudo_why != 0);
+    }
 
     # AuditLogger_new / log — write a line to a temp file and read it
     # back. Verifies the file is created with append-mode and a
@@ -2687,84 +2905,32 @@ fn main() {
     check("an unrelated line is not", owl_miss2 == 0);
 
     # --- ApprovalManager_request ---
-    # Reads fd 0 with a raw SYS_READ rather than through read_line, so the
-    # scripted-stdin seam does not reach it; redirect the descriptor instead.
-    var apath = tmp_state_path("agnsh_selftest_stdin");
+    # 2.1.3: it reads its answer through read_line, so the scripted stdin reaches it; _t_gated has the
+    # answers, the stderr prompt and the timeout. Here: what never prompts, and what never approves.
     var apm = ApprovalManager_new();
-    var apargs = vec_new();
-
     # A blocked pattern is refused WITHOUT reading stdin at all — the user is
     # never prompted for something that cannot be approved.
     ApprovalManager_block_pattern(apm, str_from("rm"));
+    _t_stdin_set("y");
     check("a blocked pattern is denied before any prompt",
-      ApprovalManager_request(apm, str_from("rm"), apargs, 0, RiskLevel.LOW) == ApprovalResponse.DENIED);
-
+      ApprovalManager_request(apm, "rm x", 0, RiskLevel.LOW) == ApprovalResponse.DENIED && _t_stdin_reads == 0);
+    # ⛔ FAIL CLOSED: anything but y or Y refuses. An approval prompt that defaults to yes is worse than
+    # no prompt at all.
     var apm2 = ApprovalManager_new();
-    xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
-    _t_write_cstr(apath, "a\n");
-    _t_stdin_from(apath, 8);
-    var ar_a = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
-    _t_stdin_restore(8);
-    _t_capture_end(1, 9);
-    check("approval accepts a", ar_a == ApprovalResponse.APPROVED);
-    check("the prompt names the command", _t_file_has(cappath, "systemctl") == 1);
-    check("the prompt offers the three choices", _t_file_has(cappath, "[a]pprove") == 1);
-
-    _t_write_cstr(apath, "d\n");
-    xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
-    _t_stdin_from(apath, 8);
-    var ar_d = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
-    _t_stdin_restore(8);
-    _t_capture_end(1, 9);
-    check("approval denies on d", ar_d == ApprovalResponse.DENIED);
-
-    _t_write_cstr(apath, "m\n");
-    xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
-    _t_stdin_from(apath, 8);
-    var ar_m = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
-    _t_stdin_restore(8);
-    _t_capture_end(1, 9);
-    check("approval modifies on m", ar_m == ApprovalResponse.MODIFY);
-
-    # ⛔ FAIL CLOSED: a bare Enter, an unrecognised key and EOF must all refuse.
-    # An approval prompt that defaults to yes is worse than no prompt at all.
-    _t_write_cstr(apath, "\n");
-    xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
-    _t_stdin_from(apath, 8);
-    var ar_nl = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
-    _t_stdin_restore(8);
-    _t_capture_end(1, 9);
-    check("a bare Enter denies", ar_nl == ApprovalResponse.DENIED);
-
-    _t_write_cstr(apath, "q\n");
-    xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
-    _t_stdin_from(apath, 8);
-    var ar_q = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
-    _t_stdin_restore(8);
-    _t_capture_end(1, 9);
+    _t_capture_begin(2, 10, cappath);
+    _t_stdin_set("a");
+    var ar_a = ApprovalManager_request(apm2, "systemctl restart x", 0, RiskLevel.HIGH);
+    _t_stdin_set("q");
+    var ar_q = ApprovalManager_request(apm2, "systemctl restart x", 0, RiskLevel.HIGH);
+    _t_stdin_set("Y");
+    var ar_y = ApprovalManager_request(apm2, "systemctl restart x", 0, RiskLevel.HIGH);
+    _t_capture_end(2, 10);
+    _t_stdin_set(0);
+    check("the old [a]pprove key does not approve", ar_a == ApprovalResponse.DENIED);
     check("an unrecognised key denies", ar_q == ApprovalResponse.DENIED);
-
-    _t_write_cstr(apath, "");
-    xunlink(cappath);
-    _t_capture_begin(1, 9, cappath);
-    _t_stdin_from(apath, 8);
-    var ar_eof = ApprovalManager_request(apm2, str_from("systemctl"), apargs, 0, RiskLevel.HIGH);
-    _t_stdin_restore(8);
-    _t_capture_end(1, 9);
-    check("EOF times out rather than approving", ar_eof == ApprovalResponse.TIMED_OUT);
-    check("TIMED_OUT is not APPROVED", ApprovalResponse.TIMED_OUT != ApprovalResponse.APPROVED);
-
-    # An auto-approving manager still short-circuits only LOW risk.
-    var apm3 = ApprovalManager_new();
-    store64(apm3 + 8, 1);
-    check("auto-approve applies to LOW risk without reading stdin",
-      ApprovalManager_request(apm3, str_from("ls"), apargs, 0, RiskLevel.LOW) == ApprovalResponse.APPROVED);
-    xunlink(apath);
+    check("capital Y approves", ar_y == ApprovalResponse.APPROVED);
+    check("TIMED_OUT and NO_ANSWER are not APPROVED", ApprovalResponse.TIMED_OUT != ApprovalResponse.APPROVED
+      && ApprovalResponse.NO_ANSWER != ApprovalResponse.APPROVED);
 
     # ================================================================
     # 1.9.10 — history persistence, asserted on disk
@@ -3150,10 +3316,17 @@ fn main() {
     check("...and its block is the 1.9.x report",
       str_eq_cstr(load64(nv + NV_BLOCK), "Intent: 0  Command: ls\n  Risk: [LOW]\n") == 1);
     nv = nl_verdict("copy a to b", "AI-AUTO");
-    check("a user-write line does not run yet", load64(nv + NV_RUN) == 0 && load64(nv + NV_STATUS) == 126);
-    check("...because it needs approval", streq(load64(nv + NV_REASON), "approval required") == 1);
-    check("...and its block says it was not executed",
-      str_contains_cstr(load64(nv + NV_BLOCK), "Approval required -- not executed") == 1);
+    check("a user-write line runs after an approval (2.1.3)", load64(nv + NV_RUN) == 1 && load64(nv + NV_GATED) == 1);
+    check("...its --dry-run status is 126: no approval there", load64(nv + NV_STATUS) == 126);
+    check("...and its block says it asks first",
+      str_contains_cstr(load64(nv + NV_BLOCK), "Approval required -- asks before it runs") == 1);
+    nv = nl_verdict("show me all files", "AI-AUTO");
+    check("a read-only line is not gated", load64(nv + NV_GATED) == 0);
+    nv = nl_verdict("install vim", "AI-AUTO");
+    check("an admin line is gated too", load64(nv + NV_RUN) == 1 && load64(nv + NV_GATED) == 1);
+    nv = nl_verdict("remove -r /tmp/agnsh_selftest_dir", "AI-AUTO");
+    check("a recursive remove is BLOCKED, never gated", load64(nv + NV_RUN) == 0
+      && streq(load64(nv + NV_REASON), "blocked") == 1);
     nv = nl_verdict("rm -rf /tmp/foo", "AI-AUTO");
     check("a blocked line is 126, blocked",
       load64(nv + NV_STATUS) == 126 && streq(load64(nv + NV_REASON), "blocked") == 1);
@@ -3249,15 +3422,17 @@ fn main() {
     # A line that does not run: stdout empty, one stderr line naming the reason and the report.
     _t_capture_begin(1, 9, capout);
     _t_capture_begin(2, 10, caperr);
+    _t_stdin_set(0);
     nls = nl_run_c("copy a to b", Mode.AI_AUTONOMOUS, 0, nldir);
     _t_capture_end(2, 10);
     _t_capture_end(1, 9);
-    check("a line that does not run exits 126", nls == 126);
+    check("a gated line with no answer exits 126", nls == 126);
     check("...leaving stdout empty", _t_slurp(capout) == 0);
-    check("...with one stderr line naming the reason and the report",
-      _t_file_has(caperr, "agnsh: not executed: approval required -- report: ") == 1 && _t_count_nl(caperr) == 1);
+    check("...the prompt on stderr, then the reason and the report",
+      _t_file_has(caperr, "approve: ") == 1 && _t_file_has(caperr, "(no answer)") == 1
+      && _t_file_has(caperr, "agnsh: not executed: approval required, no answer -- report: ") == 1);
     check("...whose report records the input", _t_file_has(nllatest, "input: copy a to b") == 1);
-    check("...and the result", _t_file_has(nllatest, "result: not executed: approval required") == 1);
+    check("...and the result", _t_file_has(nllatest, "result: not executed: approval required, no answer") == 1);
     # A line that runs: the program's output on stdout, nothing from agnsh on stderr, its status.
     _t_capture_begin(1, 9, capout);
     _t_capture_begin(2, 10, caperr);
@@ -3283,10 +3458,15 @@ fn main() {
     check("interactive NL prints the report and runs the command", nli == 0
       && _t_file_has(capout, "Intent: 0  Command: ls") == 1 && _t_file_has(capout, "VERSION") == 1);
     _t_capture_begin(1, 9, capout);
+    _t_capture_begin(2, 10, caperr);
+    _t_stdin_set(0);
     nli = nl_run_interactive("copy a to b", Mode.AI_AUTONOMOUS);
+    _t_capture_end(2, 10);
     _t_capture_end(1, 9);
-    check("interactive NL does not run what needs approval", nli == 126
-      && _t_file_has(capout, "Approval required -- not executed") == 1);
+    check("interactive NL asks before an approval-tier line, and no answer is 126", nli == 126
+      && _t_file_has(capout, "Approval required -- asks before it runs") == 1
+      && _t_file_has(caperr, "(no answer)") == 1);
+    check("...the prompt's answer is not repeated", _t_file_has(caperr, "agnsh: not executed") == 0);
     # 2.0.2 — a restricted session (agnsh as root on a Linux host) runs no natural language.
     var rsaudit = tmp_state_path("agnsh_selftest_rsaudit");
     xunlink(rsaudit);
@@ -3301,8 +3481,11 @@ fn main() {
     check("nl_audit_denied records that refusal as denied",
       nl_audit_denied(nv) == 1 && _t_count_in(rsaudit, "\"result\":\"denied\"") == 1);
     nv = nl_verdict("copy a to b", "AI-AUTO");
+    check("restricted: an approval-tier line is refused too, before any prompt",
+      streq(load64(nv + NV_REASON), NL_RESTRICTED) == 1 && load64(nv + NV_DENIED) == 1 && load64(nv + NV_RUN) == 0);
+    nv = nl_verdict("rm -rf /tmp/foo", "AI-AUTO");
     check("restricted: a line that would not run anyway keeps its reason",
-      streq(load64(nv + NV_REASON), "approval required") == 1 && load64(nv + NV_DENIED) == 0
+      streq(load64(nv + NV_REASON), "blocked") == 1 && load64(nv + NV_DENIED) == 0
       && str_contains_cstr(load64(nv + NV_BLOCK), "Restricted") == 0);
     check("...and nl_audit_denied writes nothing for it", nl_audit_denied(nv) == 0
       && _t_count_in(rsaudit, "\"result\":\"denied\"") == 1);
@@ -3552,6 +3735,7 @@ fn main() {
     xunlink(hlog);
 
     _t_checkpoint();
+    _t_gated();
 
     return report();
 }

@@ -80,20 +80,20 @@ when combined or reordered:
 - Short form: per-character scan for `r`, `f`, `R` in any `-` prefixed arg
 - `--` (end-of-flags marker): always flagged as dangerous
 
-### 4. Approval UI Hardening — ⚠ NOT IN THE SHIPPED BINARY
+### 4. Approval UI Hardening — ✅ Active since 2.1.3
 
-`print_str_safe` (which does strip control characters) is called only from
-`ApprovalManager_request` in `src/approval.cyr`, whose only caller is
-`src/session.cyr` — **not in the binary's include graph**. There is no approval
-prompt at runtime.
+Since 2.1.3 an approval-tier natural-language line asks before it runs
+([ADR-011](../adr/011-approval-gated-exec.md)).
 
-⚠ **The confirmation that DOES ship is not hardened.** In `human` / `strict`
-mode a program launch is confirmed by `verb_confirm` (`src/sanitize.cyr`), which
-writes the action string straight to the terminal with no stripping. A path
-containing an ESC byte can therefore style or reposition the confirmation text.
-The path itself has already passed `is_safe_path`, which rejects shell
-metacharacters and traversal but **not** control bytes — so this is a real, if
-narrow, gap. Tracked for the approval wire-up (roadmap 2.1.x — approval-gated exec).
+- **The prompt** (`ApprovalManager_request`, `src/approval.cyr`) writes to stderr. It strips control
+  bytes from the line it shows (`strip_control_chars`), so a file name carrying an ESC sequence
+  cannot restyle or reposition what the user is approving.
+- **Its answer** is one line read through `read_line`, so a typed-ahead line is not lost. `y` or `Y`
+  approves, and everything else declines. EOF (no answer) and, on a Linux host, 300 seconds with no
+  line (timed out) decline too.
+- **The mode-gate confirmation** (`verb_confirm`, `src/sanitize.cyr`) strips control bytes the same
+  way since 2.1.3. Until then it wrote the action straight to the terminal. `is_safe_path` rejects
+  shell metacharacters and traversal but not control bytes, so that was a real, if narrow, gap.
 
 ### 5. Audit Log Integrity
 
@@ -115,7 +115,8 @@ become U+FFFD, and overlongs and surrogates are rejected.
 - *parse-time* (the shell's decision): `proposed`, `needs_approval`, `blocked`,
   `rejected_safety`, `needs_llm`, `needs_exec`
 - *exec-time* (what it actually did, 1.9.2): `launched`, `executed`, `failed`,
-  `error`, `denied`, each with an `exit_code` field (JSON `null` when none applies)
+  `error`, `denied`, and since 2.1.3 `approved` and `timed_out` — each with an
+  `exit_code` field (JSON `null` when none applies)
 
 A `launched` record is written **before** the child starts, so a program that
 hangs, kills the shell, or reboots the machine still leaves a trace — a
@@ -131,13 +132,16 @@ longer ones. The writer now seeks to the end on agnos before writing, and refuse
 write if the seek fails (a lost record is recoverable; one written over the log
 is not). Linux hosts were never affected — `O_APPEND` is honoured there.
 
-### 6. Checkpoint / Undo — ⚠ NOT IN THE SHIPPED BINARY
+### 6. Checkpoint / Undo — ✅ checkpoint since 2.1.3, ⚠ `undo` next
 
 The checkpoint store (`src/checkpoint.cyr`, rewritten in 2.0.3 —
-[ADR-009](../adr/009-checkpoint-store.md)) is compiled in, but **nothing calls it
-yet**: no command is checkpointed, there is no `undo` builtin, and its folder is
-never created. **Do not rely on any rollback guarantee** until approval-gated exec
-and `undo` (roadmap 2.1.x). What it will guarantee when called:
+[ADR-009](../adr/009-checkpoint-store.md)) runs before every approved natural-language remove or move
+(2.1.3, [ADR-011](../adr/011-approval-gated-exec.md)). It runs before the prompt, so a file it cannot
+save refuses the command unasked, and a declined or failed command leaves no checkpoint behind.
+⚠ **There is no `undo` builtin yet** (roadmap 2.1.x — `undo`): **do not rely on rollback** until
+then. `cp` onto an existing file and typed shell lines are not checkpointed.
+
+What the store guarantees:
 
 - **A private folder** — `$XDG_STATE_HOME/agnoshi/checkpoints/` (default
   `~/.local/state/agnoshi/checkpoints/`; `/.agnsh_checkpoints/` on AGNOS), under
@@ -147,20 +151,25 @@ and `undo` (roadmap 2.1.x). What it will guarantee when called:
   again if their write fails.
 - **Only regular files are saved**, up to 64 MiB. The source is opened read-only,
   non-blocking and without following a symlink, then re-checked on the descriptor.
-  A directory, symlink, device or larger file is refused, and the caller told.
+  A directory, symlink, device or larger file is refused, and the command with it.
 - **A restore never overwrites.** It creates exclusively, never through a symlink,
   and drops setuid, setgid and sticky from the saved permission bits.
 - **The newest 100 groups are kept**, one group per command.
 
-### 7. Privilege Escalation — ⚠ NOT IN THE SHIPPED BINARY
+### 7. Privilege Escalation — ✅ `sudo -n` after an approval, since 2.1.3
 
-**agnsh never escalates privileges.** Nothing in the binary invokes `sudo`.
-Since 2.0.2 `src/security.cyr` is compiled in, but its escalation half —
-`execute_with_privileges` (`sudo -n`) and the sudo path/root-ownership
-re-verification at escalation time (`verify_sudo_path`) — has no caller until
-approval-gated execution (roadmap 2.1.x). When it gets one: `execute_command`
-launches through lib `exec_vec` with an empty environment, a second host
-launcher, which ADR-008 § 3 rules out.
+An **approved ADMIN natural-language line** on a Linux host runs as `<sudo> -n <line>`
+(`security_sudo_line`, `src/security.cyr`).
+- **sudo is re-verified** as root-owned at the moment of escalation (`verify_sudo_path`), not trusted
+  from the session's start.
+- **`-n` means agnsh never collects a password**: a sudo that needs one fails, and the outcome
+  record says `failed`.
+- **The line goes through the one host launcher** (`host_exec`), with agnsh's environment.
+  `execute_with_privileges` and `execute_command`, its second, empty-environment launcher, are
+  deleted.
+- **Nothing else invokes sudo.** A restricted session (root) runs no natural-language line, so it
+  never escalates.
+- **agnos** has no sudo and no uid model, so an approved ADMIN line runs there as agnsh does.
 
 ### 7a. Restricted sessions — root on a Linux host — ✅ Active since 2.0.2
 
@@ -247,7 +256,7 @@ owns your audit trail. **It does not make `/tmp` a safe home for an audit log**:
 a same-uid process is unaffected, and the directory is still world-writable. Treat
 the fallback as degraded operation for a broken environment, not a supported
 configuration.
-| `~/.local/state/agnoshi/checkpoints/` | 0700 / entries 0600 | ⚠ Never created yet — the store (2.0.3) has no caller |
+| `~/.local/state/agnoshi/checkpoints/` | 0700 / entries 0600 | Created by the first approved NL remove or move (2.1.3) |
 | `/usr/local/bin/agnsh` | 0755 | Binary — exec, not writable by users |
 
 ## What Can Still Go Wrong
@@ -261,13 +270,13 @@ configuration.
 - Alias expansion — ⚠ `src/aliases.cyr` is **not compiled**, so neither the risk
   nor the metacharacter mitigation described in earlier revisions of this guide
   exists today.
-- **Typed shell lines skip the permission tiers.** Since 2.0.0 the
-  natural-language path executes (SAFE and READ_ONLY only), so its
-  classification is enforced. A user who types a program's name or
+- **Typed shell lines skip the permission tiers.** The natural-language path
+  enforces its classification: SAFE and READ_ONLY run (2.0.0), and the higher
+  tiers run only after an approval (2.1.3). A user who types a program's name or
   `run /abs/path` is gated by `is_safe_path`, the mode confirmation, and — for a
   line the classifier calls BLOCKED — a confirmation in every mode (ADR-008). The
-  other tiers do not gate typed lines: doing so before approval exists would
-  stop agnos's kriya file verbs. Approval-gated exec is roadmap 2.1.x.
+  other tiers do not gate typed lines: they are the user's own commands, and
+  gating them would stop agnos's kriya file verbs.
 - Race conditions between permission check and execution (TOCTOU) if the
   filesystem is mutated by another process. Full TOCTOU protection would
   require inode-locking at the kernel layer.

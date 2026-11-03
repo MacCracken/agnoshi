@@ -252,6 +252,14 @@ fn sh_launch_line(path, mode) {
         audit_exec_ctx(path, "denied", AUDIT_NO_EXIT);
         return LAUNCH_DECLINED;
     }
+    return sh_launch_ungated(path);
+}
+
+# sh_launch_line past its gate: the launch itself, with its `launched` and outcome records. Called
+# directly only by a line that has already been asked about — approval-gated NL exec (2.1.3,
+# nlexec.cyr), whose approval prompt asks in every mode and so stands in for the mode gate rather
+# than asking a second time. Same returns as sh_launch_line.
+fn sh_launch_ungated(path) {
     # ⚠ HOST ONLY: probe before claiming a launch. The exec-surface vocabulary
     # defines `error` as "the launch itself failed (missing binary, exec
     # refused)" and `failed` as "the child ran to completion, non-zero exit" —

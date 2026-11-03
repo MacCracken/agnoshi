@@ -6,6 +6,7 @@ enum ApprovalResponse {
     NEED_INFO = 4;
     MODIFY = 5;
     TIMED_OUT = 6;
+    NO_ANSWER = 7;      # 2.1.3: stdin ended before an answer (a `-c` with nothing on stdin)
 }
 enum RiskLevel {
     LOW = 0;
@@ -63,8 +64,25 @@ fn ApprovalManager_is_blocked(self, cmd) {
 fn ApprovalManager_block_pattern(self, pattern) {
     vec_push(load64(self + 16), pattern);
 }
-fn ApprovalManager_request(self, cmd, args, argc, risk) {
-    if (ApprovalManager_is_blocked(self, cmd) == 1) {
+# Ask whether `action` — the command line about to run, a cstring — may run. `note` is a cstring the
+# prompt ends with (what undo can do about it), or 0.
+#
+# ⭐ 2.1.3 — THE PROMPT HAS A CALLER: approval-gated NL exec (nlexec.cyr, ADR-011) asks here before a
+# USER_WRITE, SYSTEM_WRITE or ADMIN translation runs, in every mode. Until 2.1.3 its only caller was
+# session.cyr, outside the binary, and the prompt wrote to stdout, read fd 0 past read_line's carry
+# buffer (a typed-ahead line was lost to it), returned TIMED_OUT for EOF, and offered a [m]odify that
+# nothing implemented.
+#
+# The prompt goes to stderr — the shell talking, as verb_confirm's has since 2.0.0 (ADR-008) — and the
+# answer is one line through read_line: y or Y approves; anything else, a bare Enter included, is
+# DENIED. EOF is NO_ANSWER, and no line within `timeout_seconds` is TIMED_OUT (the host's poll;
+# approval_input_wait in agnsh.cyr).
+fn ApprovalManager_request(self, action, note, risk) {
+    if (action == 0) {
+        verb_out_cstr("  cannot render the approval prompt -- declining\n");
+        return ApprovalResponse.DENIED;
+    }
+    if (ApprovalManager_is_blocked(self, str_from(action)) == 1) {
         return ApprovalResponse.DENIED;
     }
     if (load64(self + 8) == 1) {
@@ -72,26 +90,35 @@ fn ApprovalManager_request(self, cmd, args, argc, risk) {
             return ApprovalResponse.APPROVED;
         }
     }
-    syscall(SYS_WRITE, 1, "\n", 1);
-    syscall(SYS_WRITE, 1, risk_icon(risk), strlen(risk_icon(risk)));
-    syscall(SYS_WRITE, 1, " Approval required: ", 20);
-    print_str_safe(cmd);
-    for (var i = 0; i < argc; i = i + 1) {
-        syscall(SYS_WRITE, 1, " ", 1);
-        print_str_safe(vec_get(args, i));
+    verb_out_cstr("  \xE2\x9A\xA0 ");     # two-space indent + U+26A0 WARNING SIGN, as verb_confirm
+    verb_out_cstr(risk_icon(risk));
+    verb_out_cstr(" approve: ");
+    # Control bytes stripped (the H5 mitigation, print_str_safe's): an escape sequence in a file name
+    # must not redraw the line the user is approving.
+    eprint_str(strip_control_chars(str_from(action)));
+    if (note != 0) {
+        verb_out_cstr(" -- ");
+        verb_out_cstr(note);
     }
-    syscall(SYS_WRITE, 1, "\n", 1);
-    syscall(SYS_WRITE, 1, "  [a]pprove  [d]eny  [m]odify: ", 31);
-    var buf[64];
-    var n = syscall(SYS_READ, 0, &buf, 63);
-    if (n <= 0) { return ApprovalResponse.TIMED_OUT; }
-    var ch = load8(&buf);
-    if (ch == 97) { return ApprovalResponse.APPROVED; }
-    if (ch == 65) { return ApprovalResponse.APPROVED; }
-    if (ch == 100) { return ApprovalResponse.DENIED; }
-    if (ch == 68) { return ApprovalResponse.DENIED; }
-    if (ch == 109) { return ApprovalResponse.MODIFY; }
-    if (ch == 77) { return ApprovalResponse.MODIFY; }
-    if (ch == 10) { return ApprovalResponse.DENIED; }
+    verb_out_cstr(" ? [y/N] ");
+    if (approval_input_wait(load64(self) * 1000) == 0) {
+        verb_out_cstr("(timed out)");
+        verb_out_nl();
+        return ApprovalResponse.TIMED_OUT;
+    }
+    var rb[64];
+    var n = read_line(&rb, 64);
+    if (n < 0) {
+        verb_out_cstr("(no answer)");
+        verb_out_nl();
+        return ApprovalResponse.NO_ANSWER;
+    }
+    if (n > 0) {
+        var c = load8(&rb);
+        if (c == 121) { return ApprovalResponse.APPROVED; }    # 'y'
+        if (c == 89) { return ApprovalResponse.APPROVED; }     # 'Y'
+    }
+    verb_out_cstr("  (declined)");
+    verb_out_nl();
     return ApprovalResponse.DENIED;
 }

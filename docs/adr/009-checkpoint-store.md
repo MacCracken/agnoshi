@@ -93,7 +93,8 @@ Two things were settled first:
 
 - **Built, not run:** the store compiles on agnos, where its `stat` calls take the path length and
   there are no permission bits and no `fchmod`. It does not run there until approval-gated exec
-  calls it.
+  calls it. *(2.1.3: it runs there now, behind an approved NL remove or move, and
+  `scripts/agnos-qemu-test.py` reads its entry back off the disk image — [ADR-011](011-approval-gated-exec.md).)*
 - **Relative paths:** agnos has no working directory yet (roadmap 2.2.x), so a relative path is
   taken from `/`.
 
@@ -102,8 +103,11 @@ Two things were settled first:
 - **New state on disk:** it is bounded — 100 groups, 64 MiB per file — and private.
 - **No caller in 2.0.3.** Approval-gated exec (roadmap 2.1.x) checkpoints before every REMOVE and
   MOVE, and the `undo` builtin calls `ckpt_undo`. The store's agnos arm is first exercised there.
+  *2.1.3: approval-gated exec is its caller (ADR-011), and it drops a group whose command was
+  declined or failed (`ckpt_group_drop`). `undo` is the next slot.*
 - **Directories are not recoverable.** Before an `rm -r` can be approved, approval-gated exec must
   decide what a refused checkpoint means: refuse the command, or say that undo will not restore it.
+  *Ruled 2026-11-02 (ADR-011): refuse the command. A recursive remove stays BLOCKED.*
 - **Order is the wall clock's.**
   - agnos's clock has whole-second resolution, so two groups made in the same second by different
     processes sort by pid.

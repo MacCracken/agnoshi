@@ -249,8 +249,9 @@ fn Session_execute_assisted(self, input) {
       vec_len(load64(translation + 8)), load64(translation + 16));
     if (perm_requires_approval(load64(translation + 24)) == 1) {
         var risk = risk_from_permission(load64(translation + 24));
-        var response = ApprovalManager_request(load64(self + 16),
-          load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
+        # 2.1.3: the prompt takes the line to show and a note (ADR-011). This module is outside the
+        # binary; nlexec.cyr's nl_launch_gated is the caller that runs.
+        var response = ApprovalManager_request(load64(self + 16), load64(translation), 0, risk);
         if (response != ApprovalResponse.APPROVED && response != ApprovalResponse.APPROVED_ONCE) {
             ui_show_info("Command denied.");
             return 0;
@@ -278,8 +279,7 @@ fn Session_execute_strict(self, input) {
     var intent = Interpreter_parse(load64(self + 8), input);
     var translation = Interpreter_translate(load64(self + 8), intent);
     var risk = risk_from_permission(load64(translation + 24));
-    var response = ApprovalManager_request(load64(self + 16),
-      load64(translation), load64(translation + 8), vec_len(load64(translation + 8)), risk);
+    var response = ApprovalManager_request(load64(self + 16), load64(translation), 0, risk);
     if (response != ApprovalResponse.APPROVED && response != ApprovalResponse.APPROVED_ONCE) {
         ui_show_info("Command denied.");
         return 0;

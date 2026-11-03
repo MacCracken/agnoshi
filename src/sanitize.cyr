@@ -739,7 +739,10 @@ fn verb_confirm(action_cstr): i64 {
         return 0;
     }
     verb_out_cstr("  \xE2\x9A\xA0 ");   # two-space indent + U+26A0 WARNING SIGN
-    verb_out_cstr(action_cstr);
+    # 2.1.3: control bytes stripped (H5), as the approval prompt does. is_safe_path rejects shell
+    # metacharacters and traversal but not control bytes, so a path with an ESC in it could restyle
+    # or reposition the line the user is confirming.
+    eprint_str(strip_control_chars(str_from(action_cstr)));
     verb_out_cstr(" ? [y/N] ");
     if (verb_read_yes() == 1) { return 1; }
     verb_out_cstr("  (aborted)");

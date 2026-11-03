@@ -55,7 +55,7 @@ include "src/security.cyr"
 include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 2.1.2";
+var VERSION_STR = "agnoshi 2.1.3";
 
 fn print_version() {
     println(VERSION_STR);
@@ -221,6 +221,23 @@ fn read_line(buf, maxlen) {
     }
     store8(buf + i, 0);
     return i;
+}
+
+# Wait up to `timeout_ms` for stdin to have a line for read_line (2.1.3, the approval prompt): 1 when a
+# line is already in the carry buffer or fd 0 is readable — at EOF too, which read_line then reports —
+# and 0 when the time passes first. agnos has no poll, so there the read itself waits, as long as it
+# takes (1 at once).
+fn approval_input_wait(timeout_ms) {
+    if (rl_pos < rl_len) { return 1; }
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var r = fd_wait_ready(0, 0, timeout_ms);
+    while (r == 0 - 4) { r = fd_wait_ready(0, 0, timeout_ms); }    # EINTR: wait again
+    if (r == 0) { return 0; }
+    return 1;           # readable, or an fd 0 poll refuses: read_line says which
+    #endif
 }
 
 #ifdef CYRIUS_TARGET_AGNOS

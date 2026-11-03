@@ -1,6 +1,7 @@
 # ADR-008: The NL Execution Contract (2.0.0)
 
 **Status:** Accepted (2026-09-23, for 2.0.0). Amended 2026-09-26 for 2.0.2: restricted sessions (§ 1).
+Amended 2026-11-02 for 2.1.3: the approval tiers run after an approval (§ 1, [ADR-011](011-approval-gated-exec.md)).
 **Builds on:** [ADR-007](007-input-classification.md) — which lines are shell and which are natural
 language. This ADR settles what happens once a natural-language line is understood.
 
@@ -35,6 +36,13 @@ first (roadmap § Open decisions, "NL exec contract"), and each ruling has conse
   and `assist` run directly. `-c` defaults to `auto`, as it always has.
 - Confirmation prompts go to **stderr**, for `run` as well — they are the shell talking, not the
   program.
+
+> **Amendment, 2.1.3 — the approval tiers run after an approval** (ruled 2026-11-02;
+> [ADR-011](011-approval-gated-exec.md)). USER_WRITE, SYSTEM_WRITE and ADMIN translations ask
+> `[y/N]` on stderr in every mode — the prompt stands in for the mode gate — and run on a yes. A plain
+> remove is USER_WRITE and a recursive one stays BLOCKED. A remove or move is checkpointed first, and
+> a file that cannot be checkpointed refuses the command. On the host, ADMIN runs as `sudo -n`. With
+> nothing on stdin, `-c` exits 126 as before. The bullet above is history.
 
 > **Amendment, 2.0.2 — a restricted session runs no natural language** (ruled 2026-09-26). agnsh
 > running as root on a Linux host — uid or euid 0 — is *restricted* (`src/security.cyr`): it reports

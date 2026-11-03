@@ -16,7 +16,9 @@ enum NlVerdict {
     NV_REASON = 32;         # cstring: why it may not, when NV_RUN is 0
     NV_STATUS = 40;         # the -c status when it does not run: EXIT_NOT_RUN / EXIT_NOTHING_TO_RUN
     NV_DENIED = 48;         # 1 when the shell refused a line that would have run (a restricted session)
-    NV_BYTES = 56;
+    NV_GATED = 56;          # 2.1.3: 1 when NV_RUN's line runs only after an approval (ADR-011)
+    NV_ASKED = 64;          # 2.1.3: 1 once the approval prompt was drawn, which shows its own answer
+    NV_BYTES = 72;
 }
 
 # Why a restricted session runs nothing (security.cyr) — the reason nl_verdict gives.
@@ -46,6 +48,8 @@ fn nl_verdict(input_cstr, mode_label) {
     store64(v + NV_REASON, 0);
     store64(v + NV_STATUS, 0);
     store64(v + NV_DENIED, 0);
+    store64(v + NV_GATED, 0);
+    store64(v + NV_ASKED, 0);
     var sb = str_builder_new();
     var interp = Interpreter_new();
     var intent = Interpreter_parse(interp, str_from(input_cstr));
@@ -77,14 +81,15 @@ fn nl_verdict(input_cstr, mode_label) {
     # understood USER_WRITE line (`cp`, `mv`, `mkdir`) that does not must say so too — until then only
     # the HIGH tiers carried the line, because nothing ran at all. SHELL_COMMAND is the exception: it
     # is the fall-through for a line the parser did not understand, and approval would not make a
-    # non-program run, so its MED tier gets the Hint below instead. Approval-gated exec is roadmap 2.1.x.
+    # non-program run, so its MED tier gets the Hint below instead. Since 2.1.3 the approval tiers run
+    # after an approval (ADR-011), so their line says the prompt comes first.
     var risk_high = 0;
     if (perm == PermissionLevel.SYSTEM_WRITE || perm == PermissionLevel.ADMIN) { risk_high = 1; }
     if (perm == PermissionLevel.USER_WRITE && tag != IntentTag.SHELL_COMMAND) { risk_high = 1; }
     if (perm == PermissionLevel.BLOCKED) {
         str_builder_add_cstr(sb, "  WARNING: BLOCKED -- not executed, and there is no override\n");
     } elif (risk_high == 1) {
-        str_builder_add_cstr(sb, "  Approval required -- not executed (no approval prompt in this build)\n");
+        str_builder_add_cstr(sb, "  Approval required -- asks before it runs\n");
     }
     # Error-recovery hints: a parse that succeeded into something that is not a runnable command.
     # Without one the user reads `Command: echo / Risk: [LOW]` and believes it ran.
@@ -123,9 +128,11 @@ fn nl_verdict(input_cstr, mode_label) {
     if (tag == IntentTag.SHELL_COMMAND) {
         return _nv_not_run(v, sb, "not a known command", EXIT_NOTHING_TO_RUN);
     }
-    if (perm >= PermissionLevel.USER_WRITE) {
-        return _nv_not_run(v, sb, "approval required", EXIT_NOT_RUN);
-    }
+    # ⭐ 2.1.3 — THE APPROVAL TIERS RUN AFTER AN APPROVAL (ADR-011): gated here, not refused. Until
+    # 2.1.3 every USER_WRITE, SYSTEM_WRITE and ADMIN line stopped at `approval required`. The kinds
+    # below that cannot run at all keep their own reasons.
+    var gated = 0;
+    if (perm >= PermissionLevel.USER_WRITE) { gated = 1; }
     if (tag == IntentTag.QUESTION) { return _nv_not_run(v, sb, "a question", EXIT_NOTHING_TO_RUN); }
     if (tag == IntentTag.PIPELINE) {
         if (nl_is_pipe_line(input_cstr) == 1) {
@@ -153,6 +160,9 @@ fn nl_verdict(input_cstr, mode_label) {
     }
     store64(v + NV_BLOCK, str_builder_build(sb));
     store64(v + NV_RUN, 1);
+    store64(v + NV_GATED, gated);
+    # What --dry-run reports for a gated line: it gives no approval, so the line is understood, not run.
+    if (gated == 1) { store64(v + NV_STATUS, EXIT_NOT_RUN); }
     return v;
 }
 
@@ -247,7 +257,88 @@ fn nl_launch(v, mode) {
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return LAUNCH_DECLINED;
     }
+    if (load64(v + NV_GATED) == 1) { return nl_launch_gated(v, line); }
     return sh_launch_line(line, mode);
+}
+
+# A gated line refused before it launched: why (NV_REASON, for -c's notice and report), and the exec
+# record `label` — `denied`, or `timed_out` when nobody answered in time. Returns LAUNCH_DECLINED.
+fn _nl_refuse(v, line, reason, label) {
+    store64(v + NV_REASON, reason);
+    audit_exec_ctx(line, label, AUDIT_NO_EXIT);
+    return LAUNCH_DECLINED;
+}
+
+# Checkpoint what an approval-tier REMOVE or MOVE is about to destroy, into group `g` (ADR-009,
+# ADR-011): each file a remove names, or the move. Returns 0, or why not — and then the command does
+# not run: nothing destructive runs without its checkpoint (ruled 2026-11-02).
+fn nl_checkpoint(g, tag, tr) {
+    if (g == 0) { return "the checkpoint could not be started"; }
+    var args = load64(tr + 8);
+    if (args == 0) { return "nothing to checkpoint"; }
+    if (tag == IntentTag.MOVE) {
+        if (vec_len(args) != 2) { return "a move of other than one file"; }
+        var mwhy = ckpt_move(g, vec_get(args, 0), vec_get(args, 1));
+        if (mwhy != 0) { return str_cat3_cstr("cannot checkpoint the move: ", mwhy, ""); }
+        return 0;
+    }
+    for (var i = 0; i < vec_len(args); i = i + 1) {
+        var a = vec_get(args, i);
+        # A flag: translate_remove's -r, a recursive remove — BLOCKED, so it never gets here.
+        if (load8(a) == 45) { return "a recursive remove"; }
+        var why = ckpt_remove(g, a);
+        if (why != 0) { return str_cat3_cstr(str_cat3_cstr("cannot checkpoint ", a, ": "), why, ""); }
+    }
+    return 0;
+}
+
+# ⭐ 2.1.3 — an approval-tier line (USER_WRITE, SYSTEM_WRITE, ADMIN; ADR-011), in every mode:
+#   1. ADMIN on the host runs as `sudo -n <line>` (security_sudo_line), shown as such in the prompt.
+#   2. A REMOVE or MOVE checkpoints what it would destroy, BEFORE asking — a file that cannot be
+#      checkpointed refuses the command, so nobody is asked about a line that will not run.
+#   3. The approval prompt (ApprovalManager_request). It stands in for the mode gate — one question,
+#      not two — and BLOCKED never gets here (nl_verdict).
+#   4. An `approved` record, then the launch with its own `launched` and outcome records.
+# A command that does not run, or fails, leaves no checkpoint behind (ckpt_group_drop). Returns the
+# exit status, LAUNCH_DECLINED with NV_REASON saying why, or LAUNCH_FAILED.
+fn nl_launch_gated(v, line) {
+    var tr = load64(v + NV_TRANSLATION);
+    var perm = load64(tr + 24);
+    var run_line = line;
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (perm == PermissionLevel.ADMIN) {
+        run_line = security_sudo_line(security_ctx, line);
+        if (run_line == 0) {
+            return _nl_refuse(v, line, str_cat3_cstr("cannot escalate: ", security_sudo_why, ""), "denied");
+        }
+    }
+    #endif
+    var g = 0;
+    var note = 0;
+    var tag = load64(v + NV_TAG);
+    if (tag == IntentTag.REMOVE || tag == IntentTag.MOVE) {
+        g = ckpt_group_new(ckpt_dir());
+        var why = nl_checkpoint(g, tag, tr);
+        if (why != 0) {
+            ckpt_group_drop(g);
+            return _nl_refuse(v, run_line, why, "denied");
+        }
+        note = "checkpointed first";
+    }
+    store64(v + NV_ASKED, 1);
+    var ans = ApprovalManager_request(ApprovalManager_new(), run_line, note, risk_from_permission(perm));
+    if (ans != ApprovalResponse.APPROVED) {
+        ckpt_group_drop(g);
+        if (ans == ApprovalResponse.TIMED_OUT) { return _nl_refuse(v, run_line, "approval timed out", "timed_out"); }
+        if (ans == ApprovalResponse.NO_ANSWER) {
+            return _nl_refuse(v, run_line, "approval required, no answer", "denied");
+        }
+        return _nl_refuse(v, run_line, "declined", "denied");
+    }
+    audit_exec_ctx(run_line, "approved", AUDIT_NO_EXIT);
+    var code = sh_launch_ungated(run_line);
+    if (code != 0) { ckpt_group_drop(g); }
+    return code;
 }
 
 # The interactive NL path: print the report block — what the user reads before anything runs — then
@@ -261,7 +352,17 @@ fn nl_run_interactive(input_cstr, mode) {
         return load64(v + NV_STATUS);
     }
     var code = nl_launch(v, mode);
-    if (code == LAUNCH_DECLINED) { return EXIT_NOT_RUN; }
+    if (code == LAUNCH_DECLINED) {
+        # A gated line refused before its prompt (a checkpoint, sudo) says why; the prompt shows its
+        # own answer.
+        if (load64(v + NV_REASON) != 0) {
+            if (load64(v + NV_ASKED) == 0) {
+                eprint_str(str_from("agnsh: not executed: "));
+                eprint_line(str_from(load64(v + NV_REASON)));
+            }
+        }
+        return EXIT_NOT_RUN;
+    }
     if (code < 0) { return EXIT_NOTHING_TO_RUN; }
     return code;
 }
@@ -280,12 +381,16 @@ fn nl_run_c(input_cstr, mode, dry_run, report_dir) {
     if (dry_run == 1) {
         str_print(load64(v + NV_BLOCK));
         outcome = nl_outcome(0, "dry run");
-        if (load64(v + NV_RUN) == 1) { status = 0; }
+        # 0 for a line that would run without asking; a gated line keeps 126 (no approval here).
+        if (load64(v + NV_RUN) == 1) {
+            if (load64(v + NV_GATED) == 0) { status = 0; }
+        }
     } elif (load64(v + NV_RUN) == 1) {
         var code = nl_launch(v, mode);
         if (code == LAUNCH_DECLINED) {
             status = EXIT_NOT_RUN;
             notice = "declined";
+            if (load64(v + NV_REASON) != 0) { notice = load64(v + NV_REASON); }
             outcome = nl_outcome(0, notice);
         } elif (code < 0) {
             status = EXIT_NOTHING_TO_RUN;
