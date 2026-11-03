@@ -1,7 +1,7 @@
 # ADR-009: The Checkpoint Store (2.0.3)
 
 **Status:** Accepted (2026-09-26, for 2.0.3)
-**Serves:** [ADR-008](008-nl-exec-contract.md) — the approval-gated tiers it defers (roadmap 2.0.x) must
+**Serves:** [ADR-008](008-nl-exec-contract.md) — the approval-gated tiers it defers (roadmap 2.1.x) must
 not run a REMOVE or MOVE until what it destroys can be put back.
 
 ## Context
@@ -11,7 +11,7 @@ helpers that no longer exist (`fs_copy`, `fs_mkdir_p`, …). The roadmap's 2.0.3
 cyrius 6.6.6, but porting the calls would not have been enough:
 
 - **Its index lived in memory.** Which backup belonged to which file lasted as long as the process,
-  and the `undo` slot's own test (roadmap 2.0.x — `undo`) — `agnsh -c "remove foo/a"`, then
+  and the `undo` slot's own test (roadmap 2.1.x — `undo`) — `agnsh -c "remove foo/a"`, then
   `agnsh -c "undo"` — runs in two processes.
 - **Backups were named by an in-process counter** that restarted at 0 in every process, so each run
   overwrote the last one's files.
@@ -94,13 +94,13 @@ Two things were settled first:
 - **Built, not run:** the store compiles on agnos, where its `stat` calls take the path length and
   there are no permission bits and no `fchmod`. It does not run there until approval-gated exec
   calls it.
-- **Relative paths:** agnos has no working directory yet (roadmap 2.1.x), so a relative path is
+- **Relative paths:** agnos has no working directory yet (roadmap 2.2.x), so a relative path is
   taken from `/`.
 
 ## Consequences
 
 - **New state on disk:** it is bounded — 100 groups, 64 MiB per file — and private.
-- **No caller in 2.0.3.** Approval-gated exec (roadmap 2.0.x) checkpoints before every REMOVE and
+- **No caller in 2.0.3.** Approval-gated exec (roadmap 2.1.x) checkpoints before every REMOVE and
   MOVE, and the `undo` builtin calls `ckpt_undo`. The store's agnos arm is first exercised there.
 - **Directories are not recoverable.** Before an `rm -r` can be approved, approval-gated exec must
   decide what a refused checkpoint means: refuse the command, or say that undo will not restore it.

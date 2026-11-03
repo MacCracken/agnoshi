@@ -12,9 +12,11 @@
 # the console. Only the two-/dev/null case changes: a pipe, a file or a terminal on fd 0 is someone's input,
 # and `agnsh < /dev/null > out` still reads EOF and exits as before.
 #
-# ⚠ The console has to be one the uid can open. On a kybernet board /dev/console is root:root 0600
-# (no udev), and argonaut runs the default agnoshi as 1000:1000, so the open fails with -EACCES until
-# the node is granted to that uid. agnsh then says why on stderr and exits 1 rather than reading EOF.
+# ⚠ The console has to be one the uid can open. On a kybernet board devtmpfs makes /dev/console
+# root:root 0600 (no udev), and argonaut runs the default agnoshi as 1000:1000. kybernet's agnos-init
+# grants it to group 1000, mode 0660 (kybernet, unreleased after 1.12.0), and argonaut starts agnoshi
+# after agnos-init in BOOT_DESKTOP, and in BOOT_MINIMAL from its next release. Where nothing grants it,
+# the open fails with -EACCES, and agnsh says why on stderr and exits 1 rather than reading EOF.
 #ifndef CYRIUS_TARGET_AGNOS
 
 var CONSOLE_PATH = "/dev/console";

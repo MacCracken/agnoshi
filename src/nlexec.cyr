@@ -77,7 +77,7 @@ fn nl_verdict(input_cstr, mode_label) {
     # understood USER_WRITE line (`cp`, `mv`, `mkdir`) that does not must say so too — until then only
     # the HIGH tiers carried the line, because nothing ran at all. SHELL_COMMAND is the exception: it
     # is the fall-through for a line the parser did not understand, and approval would not make a
-    # non-program run, so its MED tier gets the Hint below instead. Approval-gated exec is 2.0.x.
+    # non-program run, so its MED tier gets the Hint below instead. Approval-gated exec is roadmap 2.1.x.
     var risk_high = 0;
     if (perm == PermissionLevel.SYSTEM_WRITE || perm == PermissionLevel.ADMIN) { risk_high = 1; }
     if (perm == PermissionLevel.USER_WRITE && tag != IntentTag.SHELL_COMMAND) { risk_high = 1; }
@@ -109,7 +109,7 @@ fn nl_verdict(input_cstr, mode_label) {
         str_builder_add_cstr(sb, "  Hint: not a known command here -- nothing was run\n");
     } elif (tag == IntentTag.CHANGE_DIR) {
         # `cd` in a child process changes the child's directory and nothing else: it is a shell
-        # builtin, and agnsh's own `cd` is roadmap 2.1.x.
+        # builtin, and agnsh's own `cd` is roadmap 2.2.x.
         str_builder_add_cstr(sb, "  Hint: cd is a shell builtin -- it arrives in a later release\n");
     } elif (load64(translation + 40) != 0) {
         str_builder_add_cstr(sb, "  Hint: routed to an MCP tool -- not run in this build\n");

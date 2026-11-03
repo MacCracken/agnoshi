@@ -21,11 +21,11 @@ first (roadmap § Open decisions, "NL exec contract"), and each ruling has conse
 ### 1. What runs, and who confirms
 
 - **SAFE and READ_ONLY translations execute.** USER_WRITE, SYSTEM_WRITE and ADMIN stay proposals
-  (`Approval required -- not executed`) until approval-gated execution (roadmap 2.0.x — approval-gated exec). BLOCKED never runs.
+  (`Approval required -- not executed`) until approval-gated execution (roadmap 2.1.x — approval-gated exec). BLOCKED never runs.
 - A translation runs only if it names a program. UNKNOWN, a missing translation, QUESTION (no LLM
   yet), an NL pipeline (`… then …`), a translation the safety checks rejected, SHELL_COMMAND (the
   fall-through: its first word is not a program, or shell-first would have launched it), CHANGE_DIR
-  (`cd` in a child process changes nothing — agnsh's own `cd` is roadmap 2.1.x) and a translation
+  (`cd` in a child process changes nothing — agnsh's own `cd` is roadmap 2.2.x) and a translation
   routed to an MCP tool (an `echo` placeholder) are reported and not run.
 - An NL command goes through the same launcher as a typed `run` of it — the mode gate, the audit
   records, the exit status — with its program resolved per target (§ 3). Translation arguments are
@@ -97,7 +97,7 @@ verbatim, plus the input, mode, time and what happened — is written to a file:
   line is classified first; a BLOCKED one (`rm -rf`, `dd`, `mkfs`, `chmod`, `chown`, `shred`) asks
   `[y/N]` in **every** mode, and `-c` with no answer declines (126). Both targets — agnos's `auto`
   now asks before a typed `rm -rf dir` too. The AI never runs BLOCKED (§ 1); the human may, after an
-  explicit yes. Other tiers keep the mode policy: gating them before approval exists (roadmap 2.0.x — approval-gated exec) would
+  explicit yes. Other tiers keep the mode policy: gating them before approval exists (roadmap 2.1.x — approval-gated exec) would
   stop agnos's kriya file verbs working.
 
 ### 4. Exit status of `-c`

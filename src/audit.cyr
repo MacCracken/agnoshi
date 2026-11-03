@@ -270,7 +270,7 @@ fn classify_audit_result(tag, perm, desc_cstr) {
     #   needs_exec       -- PIPELINE intent: no translator arm yet.
     #   blocked          -- BLOCKED permission: caller-must-approve.
     #   needs_approval   -- USER_WRITE / SYSTEM_WRITE / ADMIN: not run until
-    #                       approval-gated exec (roadmap 2.0.x). USER_WRITE
+    #                       approval-gated exec (roadmap 2.1.x). USER_WRITE
     #                       joined in 2.0.0: once SAFE and READ_ONLY started
     #                       running (ADR-008), "proposed" + approved:1 for a
     #                       `cp` that did not run would have said the opposite

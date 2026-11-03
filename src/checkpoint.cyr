@@ -8,7 +8,7 @@
 # bits, fell back to a fixed /tmp folder any user could create first, and called seven stdlib helpers
 # that no longer exist — so no build could include it. Only the idea survives.
 #
-# No caller yet (roadmap 2.0.x): approval-gated exec checkpoints before every REMOVE and MOVE, and the
+# No caller yet (roadmap 2.1.x): approval-gated exec checkpoints before every REMOVE and MOVE, and the
 # `undo` builtin restores the newest group.
 #
 # THE STORE is a private state folder (statepaths.cyr): host $XDG_STATE_HOME/agnoshi/checkpoints,
@@ -82,7 +82,7 @@ fn ckpt_prepare(dir) { return state_dir_prepare(dir, "checkpoint folder"); }
 # ---- Paths, names and numbers ----
 
 # `path` as an absolute path: itself when it starts with '/', otherwise joined to the working
-# directory. agnos has none yet (roadmap 2.1.x — agnsh will track its own), so there a relative path
+# directory. agnos has none yet (roadmap 2.2.x — agnsh will track its own), so there a relative path
 # is relative to /. 0 when there is no path or the working directory cannot be read.
 fn ckpt_abs(path) {
     if (path == 0) { return 0; }

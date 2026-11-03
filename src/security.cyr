@@ -8,7 +8,7 @@
 # once, in main (security_init); agnos builds none (see SecurityContext_new), so it is never
 # restricted.
 # ⚠ The escalation half — execute_with_privileges (`sudo -n`) and verify_sudo_path's re-check at
-# escalation time — has no caller until approval-gated exec (roadmap 2.0.x): nothing in the binary
+# escalation time — has no caller until approval-gated exec (roadmap 2.1.x): nothing in the binary
 # invokes sudo. When it gets one: execute_command launches through lib exec_vec with an EMPTY
 # environment, a second host launcher, which ADR-008 § 3 rules out (host_exec is the one).
 struct SecurityContext {

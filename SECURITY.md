@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.0.x   | Yes       |
-| < 2.0   | No        |
+| 2.1.x   | Yes       |
+| < 2.1   | No        |
 
 ## Reporting a Vulnerability
 
@@ -47,7 +47,7 @@ approval" means "does not run". Until 1.9.15 the HIGH-risk line promised an
 approval display (`print_str_safe`, the H5 mitigation) live in
 `src/approval.cyr` / `src/sanitize.cyr` but their only caller is
 `src/session.cyr`, which is **not in `src/agnsh.cyr`'s include graph**. Wiring
-them in is roadmap 2.0.x — approval-gated exec.
+them in is roadmap 2.1.x — approval-gated exec.
 
 ### Execution — what can actually run
 
@@ -94,7 +94,7 @@ All user-controlled strings flowing to syscalls must pass validation:
 The checkpoint store (`src/checkpoint.cyr`, [ADR-009](docs/adr/009-checkpoint-store.md))
 is compiled in, but **nothing calls it yet**: no command is checkpointed and there
 is no `undo` builtin. Do not rely on any rollback guarantee. Both arrive with
-approval-gated exec and `undo` (roadmap 2.0.x). What the store guarantees once it
+approval-gated exec and `undo` (roadmap 2.1.x). What the store guarantees once it
 is called: a private folder (below); each saved file 0600, created exclusively and
 never through a symlink; regular files only, up to 64 MiB, with anything else
 refused and the caller told; and a restore that never overwrites what is at a path
@@ -117,7 +117,7 @@ Since 2.0.2 `src/security.cyr` is compiled in, and one part of it is live: the
 root check that makes a Linux-host session running as root *restricted* (above).
 The escalation half — `execute_with_privileges` (`sudo -n`) and the sudo
 path/root-ownership re-verification at escalation time (`verify_sudo_path`) — is
-compiled in with **no caller** until approval-gated execution (roadmap 2.0.x). The
+compiled in with **no caller** until approval-gated execution (roadmap 2.1.x). The
 environment whitelist (`build_safe_env`, `src/sanitize.cyr`) has no caller
 anywhere.
 

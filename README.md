@@ -31,7 +31,7 @@ runs — its `sudo` path has no caller; and
 `ApprovalManager_request`, the prompt itself, has no caller. A HIGH-risk command
 reports `Approval required` but is not prompted or blocked, there is no `undo`
 builtin, and nothing invokes `sudo`. See `docs/development/roadmap.md` (the
-2.0.x arc) for the wire-up slices, and `SECURITY.md` for exactly what does and
+2.1.x arc) for the wire-up slices, and `SECURITY.md` for exactly what does and
 does not hold today.
 
 ## Install
@@ -108,7 +108,7 @@ src/                                PRESENT BUT NOT IN THE BINARY
 binary, so features it implements — approval prompts, `undo`, tab completion,
 the git-branch prompt — do not exist at runtime today. Nor do sudo escalation or
 checkpointing: their code is in the first group, with no caller yet. Wire-up
-slices are in `docs/development/roadmap.md` (the 2.0.x and 2.1.x arcs).
+slices are in `docs/development/roadmap.md` (the 2.1.x and 2.2.x arcs).
 
 ## Documentation
 

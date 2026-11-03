@@ -18,7 +18,7 @@
 > classification, every launch, and every refusal, JSON-escaped and UTF-8
 > validated. That is a real auditing posture. It is **not** an enforcement one.
 >
-> Treat this document as a design target for the roadmap's 2.0.x exec +
+> Treat this document as a design target for the roadmap's 2.1.x exec +
 > approval slots, not as deployment instructions.
 
 This guide demonstrates using agnsh as the default shell on a hardened
@@ -62,7 +62,7 @@ sudo chsh -s /usr/local/bin/agnsh opsuser
 agnsh reads **no configuration file**. There is no `/etc/agnoshi/`, no parser,
 and no path lookup anywhere in `src/`. Mode is selected per-invocation with
 `--mode <name>` or interactively with `mode <name>`. The block below is a design
-sketch for a future `.agnshrc`-style config (roadmap 2.1.x — `.agnshrc`):
+sketch for a future `.agnshrc`-style config (roadmap 2.2.x — `.agnshrc`):
 
 ```toml
 default_mode = "strict"

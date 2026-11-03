@@ -111,7 +111,7 @@ User Input (stdin)
     |
     |   The approval loop (ApprovalManager_request) has no caller, and the
     |   checkpoint store (checkpoint.cyr, ADR-009) none yet: USER_WRITE and above
-    |   are reported and not run. Approval-gated exec is roadmap 2.0.x.
+    |   are reported and not run. Approval-gated exec is roadmap 2.1.x.
     |
     +--> SHELL LINES (checked before the parser, ADR-007):
     |      run /abs/path, or a bareword -> [shell-line gate: BLOCKED confirms in

@@ -18,7 +18,7 @@ agnsh -c "show running processes"
   natural language.
 - A **natural-language line** is classified, and runs if its translation is SAFE or READ_ONLY
   (`ls`, `cat`, `grep`, `find`, `ps`, `df`, `free`, `git status`, …). USER_WRITE, SYSTEM_WRITE and
-  ADMIN translations are not run yet (approval-gated execution is roadmap 2.0.x); BLOCKED never is.
+  ADMIN translations are not run yet (approval-gated execution is roadmap 2.1.x); BLOCKED never is.
 - A typed line the classifier calls **BLOCKED** (`rm -rf`, `dd`, `mkfs`, `chmod`, `chown`, `shred`)
   asks `[y/N]` on stderr in every mode — `-c` with nothing on stdin declines it.
 - `--mode human` / `--mode strict` confirm every launch first; `-c` defaults to `auto`.

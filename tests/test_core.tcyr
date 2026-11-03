@@ -1579,7 +1579,7 @@ fn main() {
     check("no context, no warning", sw_none == 0);
     xunlink(sw_err);
     # execute_command / execute_with_privileges: the escalation path has no caller in the binary
-    # (roadmap 2.0.x — approval-gated exec). The suite pins its refusals and never reaches sudo.
+    # (roadmap 2.1.x — approval-gated exec). The suite pins its refusals and never reaches sudo.
     var ec_args = vec_new();
     check("execute_command returns the child's status",
       execute_command("/bin/true", ec_args, 0) == 0 && execute_command("/bin/false", ec_args, 0) == 1);

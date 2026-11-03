@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — docs
+
+- **`docs/development/roadmap.md` is renumbered into 2.1.x – 2.3.x.** 2.0.4 – 2.1.2 went to the
+  cyrius pins and kybernet's console P1, so the plan had to move:
+  - The skipped 2.0.x slots, approval-gated exec and `undo`, open 2.1.x at 2.1.3 and 2.1.4.
+  - The interactive shell becomes 2.2.x, and hoosh / LLM becomes 2.3.x.
+  - The completed console P1 is off the top. What is left of it — kybernet's release, and an
+    argonaut tag that runs agnos-init in BOOT_MINIMAL — is a § Gated row.
+  - Every gate was re-verified at cyrius 6.7.18, and none moved.
+  - The pin-bump checklist's runner shell is corrected to `bash -e`, without pipefail.
+  - Roadmap citations in `src/`, `tests/` and the docs moved with it; these are comment and doc
+    changes only.
+- **`SECURITY.md`'s supported line is 2.1.x.** It still said 2.0.x.
+
 ## [2.1.2] - 2026-11-02 — a session on the console, and the whole environment
 
 agnoshi's side of the roadmap's P1 kybernet item. Since kybernet 1.12.0 and argonaut 1.20.0, the
@@ -39,11 +53,15 @@ child gets agnsh's whole environment instead of its first 64 KiB.
 
 ### Not done here
 
-- **On a kybernet board the console is `root:root 0600`** (there is no udev), and agnos-init grants
-  only `/dev/fb0` and `/dev/input/event*`. So the default agnoshi, as uid 1000, now exits 1 with
-  errno 13 where it used to exit 0.
-- The item's "done when" — a prompt on the console as uid 1000 — needs `/dev/console` granted to
-  that uid on the kybernet side.
+- **On a kybernet board devtmpfs makes the console `root:root 0600`** (there is no udev).
+  - kybernet's agnos-init now grants it to group 1000, mode 0660 (kybernet `[Unreleased]`, after
+    1.12.0). That covers BOOT_DESKTOP, where agnoshi starts after agnos-init.
+  - argonaut 1.20.0 runs agnos-init in BOOT_DESKTOP only. On a BOOT_MINIMAL board nothing grants
+    the console yet, so the default agnoshi, as uid 1000, exits 1 with errno 13 where it used to
+    exit 0.
+- argonaut's unreleased tree adds agnos-init to BOOT_MINIMAL, with the minimal agnoshi depending on
+  it. The item's "done when" — a prompt on the console as uid 1000 on a minimal board — waits for that
+  argonaut tag and kybernet's pin of it.
 - `docs/development/roadmap.md` is untouched (the renumbering pass is deferred), so its P1 text still
   describes the EOF exit. `docs/doc-health.md` notes it.
 

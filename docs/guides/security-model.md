@@ -93,7 +93,7 @@ writes the action string straight to the terminal with no stripping. A path
 containing an ESC byte can therefore style or reposition the confirmation text.
 The path itself has already passed `is_safe_path`, which rejects shell
 metacharacters and traversal but **not** control bytes — so this is a real, if
-narrow, gap. Tracked for the approval wire-up (roadmap 2.0.x — approval-gated exec).
+narrow, gap. Tracked for the approval wire-up (roadmap 2.1.x — approval-gated exec).
 
 ### 5. Audit Log Integrity
 
@@ -137,7 +137,7 @@ The checkpoint store (`src/checkpoint.cyr`, rewritten in 2.0.3 —
 [ADR-009](../adr/009-checkpoint-store.md)) is compiled in, but **nothing calls it
 yet**: no command is checkpointed, there is no `undo` builtin, and its folder is
 never created. **Do not rely on any rollback guarantee** until approval-gated exec
-and `undo` (roadmap 2.0.x). What it will guarantee when called:
+and `undo` (roadmap 2.1.x). What it will guarantee when called:
 
 - **A private folder** — `$XDG_STATE_HOME/agnoshi/checkpoints/` (default
   `~/.local/state/agnoshi/checkpoints/`; `/.agnsh_checkpoints/` on AGNOS), under
@@ -158,7 +158,7 @@ and `undo` (roadmap 2.0.x). What it will guarantee when called:
 Since 2.0.2 `src/security.cyr` is compiled in, but its escalation half —
 `execute_with_privileges` (`sudo -n`) and the sudo path/root-ownership
 re-verification at escalation time (`verify_sudo_path`) — has no caller until
-approval-gated execution (roadmap 2.0.x). When it gets one: `execute_command`
+approval-gated execution (roadmap 2.1.x). When it gets one: `execute_command`
 launches through lib `exec_vec` with an empty environment, a second host
 launcher, which ADR-008 § 3 rules out.
 
@@ -267,7 +267,7 @@ configuration.
   `run /abs/path` is gated by `is_safe_path`, the mode confirmation, and — for a
   line the classifier calls BLOCKED — a confirmation in every mode (ADR-008). The
   other tiers do not gate typed lines: doing so before approval exists would
-  stop agnos's kriya file verbs. Approval-gated exec is roadmap 2.0.x.
+  stop agnos's kriya file verbs. Approval-gated exec is roadmap 2.1.x.
 - Race conditions between permission check and execution (TOCTOU) if the
   filesystem is mutated by another process. Full TOCTOU protection would
   require inode-locking at the kernel layer.

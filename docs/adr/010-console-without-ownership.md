@@ -38,10 +38,15 @@ is a process; no service is designed around owning a terminal. agnoshi is the fo
 - **−** With no controlling terminal, ^C, ^Z and a hangup on the console send agnsh and its children
   no signal. On the host, agnsh has no job control to lose, but a foreground program that does not
   exit cannot be interrupted from the console.
-- **−** **The console must be openable by the uid agnsh runs as.** On a kybernet board,
-  `/dev/console` is `root:root 0600` (there is no udev), and agnos-init grants only `/dev/fb0` and
-  `/dev/input/event*`. Until the console is granted to uid 1000, the default agnoshi exits 1 with
-  `errno 13`. The roadmap's "done when" — a prompt on the console as uid 1000 — needs that grant.
+- **−** **The console must be openable by the uid agnsh runs as.** On a kybernet board, devtmpfs
+  makes `/dev/console` `root:root 0600` (there is no udev).
+  - kybernet's agnos-init grants it to group 1000, mode 0660 (kybernet, unreleased after 1.12.0),
+    in the same way it grants `/dev/fb0` and `/dev/input/event*`.
+  - argonaut 1.20.0 runs agnos-init in BOOT_DESKTOP only, so on a BOOT_MINIMAL board the default
+    agnoshi still exits 1 with `errno 13`.
+  - argonaut's unreleased tree adds agnos-init to BOOT_MINIMAL, with the minimal agnoshi depending
+    on it. The roadmap's "done when" — a prompt on the console as uid 1000 on a minimal board — waits
+    for that argonaut tag and kybernet's pin of it.
 
 ## Alternatives considered
 

@@ -174,7 +174,7 @@ program's and agnsh files its report in the report folder
 There is **no `undo` command**, and nothing is checkpointed. The checkpoint store
 it will use is in the binary since 2.0.3 (`src/checkpoint.cyr`, kept in
 `~/.local/state/agnoshi/checkpoints/`), but nothing calls it until
-approval-gated exec and `undo` arrive (roadmap 2.0.x). Do not rely on rollback.
+approval-gated exec and `undo` arrive (roadmap 2.1.x). Do not rely on rollback.
 
 ## Next Steps
 
