@@ -6,6 +6,98 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-11-02 — `undo`, and the 2.1.x arc closes
+
+The `undo` builtin puts back what the newest approved natural-language remove or move changed, from
+the checkpoint 2.1.3 wrote before it ran. With it, the NL execution arc is complete:
+- 2.0.0: SAFE and READ_ONLY lines run;
+- 2.1.3: the approval tiers run on a yes, checkpointed;
+- 2.1.4: `undo` reverses them.
+
+### Added
+
+- **The `undo` builtin** (`nl_undo`, `src/nlexec.cyr`), interactive and `agnsh -c undo`.
+  - It calls the store's `ckpt_undo` (ADR-009) and restores the newest group, newest entry first: a
+    removed file is recreated from its checkpoint, and a move is renamed back.
+  - One line per entry goes to stdout: `restored <path>`, `moved <to> back to <path>`, or why not.
+  - **It never overwrites.** An entry whose path is taken now stays in the store with its reason,
+    while the rest of its group still goes back; clear the path and `undo` again.
+  - **Exit status:** 0 when the whole group was put back, 1 when there was nothing to undo or an
+    entry stayed.
+  - **Audit:** recorded as `executed` or `failed`.
+  - **`--dry-run`** still runs nothing, `undo` included: the line goes to the classifier.
+- **`undo` is in `is_builtin`, `builtin_description`, `help` and the banner again.** 1.9.1 removed it
+  when the audit found nothing behind it.
+
+### Changed
+
+- **The approval prompt's note** for a remove or move says `undo can put it back`, where 2.1.3 said
+  `checkpointed first`.
+
+### Changed — docs (the arc closeout)
+
+- **What ships now:** README, SECURITY.md § Checkpoint/undo, `security-model.md` § 6,
+  `getting-started.md`, CLAUDE.md's security note and the man page's BUILTINS describe `undo` as
+  shipped.
+- **The hardening example:** its checkpoint row says what is reversible — the AI's removes and moves,
+  never a typed shell line.
+- **The roadmap:**
+  - The 2.1.x arc is gone, and `cd` / `pwd` (2.2.0) is next.
+  - 3.0.0 is re-evaluated at the arc's close: nothing forced a break. The audit log gained labels,
+    not a format, and `-c` kept its statuses.
+- **ADR-009 and ADR-011** note `undo`'s arrival.
+
+### Tests
+
+- **test_core 1103 → 1109.** `_t_gated` undoes the approved move (moved back), then the earlier
+  remove:
+  - first with its path taken, which keeps the entry and exits 1;
+  - then with the path clear, which restores its bytes and empties the store;
+  - then once more, which is `nothing to undo`, exit 1.
+
+  It also checks the `executed` / `failed` records, and that `undo` is a builtin again.
+- **Smoke 155 → 164.**
+  - An approved remove, then `agnsh -c undo`: exit 0, `restored <path>`, the bytes back, the store
+    empty.
+  - A second undo: `nothing to undo`, exit 1.
+  - An approved move moved back.
+  - `--dry-run -c undo` reaches the classifier, not the store.
+- **`scripts/agnos-qemu-test.py` § 1b** adds a second approved remove, then a typed `undo`. It
+  restores that file, which the disk image then holds with its bytes, and leaves the first remove's
+  entry in the store.
+
+### Verified
+
+- Every job of `ci.yml` on a copy of the tree, under `bash -e`: all 23 steps.
+  - Unit 1109/1109, security 26/26, parse corpus 358/358, smoke 164/164.
+  - The same three suites on aarch64 under qemu-user.
+  - Host-reachable coverage 292/292 (100 %), and lint clean on all 33 files.
+- **agnos 1.57.14 in QEMU (KVM):**
+  - `scripts/agnos-qemu-test.py`: **62/62 at `-smp 1` and 62/62 at `-smp 4`**.
+    - **`undo` on agnos:** the typed `undo` restores `/gated-c.txt`, which the disk image holds with
+      its bytes. This is the checkpoint store's restore path, run on agnos for the first time.
+    - `/gated-a.txt`'s entry stays in `/.agnsh_checkpoints`.
+    - The audit trail records the undo as `executed`.
+    - 75 complete records are on disk.
+    - The `-smp 1` run used the build before the version bump; the bumped binary differs from it in
+      one byte, the version digit.
+  - `scripts/agnos-qemu-bench.py`, in one boot against the 2.1.3 build:
+    - Both idle at 0 ticks, BLOCKED in 91 of 100 samples.
+    - All 20 `-c` statuses held, identical.
+    - Round trips are within 0.2 %: `run` 78,988 → 79,135 µs per line, `pipe` 151,878 → 151,556 µs.
+      The host load was 2.2.
+- **Binary sizes:** x86_64 195,712 → 204,080 B (+8,368, `ckpt_undo`'s restore path, now reachable),
+  aarch64 490,432 → 490,608 B, agnos 400,136 → 404,408 B.
+
+### Performance — neutral; `safe_path` flips back with layout
+
+Five alternating runs of the 2.1.3 and 2.1.4 bench binaries, each started with the 1-minute load
+below 2 (1.83 – 1.91). Twelve of the 13 medians are within −1.5 % to +2.3 % of 2.1.3.
+`sanitize/safe_path` went 37 → 53 ns, back to where 2.1.3 had moved it from (54 → 37). The only
+change to the bench binary is 48 bytes elsewhere — `commands.cyr`'s `undo` entries — so this is the
+clearest sign yet that `safe_path` tracks code layout, not its own code. One `bench-history.csv` row
+(`4b7d5c3-dirty`, recorded at load 1.83).
+
 ## [2.1.3] - 2026-11-02 — approval-gated exec
 
 The natural-language path now does what it proposes for the approval tiers

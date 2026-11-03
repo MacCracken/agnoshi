@@ -353,7 +353,7 @@ fn _t_gated() {
     _t_capture_end(2, 10);
     check("an approved remove runs: 0, and the file is gone", g_rm == 0 && file_exists(gfile) == 0);
     check("...after its checkpoint", vec_len(ckpt_names(gckpt)) == 1);
-    check("...the prompt says so", _t_file_has(gerr, "-- checkpointed first ? [y/N]") == 1);
+    check("...the prompt says undo can put it back", _t_file_has(gerr, "-- undo can put it back ? [y/N]") == 1);
     check("...one question", g_rm_reads == 1);
     check("...the trail: approved, launched, executed",
       _t_count_in(gaudit, "\"result\":\"approved\"") == 1 && _t_count_in(gaudit, "\"result\":\"launched\"") == 1
@@ -413,6 +413,36 @@ fn _t_gated() {
     check("an unanswered prompt times out: 126", g_to == 126
       && _t_file_has(gerr, "agnsh: not executed: approval timed out -- report: ") == 1);
     check("...recorded as timed_out", _t_count_in(gaudit, "\"result\":\"timed_out\"") == 1);
+
+    # 2.1.4 — undo: the newest group first. The move goes back; the remove before it then finds its
+    # path taken (the moved-back file), stays, and finishes once the path is clear.
+    _t_capture_begin(1, 9, gout);
+    var g_u1 = nl_undo(gckpt);
+    _t_capture_end(1, 9);
+    check("undo puts the newest group back: the move", g_u1 == 0 && file_exists(gfile) == 1
+      && file_exists(gfile2) == 0 && _t_file_has(gout, "moved ") == 1 && _t_file_has(gout, " back to ") == 1);
+    _t_capture_begin(1, 9, gout);
+    var g_u2 = nl_undo(gckpt);
+    _t_capture_end(1, 9);
+    check("an entry whose path is taken stays: 1, and says why", g_u2 == 1
+      && _t_file_has(gout, "not restored: ") == 1 && _t_file_has(gout, "something is there now") == 1
+      && vec_len(ckpt_names(gckpt)) == 1);
+    xunlink(gfile);
+    _t_capture_begin(1, 9, gout);
+    var g_u3 = nl_undo(gckpt);
+    _t_capture_end(1, 9);
+    check("...and is restored once the path is clear, with its bytes", g_u3 == 0
+      && _t_file_has(gout, "restored ") == 1 && _t_file_has(gfile, "keep me") == 1
+      && vec_len(ckpt_names(gckpt)) == 0);
+    _t_capture_begin(1, 9, gout);
+    var g_u4 = nl_undo(gckpt);
+    _t_capture_end(1, 9);
+    check("with nothing left: 1, nothing to undo", g_u4 == 1 && _t_file_has(gout, "undo: nothing to undo") == 1);
+    check("undo is recorded: executed twice, failed twice",
+      _t_count_in(gaudit, "\"action\":\"undo\",\"approved\":1,\"result\":\"executed\"") == 2
+      && _t_count_in(gaudit, "\"action\":\"undo\",\"approved\":1,\"result\":\"failed\"") == 2);
+    check("undo is a builtin again (2.1.4)", is_builtin("undo") == 1
+      && streq(builtin_description("undo"), "Put back the last approved remove or move") == 1);
 
     # ADMIN on the host runs as `sudo -n`; with no session context it cannot, and says so unasked.
     if (path_lookup("kill", 4) != 0) {
@@ -887,10 +917,10 @@ fn main() {
     check("builtin run", is_builtin("run") == 1);
     check("not builtin ls", is_builtin("ls") == 0);
     check("not builtin git", is_builtin("git") == 0);
-    # cd / undo live in the non-compiled session.cyr + checkpoint.cyr. They must
-    # NOT be advertised until those modules are actually wired in.
+    # cd lives in the non-compiled session.cyr: it must NOT be advertised until it is wired in
+    # (roadmap 2.2.x). undo is wired since 2.1.4 (nl_undo; _t_gated asserts it).
     check("cd not yet a builtin", is_builtin("cd") == 0);
-    check("undo not yet a builtin", is_builtin("undo") == 0);
+    check("undo is a builtin", is_builtin("undo") == 1);
 
     var intent = Intent_new(IntentTag.LIST_FILES);
     check("intent tag", load64(intent) == IntentTag.LIST_FILES);

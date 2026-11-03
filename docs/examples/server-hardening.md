@@ -9,7 +9,7 @@
 > |---|---|
 > | `agnsh --strict` as a login shell | **`--strict` is not a flag.** It prints usage and exits **1**, so as a login shell the session ends at once. The flag is `--mode strict`. |
 > | `/etc/agnoshi/agnsh.conf` configures it | **No config file is read at all** — no path, no parser, nothing in `src/`. |
-> | Checkpoint makes destructive ops reversible | **Checkpointed, not yet reversible.** Since 2.1.3 an approved natural-language remove or move is checkpointed first, but there is no `undo` to restore it (roadmap 2.1.x), and typed shell lines are never checkpointed. |
+> | Checkpoint makes destructive ops reversible | **Only the AI's.** Since 2.1.3 an approved natural-language remove or move is checkpointed first, and since 2.1.4 `undo` puts it back. A typed shell line (`rm`, `run …`) is never checkpointed, and neither is `cp` onto an existing file. |
 > | Restricted mode blocks privilege escalation | **No `--restricted` flag** (it prints usage and exits 1). The one restriction that exists is automatic (2.0.2): agnsh running as root runs no natural-language line, so it never escalates. Escalation itself exists since 2.1.3: an approved ADMIN natural-language line runs as `sudo -n`. |
 >
 > **What IS true and useful today**:
@@ -184,7 +184,7 @@ Correlate agnsh's JSON log with auditd's records for full forensic view.
 | Login shell | ⛔ **Not an enforcement boundary today** — risk is reported, not enforced |
 | Command classification | ✅ Accurate and useful: basename extraction, six tiers. It decides what a natural-language line may run (SAFE and READ_ONLY only, 2.0.0), and a typed BLOCKED line confirms in every mode |
 | Input sanitization | No shell injection via crafted NL input |
-| ~~Checkpoint~~ | ⛔ **Not shipped** — no checkpointing, no `undo`, no rollback |
+| Checkpoint | ✅ Approved natural-language removes and moves, with `undo` (2.1.4); ⛔ typed shell lines are not checkpointed |
 | Audit | JSON log of every action, integrity-safe escaping |
 | auditd | Kernel-level double-audit |
 | Log shipping | Centralize to SIEM for offline review |

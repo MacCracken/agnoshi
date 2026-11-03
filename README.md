@@ -6,7 +6,7 @@ Agnoshi (Sanskrit: not-knowing → discovering through inquiry) is the AI shell 
 
 Written in [Cyrius](https://github.com/MacCracken/cyrius) — a sovereign, self-hosting systems language with zero external dependencies.
 
-**2.1.3 · Cyrius 6.7.18 · 27 modules · ~7.6 K src lines · 191 KB static binary (DCE, x86_64) · 479 KB aarch64 · 0 runtime deps · 1103 unit + 26 security + 358 parse-corpus + 155 smoke tests · 100% host-reachable fn coverage**
+**2.1.4 · Cyrius 6.7.18 · 27 modules · ~7.6 K src lines · 199 KB static binary (DCE, x86_64) · 479 KB aarch64 · 0 runtime deps · 1109 unit + 26 security + 358 parse-corpus + 164 smoke tests · 100% host-reachable fn coverage**
 
 ## Features
 
@@ -28,9 +28,10 @@ natural-language line asks `[y/N]` on stderr, in every mode, and runs only on a 
 - **On a Linux host, ADMIN** runs as `sudo -n`.
 - **BLOCKED never runs.** A recursive remove is BLOCKED.
 
-⚠ **Not shipped yet**: `undo` — the checkpoint exists, but nothing restores it until the next slot
-(`docs/development/roadmap.md`, the 2.1.x arc). There is also no sandbox. `SECURITY.md` says exactly
-what does and does not hold today.
+**`undo` (2.1.4)** puts back what the newest approved remove or move changed: the file, or the move,
+from its checkpoint. It never overwrites what is at a path now.
+
+⚠ **Not shipped**: a sandbox. `SECURITY.md` says exactly what does and does not hold today.
 
 ## Install
 
@@ -162,7 +163,7 @@ Headline numbers from the 1.0.0 port-arc snapshot (Rust 0.90 baseline → Cyrius
 | Binary size | 3.8 MB | 146 KB | **−96%** |
 | Startup | ~5 ms | microseconds | near-instant |
 
-Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.7.18 is 191 KB (x86_64, DCE; 2.1.3's approval tiers made the checkpoint store and the approval prompt reachable) / 479 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 240 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
+Full per-benchmark detail in `benchmarks-rust-v-cyrius.md`. Current binary on Cyrius 6.7.18 is 199 KB (x86_64, DCE; 2.1.3's approval tiers and 2.1.4's `undo` made the checkpoint store and the approval prompt reachable) / 479 KB (aarch64) — growth over 4.5.0 is toolchain-side (richer stdlib + codegen) plus the v1.2.0/v1.3.0 feature additions (audit, history, the exec paths), not agnoshi-side bloat. ⚠ The aarch64 figure is not like-for-like with x86_64: aarch64 DCE NOPs unreachable functions in place rather than removing them, so about 240 KB of it is unreachable code. Run `cyrius build tests/bench_core.bcyr build/bench_core && ./build/bench_core` for an in-tree refresh; `bench-history.csv` carries the bracketed runs.
 
 ## Rust Legacy
 

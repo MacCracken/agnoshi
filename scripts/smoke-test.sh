@@ -178,10 +178,28 @@ check "...and says declined" "agnsh: not executed: declined" "$err"
 ec=0
 err=$(printf 'y\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "remove $G_DIR/a.txt" 2>&1 >/dev/null) || ec=$?
 check "an approved remove exits 0" "^0$" "$ec"
-check "...the prompt says it is checkpointed first" "checkpointed first ? \[y/N\]" "$err"
+check "...the prompt says undo can put it back" "undo can put it back ? \[y/N\]" "$err"
 check "...the file is gone" "^gone$" "$([ -e "$G_DIR/a.txt" ] && echo here || echo gone)"
 check "...and its checkpoint holds it" "^1$" "$(ls "$G_STATE/agnoshi/checkpoints" 2>/dev/null | grep -c '\.ckpt$')"
 check "the checkpoint folder is private" "^700$" "$(stat -c %a "$G_STATE/agnoshi/checkpoints" 2>/dev/null)"
+# 2.1.4: undo puts it back, and empties the store.
+ec=0
+out=$(XDG_STATE_HOME="$G_STATE" "$BIN" -c "undo" 2>/dev/null </dev/null) || ec=$?
+check "undo exits 0" "^0$" "$ec"
+check "...says what it restored" "^restored $G_DIR/a.txt$" "$out"
+check "...the file is back, with its bytes" "^keep$" "$(cat "$G_DIR/a.txt" 2>/dev/null)"
+check "...and the store is empty" "^0$" "$(ls "$G_STATE/agnoshi/checkpoints" 2>/dev/null | grep -c '\.ckpt$')"
+ec=0
+out=$(XDG_STATE_HOME="$G_STATE" "$BIN" -c "undo" 2>/dev/null </dev/null) || ec=$?
+check "a second undo: nothing to undo, exit 1" "^1:undo: nothing to undo$" "$ec:$out"
+ec=0
+printf 'y\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "move $G_DIR/a.txt to $G_DIR/b.txt" >/dev/null 2>&1 || ec=$?
+check "an approved move runs" "^0:moved$" "$ec:$([ -e "$G_DIR/b.txt" ] && [ ! -e "$G_DIR/a.txt" ] && echo moved)"
+out=$(XDG_STATE_HOME="$G_STATE" "$BIN" -c "undo" 2>/dev/null </dev/null) || true
+check "undo moves it back" "^moved $G_DIR/b.txt back to $G_DIR/a.txt$" "$out"
+check "...and it is where it was" "^keep$" "$(cat "$G_DIR/a.txt" 2>/dev/null)"
+out=$("$BIN" --dry-run -c "undo" 2>/dev/null </dev/null) || true
+check "--dry-run never undoes: undo reaches the classifier" "Intent:" "$out"
 mkdir "$G_DIR/d"
 ec=0
 err=$(printf 'y\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "remove $G_DIR/d" 2>&1 >/dev/null) || ec=$?

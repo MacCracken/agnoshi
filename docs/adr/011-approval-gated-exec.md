@@ -115,7 +115,8 @@ A command that is declined, or that runs and exits non-zero, leaves no checkpoin
   be refused.
 - **+** One host launcher again: the sudo path no longer has its own.
 - **−** `undo` is the next slot (roadmap 2.1.x — `undo`). Until then a checkpoint exists, but no
-  command restores it; `ckpt_undo` is compiled in, uncalled.
+  command restores it; `ckpt_undo` is compiled in, uncalled. *(2.1.4: the `undo` builtin,
+  `nl_undo`, restores the newest group.)*
 - **−** `cp` onto an existing file is not checkpointed. The store has no operation for an overwrite
   that leaves a new file in place.
 - **−** A sudo that needs a password fails under `-n`, and the outcome record says `failed` with

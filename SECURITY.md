@@ -98,7 +98,7 @@ All user-controlled strings flowing to syscalls must pass validation:
 - `is_safe_branch_name` — only `[a-zA-Z0-9_/.-]`
 - `is_safe_commit_message` — rejects leading `-` (flag injection)
 
-### Checkpoint/undo — the checkpoint ships, `undo` is next
+### Checkpoint/undo (2.1.3 / 2.1.4)
 
 Since 2.1.3 the checkpoint store (`src/checkpoint.cyr`,
 [ADR-009](docs/adr/009-checkpoint-store.md)) runs before every approved natural-language remove or
@@ -110,8 +110,9 @@ move:
   destructive runs without its checkpoint.
 - **Declined or failed commands** leave no checkpoint behind.
 
-⚠ **There is no `undo` builtin yet** (roadmap 2.1.x — `undo`). A checkpoint exists, but no command
-restores it, so do not rely on rollback until then. Two other gaps:
+**`undo`** (2.1.4) restores the newest group: each removed file, recreated from its checkpoint, and
+each move, renamed back. It never overwrites. An entry whose path is taken stays in the store with
+its reason, and `undo` exits 1. Two gaps:
 - `cp` onto an existing file is not checkpointed.
 - Typed shell lines (`run`, barewords) are not checkpointed: they are your own commands, not the AI's.
 

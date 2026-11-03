@@ -11,10 +11,10 @@
 > - 1.9.11, 1.9.12, 2.0.1 and 2.0.4 each took a patch.
 > - 2.1.0 took a minor for the cyrius 6.7.9 pin while 2.0.x still had two open slots. 2.1.1 (the
 >   6.7.18 pin) and 2.1.2 (kybernet's console P1) followed.
-> - The skipped 2.0.x slots now open 2.1.x at 2.1.3, and the interactive shell and hoosh arcs move
->   down one minor each.
+> - The skipped 2.0.x slots opened 2.1.x at 2.1.3, and the interactive shell and hoosh arcs moved
+>   down one minor each. 2.1.x closed at 2.1.4 (`undo`).
 >
-> **Cite a slot by arc and title** — `roadmap 2.1.x — approval-gated exec` — never by patch number
+> **Cite a slot by arc and title** — `roadmap 2.2.x — cd / pwd` — never by patch number
 > alone: titles survive a renumber. References name functions and files, not line numbers.
 >
 > Verified against `src/` and the sibling repos on **2026-11-02**. The tree was at 2.1.2 (cyrius
@@ -26,7 +26,7 @@
 | Section | Answers | Use it when |
 |---|---|---|
 | **Arc sequence** | *What ships next?* | Picking up work |
-| **2.1.x → 2.3.x** | *What is in each release, and when is it done?* | Planning a slice |
+| **2.2.x → 2.3.x** | *What is in each release, and when is it done?* | Planning a slice |
 | **Open decisions** | *What must be ruled before a slot can start?* | Before starting a slot that names one |
 | **Gated** | *Why isn't this moving?* | Asking why an item is not in an arc |
 | **Demand-gated backlog** / **3.0.0** | *What is deliberately not scheduled?* | Before adding something that looks missing |
@@ -36,19 +36,22 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.1.x** | NL execution, finished — the approval-gated tiers and `undo` | **2.1.4** — `undo` (approval-gated exec shipped in 2.1.3) | none |
 | **2.2.x** | Interactive shell — `cd`, an rc file, a line editor | **2.2.0** — `cd` / `pwd` | host: none; agnos pieces gated |
 | **2.3.x** | hoosh / LLM — answer questions, suggest commands | **2.3.0** — hoosh client (host) | none — agnos's socket adapter shipped in cyrius 6.6.7, not yet run by agnsh |
 
-2.1.x is the headline: **agnoshi's premise is that natural language becomes execution.**
-- **What has shipped:** 2.0.0, the first tier. SAFE and READ_ONLY lines run, under the `-c` contract
-  of [ADR-008](../adr/008-nl-exec-contract.md). It was a major because that contract broke; the arc
-  was 1.10.x until the ruling.
-- **What 2.1.x adds:** the approval-gated tiers, which shipped in 2.1.3 with a checkpoint before
-  every remove and move ([ADR-011](../adr/011-approval-gated-exec.md)), and `undo`, which restores
-  them.
-- **Ordering:** 2.2.x and 2.3.x are independent of each other and may swap on demand. 2.3.2's
-  suggested commands run through 2.1.x's exec path, so that one slot does follow it.
+**agnoshi's premise — natural language becomes execution — is shipped.** The NL execution arc closed
+at 2.1.4:
+- 2.0.0 ran SAFE and READ_ONLY lines, under the `-c` contract of
+  [ADR-008](../adr/008-nl-exec-contract.md).
+- 2.1.3 added the approval-gated tiers, with a checkpoint before every remove and move
+  ([ADR-011](../adr/011-approval-gated-exec.md)).
+- 2.1.4 added `undo`, which restores them.
+
+2.2.x and 2.3.x are independent of each other and may swap on demand. 2.3.2's suggested commands run
+through the approval-gated exec path, which has shipped.
+
+Standing since 2.0.0, unscheduled: `proc_set_timeout_ms` (host only) could give NL exec a command
+timeout.
 
 ⚠ **The two-target reality**, which every slot below splits along.
 - **agnos:** `src/run_agnos.cyr` is mostly `#ifdef CYRIUS_TARGET_AGNOS`, so pipelines, background
@@ -62,36 +65,6 @@
 
 Read each slot's target notes before estimating: several are half the size on one target and gated
 on the other.
-
----
-
-## 2.1.x — NL execution, finished
-
-The natural-language path does what it proposes, one permission tier at a time, with rollback in
-place before anything destructive runs.
-- 2.0.0 shipped SAFE and READ_ONLY (see the CHANGELOG).
-- 2.0.4 – 2.1.2 went to the cyrius 6.6.20, 6.7.9 and 6.7.18 pins and kybernet's console P1, so this
-  arc's slots started at 2.1.3.
-- 2.1.3 shipped approval-gated exec (ADR-011): every mode asks, a remove or move is checkpointed
-  first, and ADMIN runs as `sudo -n` on the host.
-- The slots are ordered so that nothing destructive executes before checkpointing exists.
-- Standing since 2.0.0, unscheduled: `proc_set_timeout_ms` (host only) could give NL exec a command
-  timeout.
-
-### 2.1.4 — `undo`
-
-- `ckpt_undo(ckpt_dir())` (ADR-009) goes behind a new `undo` builtin. 2.1.3 writes the checkpoints:
-  one group per approved remove or move, none for a declined or failed one.
-- The approval prompt's note then changes from `checkpointed first` to say that `undo` can put the
-  file back (`nl_launch_gated`). It restores the newest group
-  and returns the lines to print, and how many entries were and were not undone, which is the exit
-  status.
-- `commands.cyr` stopped advertising `undo` in 1.9.1, when the audit found nothing behind it. Add it
-  to `is_builtin` and the dispatch together.
-- **Test**: a tempdir round trip — `mkdir foo; touch foo/a; agnsh -c "remove foo/a"; agnsh -c "undo"`.
-
-**Arc closeout**: re-run the benchmarks. README's "Not shipped yet", `SECURITY.md`'s four
-NOT-IN-THE-BINARY sections and `security-model.md` all change with this arc.
 
 ---
 
@@ -295,8 +268,11 @@ No scoped work. Candidates:
 - An audit-log format break (would need migration tooling).
 - A different LLM transport than hoosh.
 
-**Re-evaluate at the close of 2.1.x** (NL execution). The trigger this section once named — "when
-Bucket 1 closes" — was never going to fire as a single event.
+**Re-evaluated at 2.1.4, the close of 2.1.x** (NL execution): nothing in the arc forced a break.
+- The audit log gained exec labels (`approved`, `timed_out`) without changing its format.
+- `-c` kept its exit statuses: 126 with nothing on stdin, as before.
+
+Re-evaluate at the close of 2.3.x (hoosh), whose transport is the third candidate.
 
 ---
 

@@ -357,3 +357,16 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-11-03T03:41:00Z,fc88fda-dirty,main,history/add_at_cap,304
 2026-11-03T03:41:00Z,fc88fda-dirty,main,security/context_new,3308
 2026-11-03T03:41:00Z,fc88fda-dirty,main,checkpoint/remove_4k,150673
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,parse/list_files,1923
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,parse/cd,1552
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,parse/find_files,2120
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,parse/git_status,1528
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,parse/shell_cmd,3313
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,translate/list_files,121
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,translate/cd,197
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,perm/classify_5,1333
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,sanitize/basename,43
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,sanitize/safe_path,55
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,history/add_at_cap,303
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,security/context_new,3301
+2026-11-03T04:22:58Z,4b7d5c3-dirty,main,checkpoint/remove_4k,151228

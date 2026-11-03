@@ -179,6 +179,37 @@ fn nl_audit_denied(v) {
     return 1;
 }
 
+# ⭐ 2.1.4 — the `undo` builtin: put back what the newest approved NL remove or move changed, from the
+# store at `dir` (ckpt_undo, ADR-009), newest entry first. One line per entry on stdout — `restored
+# <path>`, `moved <to> back to <path>`, or why not. An entry that cannot be undone (something is at
+# its path now) stays in the store, with the rest of its group still undone, so clearing the path
+# and typing `undo` again finishes it. Returns the exit status: 0 when the whole group was undone,
+# 1 when there was nothing to undo or an entry stays. Recorded as `executed` or `failed`.
+fn nl_undo(dir) {
+    var u = ckpt_undo(dir);
+    if (u == 0) {
+        eprintln_cstr("undo: out of memory");
+        audit_exec_ctx("undo", "error", 1);
+        return 1;
+    }
+    var lines = load64(u);
+    if (vec_len(lines) == 0) {
+        println("undo: nothing to undo");
+        audit_exec_ctx("undo", "failed", 1);
+        return 1;
+    }
+    for (var i = 0; i < vec_len(lines); i = i + 1) {
+        var l = vec_get(lines, i);
+        if (l != 0) { println(l); }
+    }
+    if (load64(u + 16) != 0) {
+        audit_exec_ctx("undo", "failed", 1);
+        return 1;
+    }
+    audit_exec_ctx("undo", "executed", 0);
+    return 0;
+}
+
 # The report filed for one `-c` run: input, mode and time, the report block, and the outcome (Str).
 fn nl_report_text(v, input_cstr, mode_label, time_cstr, outcome) {
     var sb = str_builder_new();
@@ -323,7 +354,7 @@ fn nl_launch_gated(v, line) {
             ckpt_group_drop(g);
             return _nl_refuse(v, run_line, why, "denied");
         }
-        note = "checkpointed first";
+        note = "undo can put it back";
     }
     store64(v + NV_ASKED, 1);
     var ans = ApprovalManager_request(ApprovalManager_new(), run_line, note, risk_from_permission(perm));

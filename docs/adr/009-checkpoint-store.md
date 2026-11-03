@@ -104,7 +104,8 @@ Two things were settled first:
 - **No caller in 2.0.3.** Approval-gated exec (roadmap 2.1.x) checkpoints before every REMOVE and
   MOVE, and the `undo` builtin calls `ckpt_undo`. The store's agnos arm is first exercised there.
   *2.1.3: approval-gated exec is its caller (ADR-011), and it drops a group whose command was
-  declined or failed (`ckpt_group_drop`). `undo` is the next slot.*
+  declined or failed (`ckpt_group_drop`). 2.1.4: the `undo` builtin calls `ckpt_undo` (`nl_undo`),
+  and the agnos QEMU test restores a file through it.*
 - **Directories are not recoverable.** Before an `rm -r` can be approved, approval-gated exec must
   decide what a refused checkpoint means: refuse the command, or say that undo will not restore it.
   *Ruled 2026-11-02 (ADR-011): refuse the command. A recursive remove stays BLOCKED.*

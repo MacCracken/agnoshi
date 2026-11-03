@@ -189,7 +189,8 @@ if not os.path.exists(os.path.join(SEED, CERT.lstrip("/"))):
 with open(os.path.join(SEED, CERT.lstrip("/")), "rb") as f:
     CERT_NONEMPTY = sum(len(l) + 1 for l in f.read().split(b"\n") if l)
 shutil.rmtree(os.path.join(SEED, CKPT.lstrip("/")), ignore_errors=True)
-for name, body in (("gated-a.txt", "GATED-A\n"), ("gated-b.txt", "GATED-B\n")):   # 2.1.3's fixtures
+for name, body in (("gated-a.txt", "GATED-A\n"), ("gated-b.txt", "GATED-B\n"),
+                   ("gated-c.txt", "GATED-C\n")):                                   # 2.1.3 / 2.1.4
     with open(os.path.join(SEED, name), "w") as f:
         f.write(body)
 with open(os.path.join(SEED, "redir-target.txt"), "w") as f:  # a planted symlink points here
@@ -296,6 +297,9 @@ SHELL_META = "ls $HOME"                 # a program's line: still refused, now a
 # -- and runs on a typed y; a typed n leaves the file. The disk image is checked after poweroff.
 GATED_YES = "remove /gated-a.txt"
 GATED_NO = "remove /gated-b.txt"
+# 2.1.4: a second approved remove, then `undo` -- which puts back the newest group (this one), and
+# leaves /gated-a.txt's entry in the store, where the disk check reads it.
+GATED_UNDO = "remove /gated-c.txt"
 REDIR_OK = "echo hello-redirect > /out.txt"
 REDIR_AUDIT = "echo pwned > " + AUDIT
 REDIR_LINK = "echo pwned > /redir-link"
@@ -397,13 +401,17 @@ try:
 
     # ---- 1b. approval-gated exec (2.1.3): checkpoint, ask, then run ----
     seg = run_wait(GATED_YES, "[y/N]", timeout=40)
-    check("an approval-tier remove asks first, and says it was checkpointed",
-          "Approval required -- asks before it runs" in seg and "checkpointed first ? [y/N]" in seg)
+    check("an approval-tier remove asks first, and says undo can put it back",
+          "Approval required -- asks before it runs" in seg and "undo can put it back ? [y/N]" in seg)
     seg = run_wait("y", "] >", timeout=40)
     check("...and a typed y runs it", "run:" not in seg and prompted(seg))
     seg = run_wait(GATED_NO, "[y/N]", timeout=40)
     seg = run_wait("n", "] >", timeout=40)
     check("a typed n declines it", "(declined)" in seg)
+    seg = run_wait(GATED_UNDO, "[y/N]", timeout=40)
+    seg = run_wait("y", "] >", timeout=40)
+    seg = run_wait("undo", "] >", timeout=40)
+    check("`undo` restores the newest approved remove (2.1.4)", "restored /gated-c.txt" in seg)
 
     # ---- 2. redirection ----
     # Control first: a plain open FOLLOWS the planted symlink, so a later refusal to redirect onto
@@ -574,9 +582,13 @@ def debugfs(cmd):
 
 
 check("the approved file is gone from the disk", "File not found" in debugfs("stat /gated-a.txt"))
+check("the undone file is back on the disk, with its bytes", "GATED-C" in debugfs("cat /gated-c.txt"))
+check("the undo is recorded as executed", results_for("undo") == ["executed"])
+check("the undone remove: needs_approval, approved, launched, executed",
+      results_for(GATED_UNDO) == ["needs_approval", "approved", "launched", "executed"])
 check("the declined file is still there", "File not found" not in debugfs("stat /gated-b.txt"))
 ck = [w for w in debugfs("ls " + CKPT).split() if w.endswith(".ckpt")]
-check(f"one checkpoint entry in {CKPT} (the store's agnos arm)", len(ck) == 1)
+check(f"one checkpoint entry left in {CKPT}: undo took its own, not /gated-a.txt's", len(ck) == 1)
 entry = debugfs("cat " + CKPT + "/" + ck[0]) if ck else ""
 check("...holding the removed file: its header and its bytes",
       "op: remove" in entry and "path: /gated-a.txt" in entry and "GATED-A" in entry)

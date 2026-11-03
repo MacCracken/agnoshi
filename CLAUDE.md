@@ -102,9 +102,9 @@ agnoshi (AI natural language shell, Cyrius)
   - **Shipped since 2.1.3** (ADR-011): an NL line in the USER_WRITE, SYSTEM_WRITE or ADMIN tier asks
     `ApprovalManager_request`'s `[y/N]` before it runs. A remove or move is checkpointed first. On a
     Linux host, ADMIN runs as `sudo -n` (`security_sudo_line`).
-  - ⚠ **What does NOT exist yet:** a sandbox, `undo` (the checkpoint is written, but nothing restores
-    it), and `session.cyr`'s session (not in the binary's include graph). Do not describe those as
-    shipped.
+  - **Shipped since 2.1.4:** the `undo` builtin restores the newest checkpoint group.
+  - ⚠ **What does NOT exist yet:** a sandbox, and `session.cyr`'s session (not in the binary's
+    include graph). Do not describe those as shipped.
 
 ## DO NOT
 

@@ -132,14 +132,15 @@ longer ones. The writer now seeks to the end on agnos before writing, and refuse
 write if the seek fails (a lost record is recoverable; one written over the log
 is not). Linux hosts were never affected — `O_APPEND` is honoured there.
 
-### 6. Checkpoint / Undo — ✅ checkpoint since 2.1.3, ⚠ `undo` next
+### 6. Checkpoint / Undo — ✅ checkpoint since 2.1.3, `undo` since 2.1.4
 
 The checkpoint store (`src/checkpoint.cyr`, rewritten in 2.0.3 —
 [ADR-009](../adr/009-checkpoint-store.md)) runs before every approved natural-language remove or move
 (2.1.3, [ADR-011](../adr/011-approval-gated-exec.md)). It runs before the prompt, so a file it cannot
 save refuses the command unasked, and a declined or failed command leaves no checkpoint behind.
-⚠ **There is no `undo` builtin yet** (roadmap 2.1.x — `undo`): **do not rely on rollback** until
-then. `cp` onto an existing file and typed shell lines are not checkpointed.
+The **`undo`** builtin (2.1.4, `nl_undo`) restores the newest group, newest entry first. An entry
+whose path is taken now stays in the store with its reason, and `undo` exits 1. `cp` onto an
+existing file and typed shell lines are not checkpointed, so `undo` cannot reverse them.
 
 What the store guarantees:
 

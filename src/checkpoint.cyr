@@ -8,8 +8,8 @@
 # bits, fell back to a fixed /tmp folder any user could create first, and called seven stdlib helpers
 # that no longer exist — so no build could include it. Only the idea survives.
 #
-# No caller yet (roadmap 2.1.x): approval-gated exec checkpoints before every REMOVE and MOVE, and the
-# `undo` builtin restores the newest group.
+# Callers: approval-gated NL exec checkpoints before every approved REMOVE and MOVE (2.1.3, ADR-011),
+# and the `undo` builtin restores the newest group (2.1.4, nl_undo).
 #
 # THE STORE is a private state folder (statepaths.cyr): host $XDG_STATE_HOME/agnoshi/checkpoints,
 # by default ~/.local/state/agnoshi/checkpoints; agnos /.agnsh_checkpoints. One file per entry:

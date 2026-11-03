@@ -169,7 +169,7 @@ program's and agnsh files its report in the report folder
 (`~/.local/state/agnoshi/reports/`); `agnsh -n -c "…"` classifies without running
 — see `docs/examples/scripting.md`.
 
-## Approval, and undo — not available yet
+## Approval, and undo
 
 A natural-language line that changes something — `copy a to b`, `remove notes.txt`, `install vim`
 — asks first: `⚠ [MED] approve: … ? [y/N]` on stderr, in every mode (2.1.3).
@@ -178,8 +178,12 @@ A natural-language line that changes something — `copy a to b`, `remove notes.
 - **On a Linux host, an install or another ADMIN line runs as `sudo -n`.** If sudo wants a password,
   it fails rather than asking.
 
-There is **no `undo` command yet** (roadmap 2.1.x — `undo`), so nothing restores a checkpoint. Do not
-rely on rollback until then.
+**`undo`** (2.1.4) puts it back: the newest approved remove or move, from its checkpoint.
+- It prints what it did: `restored <path>`, or `moved <to> back to <path>`.
+- It never overwrites. If something is at the path now, that entry stays, and `undo` says so; clear
+  the path and type `undo` again.
+- A copy onto an existing file, and your own typed commands (`rm`, `run …`), are not checkpointed,
+  so `undo` cannot reverse them.
 
 ## Next Steps
 
