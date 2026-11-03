@@ -6,6 +6,118 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-02 — cyrius 6.7.18
+
+A toolchain and dependency release. The tree needed **no code change for 6.7.18**. Every step of
+every `ci.yml` job was run as written under `bash -e`, the runner's shell, on a clean `git archive`
+of 2.1.0 with only the pin moved. All passed except *Check the committed lock*, which failed as it
+should (see below). They all passed again on the tree. ⚠ `docs/development/roadmap.md` is still not
+updated, as at 2.1.0: renumbering the arcs is deferred, and `docs/doc-health.md` marks the file stale.
+
+### Changed — toolchain `6.7.9` → `6.7.18`
+
+- **No code change needed**, and test counts are unchanged.
+- **Read: cyrius's `docs/development/ecosystem-migration.md` for 6.7.10 – 6.7.18.** That file is the
+  consumer-facing summary of each release; the CHANGELOG entries behind it run to about 45,000 lines.
+  For each entry, the constructs, functions and flags it names were grepped for in `src/`, `tests/`,
+  `scripts/` and `.github/`:
+  - 6.7.16 refuses an enum member or a struct field that is not followed by `;` or `,`, and
+    `cyrius lint` reports it too. All 8 enums and 22 structs here already end each one with `;`.
+  - 6.7.11 and 6.7.12 add two lint rules. One flags a constant offset that runs past a bare array;
+    the other flags a literal write length that does not match the literal's byte count. Many arrays
+    here fall under them (`var st[STAT_BUFSZ]`, `src/run_agnos.cyr`'s buffers), and every file CI
+    lints still has 0 warnings.
+  - 6.7.14 – 6.7.15 fix a constant global initialiser from program start. `OPEN_NOFOLLOW` in
+    `src/sanitize.cyr` keeps its value; `tests/test_core.tcyr` pins it on both architectures.
+  - 6.7.13 makes a bare `cyrius deps --lock` exit 1 after a pin move until `lib/` is re-vendored.
+    Nothing here runs `--lock`.
+  - On agnos, 6.7.11 makes `sys_close` of a negative fd return -1 before reaching the socket-slot
+    code, and hands a negative fd's read or write to the kernel. agnsh calls `sys_close` 24 times; it
+    ignores the results and checks every open before using the fd. The only other agnos-peer changes
+    are socket internals agnsh never calls, plus new `sys_fd_kind`, `sys_console_mode` and
+    `sys_sock_send_dl`. None of the new names collides with agnsh's.
+  - Most of the range has no site here: generics, struct and `Str` values, SIMD vectors, closures,
+    multi-value returns, asm, and Windows, macOS, cx and TLS work. 6.7.18's security fixes are in
+    modules agnsh does not include — `net`'s DNS encoder, sigil, bayan, TLS.
+- **Stdlib functions agnsh calls whose bodies changed:**
+  - `dir_list`, used by `src/checkpoint.cyr` and `src/report.cyr`, opens with `O_DIRECTORY | O_CLOEXEC`
+    (6.7.11). A FIFO at the path now fails with -ENOTDIR instead of blocking `open(2)` until a writer
+    comes.
+  - `args_init` reads `/proc/self/cmdline` to EOF, growing its buffer, instead of making one 2 MiB
+    read. On failure it now returns a negative errno; agnsh ignores the result, as before.
+  - `getenv` and `file_read_all` change style only (`+=`, `loop`).
+- **Binary sizes** (bytes):
+
+  | Target | 6.7.9 | 6.7.18 | Change |
+  |---|---|---|---|
+  | x86_64, DCE | 238,920 | 178,752 | −60,168 (−25.2 %) |
+  | aarch64, DCE | 550,024 | 489,864 | −60,160 (−10.9 %) |
+  | agnos (CI's build, no DCE) | 451,584 | 399,752 | −51,832 (−11.5 %) |
+
+  The drop is static data, not code generation.
+  - **When:** building with each cyrius from 6.7.9 to 6.7.18 places it in one step. The x86_64 binary
+    is 238,920 B at 6.7.10 and 178,776 B at 6.7.11, and stays within 24 B of that through 6.7.18.
+  - **Why:** 6.7.11 folds sakshi 2.5.10, which fixes its buffer declarations.
+    - A bare top-level `var x[N]` is N 8-byte slots, not N bytes.
+    - The two ring buffers, `var _sk_ring_buf[4096]` and `_sk_aring_buf`, were 32 KiB each, though the
+      code masks every index to 4,096 bytes. They are now `u8[4096]`.
+    - Two smaller buffers had the same mistake: the span stack (3,072 → 384 B) and the UDP address
+      (128 → 16 B).
+    - The four sum to 60,144 B, exactly the 6.7.11 step.
+  - **Unused:** nothing in `src/` or `tests/` includes `lib/sakshi.cyr`. It is linked only because
+    `cyrius build` links every `[deps] stdlib` module, and DCE removes functions, not data, so those
+    bytes were dead weight. sakshi's data still costs 9,296 B of the x86_64 binary. Dropping
+    `sakshi` and `net` from `[deps]` builds a 169,168 B binary; tried in a scratch copy only.
+  - **aarch64** still NOPs dead code in place: 816 functions, 245,444 B.
+
+### Changed — `cyrius.lock` re-locked: 40 files
+
+- `rm -rf lib && cyrius deps` now vendors **40 files**: the 39 from before plus `lib/slice.cyr`.
+  6.7.18's `lib/net.cyr` includes it because its parsers read the peer's bytes through bounded slices.
+  The lock changed in 28 hashes and the `cyrius` line, and a fresh resolve on a clean copy writes the
+  same lock byte for byte. `cyrius deps --locked` exits 0, and `--verify` checks all 40.
+- **2.1.0's *Check the committed lock* step caught its first real pin move.** On the clean copy with
+  only the pin moved, it exited 1 naming 30 differences: 28 hashes, `lib/slice.cyr` missing from the
+  lock, and the stdlib pin. Every other step passed. Before 2.1.0 that copy would have passed CI.
+
+### Verified
+
+- Every job of `ci.yml` on the tree, under `bash -e`: the 19 build-and-test steps, the security scan
+  and the docs checks. Unit 1052/1052, security 26/26, parse corpus 358/358, smoke 137/137; the same
+  three suites on aarch64 under qemu-user; host-reachable coverage 282/282; lint clean on all 32 files.
+- **agnos 1.57.14 in QEMU (KVM)**, on the tree that prints 2.1.1:
+  - `scripts/agnos-qemu-test.py`: **49/49 at `-smp 1` and 49/49 at `-smp 4`**. Each run has 64
+    complete audit records on disk, and the guest's read-back of 62 matches them, as at 2.1.0.
+  - `scripts/agnos-qemu-bench.py`, in one boot against the 6.7.9 build: both idle at 0 ticks and are
+    BLOCKED in 91 of 100 samples. All 20 `-c` statuses held, identical for both builds. Round trips
+    are within 0.05 %: `run` 79,674 → 79,664 µs per line, `pipe` 152,994 → 153,055 µs. The host load
+    was 3.1, so read these as a comparison, not as absolute figures.
+
+### Performance — neutral; the largest moves are layout
+
+Five alternating runs of each toolchain's bench binary, each run started with the 1-minute load below
+2 (1.90 – 1.91). Nine of the 13 medians are within −2.2 % to +1.3 % of 6.7.9. Four moved more:
+
+| Benchmark | 6.7.9 | 6.7.18 | Change | Same layout¹ |
+|---|---|---|---|---|
+| `sanitize/safe_path` | 59 ns | 53 ns | −10.2 % | 54 → 54 ns |
+| `translate/cd` | 211 ns | 196 ns | −7.1 % | 209 → 197 ns |
+| `parse/shell_cmd` | 3,475 ns | 3,329 ns | −4.2 % | 3,487 → 3,495 ns |
+| `parse/find_files` | 2,131 ns | 2,248 ns | +5.5 % | 2,134 → 2,185 ns (+2.4 %) |
+
+¹ **The layout control.** Both bench binaries were rebuilt with `sakshi` and `net` dropped from
+`[deps]`, which leaves them 296,720 and 296,728 B, and all four builds were run alternated.
+- `safe_path` and `shell_cmd` are flat in the matched pair, so their moves are layout. On 6.7.9
+  alone, dropping the two modules takes `safe_path` from 58 to 54 ns. It moved 35 → 59 ns the same
+  way at 2.0.4.
+- `translate/cd` (−6 %) and `parse/find_files` (+2.4 %, disjoint ranges) persist. Neither path calls
+  a stdlib function whose code changed: in the modules they use, the only code changes are the
+  `Str_*` methods, which agnsh does not call, and `vec`'s abort paths. So they come from the compiler
+  or from code alignment; this was not isolated further.
+
+The bench harness, `lib/bench.cyr`, is byte-identical across the two snapshots. One
+`bench-history.csv` row (`062681e-dirty`, recorded at load 1.91).
+
 ## [2.1.0] - 2026-11-02 — cyrius 6.7.9
 
 A toolchain and dependency release. The tree needed **no code change for 6.7.9**: every build-and-test

@@ -318,3 +318,16 @@ timestamp,commit,branch,benchmark,estimate_ns
 2026-11-02T23:16:15Z,e53a3a2-dirty,main,history/add_at_cap,319
 2026-11-02T23:16:15Z,e53a3a2-dirty,main,security/context_new,3328
 2026-11-02T23:16:15Z,e53a3a2-dirty,main,checkpoint/remove_4k,153046
+2026-11-03T01:30:19Z,062681e-dirty,main,parse/list_files,1931
+2026-11-03T01:30:19Z,062681e-dirty,main,parse/cd,1564
+2026-11-03T01:30:19Z,062681e-dirty,main,parse/find_files,2233
+2026-11-03T01:30:19Z,062681e-dirty,main,parse/git_status,1518
+2026-11-03T01:30:19Z,062681e-dirty,main,parse/shell_cmd,3339
+2026-11-03T01:30:19Z,062681e-dirty,main,translate/list_files,122
+2026-11-03T01:30:19Z,062681e-dirty,main,translate/cd,195
+2026-11-03T01:30:19Z,062681e-dirty,main,perm/classify_5,1326
+2026-11-03T01:30:19Z,062681e-dirty,main,sanitize/basename,45
+2026-11-03T01:30:19Z,062681e-dirty,main,sanitize/safe_path,53
+2026-11-03T01:30:19Z,062681e-dirty,main,history/add_at_cap,308
+2026-11-03T01:30:19Z,062681e-dirty,main,security/context_new,3279
+2026-11-03T01:30:19Z,062681e-dirty,main,checkpoint/remove_4k,152252

@@ -34,7 +34,7 @@ agnoshi (AI natural language shell, Cyrius)
 0. Read roadmap, CHANGELOG, and `docs/doc-health.md` — know what was intended and what's stale before auditing what was built
 1. `cyrius deps` to repopulate `./lib/` from the pinned stdlib snapshot. It does not delete
    files an earlier pin vendored, so after a pin bump run `rm -rf lib && cyrius deps` — that is
-   what CI's clean checkout gets (39 files at 6.7.9, each hash-pinned in the tracked `cyrius.lock`;
+   what CI's clean checkout gets (40 files at 6.7.18, each hash-pinned in the tracked `cyrius.lock`;
    a long-lived local `lib/` had grown to 114)
 2. Test + benchmark sweep of existing code. CI builds the agnos target but cannot run it: for
    anything touching an agnos path, run `python3 scripts/agnos-qemu-test.py` (boots agnsh on the
