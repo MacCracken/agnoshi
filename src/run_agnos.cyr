@@ -508,9 +508,21 @@ fn sh_run_program_bg(cmd, mode): i64 {
 # to the kernel caps (<=1024 B, <=16 entries — oversized degrades to the default env
 # kernel-side, so clamping here keeps inheritance working). Today agnsh's env is the
 # kybernet seed (HOME=/ PWD=/), so children see identical CONTENT either way — the
-# inheritance becomes observable the moment agnsh's env first differs (PWD-tracking on
-# agnos and PATH are flagged candidates, not added here). [128] = 1024 B (8N).
+# inheritance becomes observable the moment agnsh's env first differs (PATH is a flagged
+# candidate, not added here). [128] = 1024 B (8N).
+# ⭐ 2.2.0: PWD and OLDPWD are agnsh's own (cwd.cyr, ADR-012) — the inherited ones are dropped and
+# the tracked working directory is passed instead, within the same caps.
 var sh_env_blob[128];
+
+# Append one "KEY=VALUE" cstring to sh_env_blob at `off`, within the kernel's 1024-byte cap: the new
+# offset, or `off` unchanged when it does not fit.
+fn _sh_env_put(off, kv): i64 {
+    var el = strlen(kv);
+    if (off + el + 1 > 1024) { return off; }
+    memcpy(&sh_env_blob + off, kv, el);
+    store8(&sh_env_blob + off + el, 0);
+    return off + el + 1;
+}
 fn sh_build_env_blob(): i64 {
     # cyrius 6.1.32+ parks the exec init-stack base in r15 at entry, read via
     # _agnos_argv_base() (was the _agnos_init_rsp global, retired with the old
@@ -522,9 +534,13 @@ fn sh_build_env_blob(): i64 {
     var base = irsp + 8 + (acnt + 1) * 8;   # &envp[0]
     var off = 0;
     var j = 0;
-    while (j < 16) {
+    var w = 0;                                         # entries written; the kernel takes 16
+    while (w < 14) {                                   # 2 kept for PWD and OLDPWD
         var ep = load64(base + j * 8);
         if (ep == 0) { break; }                        # envp NULL terminator
+        j = j + 1;
+        if (cstr_starts_with(ep, "PWD=") == 1) { continue; }
+        if (cstr_starts_with(ep, "OLDPWD=") == 1) { continue; }
         var el = 0;
         while (load8(ep + el) != 0) { el = el + 1; }
         if (off + el + 1 > 1024) { break; }            # clamp: keep whole entries only
@@ -532,8 +548,10 @@ fn sh_build_env_blob(): i64 {
         while (k < el) { store8(&sh_env_blob + off + k, load8(ep + k)); k = k + 1; }
         store8(&sh_env_blob + off + el, 0);
         off = off + el + 1;
-        j = j + 1;
+        w = w + 1;
     }
+    off = _sh_env_put(off, str_cat3_cstr("PWD=", cwd_get(), ""));
+    if (g_oldpwd != 0) { off = _sh_env_put(off, str_cat3_cstr("OLDPWD=", g_oldpwd, "")); }
     return off;                                        # 0 = no env to pass
 }
 
@@ -974,6 +992,10 @@ fn sh_run_redirect(line, mode): i64 {
         audit_exec_ctx(line, "denied", AUDIT_NO_EXIT);
         return EXIT_NOT_RUN;
     }
+    # 2.2.0: a relative target is agnsh's to resolve, against its own working directory (ADR-012) —
+    # agnos would root it at /. Before the state-file checks below, so `> .agnsh_audit.log` in / is
+    # caught too. is_safe_path has already refused a `..`.
+    file = cwd_resolve(file);
     # ⛔ REFUSE TO REDIRECT OVER THE SHELL'S OWN STATE FILES. The target is opened
     # AO_TRUNC, so `owl /x > /.agnsh_audit.log` truncated the audit trail — and,
     # before 1.9.2, left no record of having done so, in either direction. An audit

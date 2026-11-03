@@ -21,6 +21,7 @@ include "lib/process.cyr"
 
 include "src/sanitize.cyr"
 include "src/statepaths.cyr"
+include "src/cwd.cyr"
 include "src/report.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
@@ -263,6 +264,116 @@ fn _t_ck_clean(base, store, work) {
     xrmdir(store);
     xunlink(str_cat3_cstr(base, "/", "storefile"));
     xrmdir(base);
+    return 0;
+}
+
+# 2.2.0 — the working directory (cwd.cyr, ADR-012): path normalization, `cd` and `pwd` on the host,
+# the PWD children see, and a natural-language `cd`. Run last, and the working directory is put back.
+fn _t_cwd() {
+    var orig = cwd_get();
+    check("cwd_get is the kernel's working directory on the host", orig != 0 && load8(orig) == 47);
+    # Normalization and joining are target-free: the agnos cwd is built from them.
+    check("cwd_normalize drops . and resolves ..", streq(cwd_normalize("/a/./b/../c//d/"), "/a/c/d") == 1);
+    check("...never above /", streq(cwd_normalize("/.."), "/") == 1 && streq(cwd_normalize("/a/.."), "/") == 1);
+    check("...keeps / itself", streq(cwd_normalize("/"), "/") == 1 && streq(cwd_normalize("//"), "/") == 1);
+    check("...and refuses a relative path", cwd_normalize("a/b") == 0 && cwd_normalize(0) == 0);
+    check("cwd_join makes a relative path absolute", streq(cwd_join("/x", "y/z"), "/x/y/z") == 1);
+    check("...leaves an absolute one alone, normalized", streq(cwd_join("/x", "/p/./q"), "/p/q") == 1);
+    check("...and goes up", streq(cwd_join("/x/y", ".."), "/x") == 1 && cwd_join(0, "y") == 0);
+    check("cwd_resolve joins the working directory", streq(cwd_resolve("rel"), str_cat3_cstr(orig, "/", "rel")) == 1
+      || streq(orig, "/") == 1);
+    check("path_arg_cstr passes a host path as given", streq(path_arg_cstr(str_from("rel/x")), "rel/x") == 1);
+
+    var cdir = tmp_state_path("agnsh_selftest_cwd");
+    var cfile = str_cat3_cstr(cdir, "/", "afile");
+    xunlink(cfile);
+    xrmdir(cdir);
+    xmkdir(cdir, 448);
+    _t_write_cstr(cfile, "x\n");
+    var cerr = tmp_state_path("agnsh_selftest_cwderr");
+    var cout = tmp_state_path("agnsh_selftest_cwdout");
+    check("before any cd, children get the environment as it was", host_environ_envp() != 0
+      && g_oldpwd == 0);
+    var c1 = sh_cd(cdir);
+    var after = cwd_get();
+    check("cd DIR: 0, and the working directory is DIR", c1 == 0 && streq(after, cdir) == 1);
+    check("...remembering where it was", streq(g_oldpwd, orig) == 1);
+    # The children's PWD and OLDPWD follow the cd.
+    var cev = host_environ_envp();
+    var npwd = 0;
+    var nold = 0;
+    var pwd_ok = 0;
+    var old_ok = 0;
+    for (var ci = 0; load64(cev + ci * 8) != 0; ci = ci + 1) {
+        var ce = load64(cev + ci * 8);
+        if (cstr_starts_with(ce, "PWD=") == 1) {
+            npwd = npwd + 1;
+            if (streq(ce + 4, cdir) == 1) { pwd_ok = 1; }
+        }
+        if (cstr_starts_with(ce, "OLDPWD=") == 1) {
+            nold = nold + 1;
+            if (streq(ce + 7, orig) == 1) { old_ok = 1; }
+        }
+    }
+    check("...and a child gets PWD=DIR, once", npwd == 1 && pwd_ok == 1);
+    check("...and OLDPWD, once", nold == 1 && old_ok == 1);
+    _t_capture_begin(1, 9, cout);
+    var cpw = sh_pwd();
+    _t_capture_end(1, 9);
+    check("pwd prints it", cpw == 0 && _t_file_has(cout, cdir) == 1);
+    _t_capture_begin(1, 9, cout);
+    var cback = sh_cd("-");
+    _t_capture_end(1, 9);
+    check("cd -: back, and the directory is printed", cback == 0 && streq(cwd_get(), orig) == 1
+      && _t_file_has(cout, orig) == 1);
+    _t_capture_begin(2, 10, cerr);
+    var cmiss = sh_cd("/nonexistent/agnsh/selftest");
+    var cstay = streq(cwd_get(), orig);
+    var cnot = sh_cd(cfile);
+    var ctwo = sh_cd("a b");
+    var cblank = sh_cd("   ");
+    _t_capture_end(2, 10);
+    check("cd to a missing directory: 1, saying so, and nothing moves", cmiss == 1
+      && _t_file_has(cerr, "no such directory") == 1 && cstay == 1);
+    check("cd to a file: 1, not a directory", cnot == 1 && _t_file_has(cerr, "not a directory") == 1);
+    check("cd with two arguments: 1", ctwo == 1 && _t_file_has(cerr, "too many arguments") == 1);
+    var home = getenv("HOME");
+    if (home != 0) {
+        if (is_dir(str_from(home)) == 1) {
+            check("cd with nothing (or blanks) goes home", cblank == 0 && streq(cwd_get(), cwd_normalize(home)) == 1);
+        }
+    }
+    sh_cd(orig);
+    # A natural-language cd runs the builtin (2.2.0); it used to be reported, not run.
+    var gaud = tmp_state_path("agnsh_selftest_cwdaudit");
+    xunlink(gaud);
+    audit_path_override_set(gaud);
+    var nvc = nl_verdict(str_cat3_cstr("go to ", cdir, ""), "AI-AUTO");
+    check("go to DIR is runnable now, and not gated", load64(nvc + NV_RUN) == 1 && load64(nvc + NV_GATED) == 0);
+    check("...with no 'arrives in a later release' hint",
+      str_contains_cstr(load64(nvc + NV_BLOCK), "later release") == 0);
+    _t_capture_begin(1, 9, cout);
+    var ncd = nl_run_interactive(str_cat3_cstr("go to ", cdir, ""), Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    check("...and it changes the working directory", ncd == 0 && streq(cwd_get(), cdir) == 1);
+    check("...recorded as executed", _t_count_in(gaud, "\"result\":\"executed\"") == 1);
+    _t_capture_begin(2, 10, cerr);
+    _t_capture_begin(1, 9, cout);
+    var nbad = nl_run_interactive("go to /nonexistent/agnsh/selftest", Mode.AI_AUTONOMOUS);
+    _t_capture_end(1, 9);
+    _t_capture_end(2, 10);
+    check("an NL cd that fails: 1, recorded as failed", nbad == 1 && _t_count_in(gaud, "\"result\":\"failed\"") == 1);
+    sh_cd(orig);
+    check("nl_cd takes the directory from the translation",
+      nl_cd(nl_verdict(str_cat3_cstr("go to ", cdir, ""), "AI-AUTO")) == 0 && streq(cwd_get(), cdir) == 1);
+    sh_cd(orig);
+    audit_path_override_set(0);
+    xunlink(gaud);
+    check("the working directory is put back", streq(cwd_get(), orig) == 1);
+    xunlink(cfile);
+    xrmdir(cdir);
+    xunlink(cerr);
+    xunlink(cout);
     return 0;
 }
 
@@ -919,7 +1030,7 @@ fn main() {
     check("not builtin git", is_builtin("git") == 0);
     # cd lives in the non-compiled session.cyr: it must NOT be advertised until it is wired in
     # (roadmap 2.2.x). undo is wired since 2.1.4 (nl_undo; _t_gated asserts it).
-    check("cd not yet a builtin", is_builtin("cd") == 0);
+    check("cd is a builtin (2.2.0)", is_builtin("cd") == 1 && is_builtin("pwd") == 1);
     check("undo is a builtin", is_builtin("undo") == 1);
 
     var intent = Intent_new(IntentTag.LIST_FILES);
@@ -3766,6 +3877,7 @@ fn main() {
 
     _t_checkpoint();
     _t_gated();
+    _t_cwd();
 
     return report();
 }

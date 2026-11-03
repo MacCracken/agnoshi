@@ -6,6 +6,107 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-02 — `cd` and `pwd`
+
+The first slot of the 2.2.x arc, the interactive shell. agnsh has a working directory
+([ADR-012](docs/adr/012-working-directory.md)).
+- **Linux host:** it is the kernel's.
+- **agnos:** there is no cwd syscall, and none is to be added, so agnsh keeps its own. It resolves
+  its own paths against it and passes it to programs as `PWD`.
+- **Before this:** a typed `cd /tmp` went to the natural-language parser, which printed a proposal
+  and changed nothing.
+
+### Added
+
+- **`src/cwd.cyr`** (the 28th module): the `cd` and `pwd` builtins, interactive and under `-c`.
+  - **`cd`:** `cd DIR`; `cd`, or `cd ~`, goes to `$HOME`; `cd ~/x`; `cd -` goes back and prints where.
+  - **Failures** exit 1 and say why on stderr: no such directory, not a directory, permission denied,
+    too many arguments.
+  - **`pwd`** prints the working directory.
+  - **The builtin list:** both are in `is_builtin` (`cd` was held out until it existed, 1.9.1), the
+    help and the banner.
+- **A natural-language directory change runs `cd`** (`nl_cd`). `switch to /tmp` now moves the shell,
+  recorded `executed` or `failed`. It used to print `Hint: cd is a shell builtin -- it arrives in a
+  later release` and exit 127. ADR-008 is amended.
+- **Children see where the shell is.**
+  - **Host:** once agnsh has changed directory, a launched program gets `PWD` and `OLDPWD` as they are
+    now (`host_environ_envp`). Before any `cd`, the environment passes through as it was.
+  - **agnos:** the env blob always carries agnsh's own `PWD`, plus `OLDPWD` after a `cd`
+    (`sh_build_env_blob`), inside the kernel's 16-entry, 1 KB cap.
+- **ADR-012**, the working directory.
+
+### Changed — agnos: agnsh's paths follow its working directory
+
+- **Natural-language path arguments** (`path_arg_cstr`) are resolved against agnsh's directory. That
+  covers `ls`, `cat`/`owl`, `find`, `grep`'s path, `cd`, `mkdir`, `cp`, `mv`, `rm` and `df`. So a
+  program and a checkpoint of the same line see the same absolute file.
+- **No path means the working directory.** An `ls`, `find` or `grep -r` with no path gets the
+  working directory, not `.`, which agnos roots at `/`.
+- **A relative `>` target** is resolved, before the audit-log and history guards compare it.
+- **A checkpoint's relative path** (`ckpt_abs`) resolves against the working directory; it used to
+  be rooted at `/`.
+- **Host translations are unchanged:** programs there inherit the real working directory.
+
+### Not done here
+
+- **kriya and owl do not resolve relative operands against `$PWD` on agnos.** kriya reads it only for
+  its own `pwd -L`, and owl needs an absolute path there.
+- So on agnos, `cd /tmp` then a typed `ls notes` still lists `/notes`. A natural-language
+  `list files in notes` does follow `cd`.
+- This is a roadmap § Gated row; agnsh's exported `PWD` is what they would read.
+
+### Tests
+
+- **test_core 1109 → 1137.** `_t_cwd` runs last and puts the working directory back. It covers:
+  - `cwd_normalize` and `cwd_join` (`.`, `..` never above `/`, repeated slashes, relative refused);
+  - `path_arg_cstr` passing a host path through;
+  - `cd` to a directory, then `pwd`, `cd -`, a missing directory, a file, two arguments, blanks
+    (home);
+  - a child's `PWD` and `OLDPWD`, once each, only after a `cd`;
+  - a natural-language `go to` moving the shell, recorded `executed`, and one that fails, `failed`.
+
+  Host-reachable coverage stays 100 % (300 / 300).
+- **Smoke 164 → 173.**
+  - `-c cd` with its exit statuses and message, and `-c pwd`.
+  - An interactive `cd` then `pwd`.
+  - `env` after a `cd` showing `PWD` and `OLDPWD`.
+  - `switch to DIR` moving the shell. `go to DIR` runs the Go toolchain when `go` is on `$PATH`,
+    since a first word that names a program is a shell line (ADR-007).
+  - `cd -`.
+- **`scripts/agnos-qemu-test.py` § 1c:**
+  - `cd /cwdtest`, then `pwd`;
+  - a relative `>` target that lands inside it, read back off the disk image;
+  - a natural-language `show contents of inside.txt` that reads `/cwdtest/inside.txt` through owl;
+  - `run /bin/envprint` showing `PWD=/cwdtest` and `OLDPWD=/`. `tests/agnos_envprint.cyr` is a new
+    fixture; kriya's `env` cannot show agnsh's environment there, because it reads
+    `/proc/self/environ`, which agnos has not got;
+  - a failed `cd`, then `cd ..` back to `/`.
+
+### Verified
+
+- Every job of `ci.yml` on a copy of the tree, under `bash -e`: all 23 steps.
+  - Unit 1137/1137, security 26/26, parse corpus 358/358, smoke 173/173.
+  - The same three suites on aarch64 under qemu-user.
+  - Host-reachable coverage 300/300, and lint clean on all 35 files.
+- **agnos 1.57.14 in QEMU (KVM):**
+  - `scripts/agnos-qemu-test.py`: **70/70 at `-smp 1` and 70/70 at `-smp 4`**, 8 of them new (§ 1c).
+    82 complete audit records are on disk.
+  - `scripts/agnos-qemu-bench.py`, in one boot against the 2.1.4 build:
+    - Both idle at 0 ticks, BLOCKED in 91 of 100 samples.
+    - All 20 `-c` statuses held, identical.
+    - Round trips are within 0.1 %: `run` 79,781 → 79,811 µs per line, `pipe` 153,290 → 153,279 µs.
+      The host load was 3.1.
+- **Binary sizes:** x86_64 204,080 → 208,528 B (+4,448), aarch64 490,608 → 490,960 B, agnos
+  404,408 → 408,792 B.
+
+### Performance — neutral
+
+Five alternating runs of the 2.1.4 and 2.2.0 bench binaries, each started with the 1-minute load
+below 2 (1.73 – 1.96). All 13 medians are within −2.3 % to +0.7 % of 2.1.4. `sanitize/safe_path`
+holds at 54 ns, and the translators the path change touches (`translate/list_files`,
+`translate/cd`) are unchanged: on the host, `path_arg_cstr` is the same conversion as before. One
+`bench-history.csv` row (`023d3af-dirty`, recorded at load 1.73).
+
 ## [2.1.4] - 2026-11-02 — `undo`, and the 2.1.x arc closes
 
 The `undo` builtin puts back what the newest approved natural-language remove or move changed, from

@@ -7,8 +7,8 @@
 #   - omitted `version` and `run` — both real arms in the loop.
 # The next consumer (completion, a dispatch fast path, an approval bypass) would
 # have inherited all three. `cd` and `undo` come back here when session.cyr and
-# checkpoint.cyr are wired in — not before. `undo` came back in 2.1.4 (nl_undo); `cd` waits for
-# roadmap 2.2.x.
+# checkpoint.cyr are wired in — not before. `undo` came back in 2.1.4 (nl_undo), and `cd` in 2.2.0
+# (cwd.cyr), with `pwd`.
 fn is_builtin(cmd) {
     if (streq(cmd, "exit") == 1) { return 1; }
     if (streq(cmd, "quit") == 1) { return 1; }
@@ -18,6 +18,8 @@ fn is_builtin(cmd) {
     if (streq(cmd, "mode") == 1) { return 1; }
     if (streq(cmd, "history") == 1) { return 1; }
     if (streq(cmd, "undo") == 1) { return 1; }
+    if (streq(cmd, "cd") == 1) { return 1; }
+    if (streq(cmd, "pwd") == 1) { return 1; }
     if (streq(cmd, "run") == 1) { return 1; }
     if (streq(cmd, "reboot") == 1) { return 1; }
     if (streq(cmd, "poweroff") == 1) { return 1; }
@@ -33,6 +35,8 @@ fn builtin_description(cmd) {
     if (streq(cmd, "mode") == 1) { return "Show or change operating mode"; }
     if (streq(cmd, "history") == 1) { return "Show command history"; }
     if (streq(cmd, "undo") == 1) { return "Put back the last approved remove or move"; }
+    if (streq(cmd, "cd") == 1) { return "Change the working directory"; }
+    if (streq(cmd, "pwd") == 1) { return "Print the working directory"; }
     if (streq(cmd, "run") == 1) { return "Run a program from an absolute path"; }
     if (streq(cmd, "reboot") == 1) { return "Restart the machine"; }
     if (streq(cmd, "poweroff") == 1) { return "Shut the machine down"; }

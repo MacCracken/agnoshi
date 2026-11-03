@@ -112,10 +112,6 @@ fn nl_verdict(input_cstr, mode_label) {
         }
     } elif (tag == IntentTag.SHELL_COMMAND) {
         str_builder_add_cstr(sb, "  Hint: not a known command here -- nothing was run\n");
-    } elif (tag == IntentTag.CHANGE_DIR) {
-        # `cd` in a child process changes the child's directory and nothing else: it is a shell
-        # builtin, and agnsh's own `cd` is roadmap 2.2.x.
-        str_builder_add_cstr(sb, "  Hint: cd is a shell builtin -- it arrives in a later release\n");
     } elif (load64(translation + 40) != 0) {
         str_builder_add_cstr(sb, "  Hint: routed to an MCP tool -- not run in this build\n");
     } elif (streq(desc, "Unknown intent") == 1) {
@@ -139,9 +135,6 @@ fn nl_verdict(input_cstr, mode_label) {
             return _nv_not_run(v, sb, "a shell pipeline", EXIT_NOTHING_TO_RUN);
         }
         return _nv_not_run(v, sb, "a multi-step request", EXIT_NOTHING_TO_RUN);
-    }
-    if (tag == IntentTag.CHANGE_DIR) {
-        return _nv_not_run(v, sb, "a directory change", EXIT_NOTHING_TO_RUN);
     }
     if (load64(translation + 40) != 0) {
         return _nv_not_run(v, sb, "an MCP query", EXIT_NOTHING_TO_RUN);
@@ -269,10 +262,31 @@ fn nl_command_line(tr) {
     return str_cstr(str_builder_build(sb));
 }
 
+# 2.2.0 — a CHANGE_DIR translation runs the `cd` builtin (cwd.cyr, ADR-012), not a program: `cd` in a
+# child process changes the child's directory and nothing else, which is why it was reported and not
+# run until now. Recorded as `executed` or `failed`, as a launch's outcome is. Returns sh_cd's status.
+fn nl_cd(v) {
+    var args = load64(load64(v + NV_TRANSLATION) + 8);
+    var dir = 0;
+    if (args != 0) {
+        if (vec_len(args) > 0) { dir = vec_get(args, 0); }
+    }
+    var code = sh_cd(dir);
+    var line = "cd";
+    if (dir != 0) { line = str_cat3_cstr("cd ", dir, ""); }
+    if (code == 0) {
+        audit_exec_ctx(line, "executed", 0);
+    } else {
+        audit_exec_ctx(line, "failed", code);
+    }
+    return code;
+}
+
 # Launch a runnable verdict's translation exactly as a typed `run` of the same command would go: the
 # mode gate (HUMAN/STRICT confirm), the `launched` then outcome audit records, the child's status.
 # Returns the exit status (>= 0), LAUNCH_DECLINED, or LAUNCH_FAILED.
 fn nl_launch(v, mode) {
+    if (load64(v + NV_TAG) == IntentTag.CHANGE_DIR) { return nl_cd(v); }
     var tr = load64(v + NV_TRANSLATION);
     var line = nl_command_line(tr);
     if (line == 0) {

@@ -31,9 +31,9 @@ current mode (default is `[ASSIST]`):
 
 ```
 $ agnsh
-agnoshi 2.0.3
+agnoshi 2.2.0
 AI-native shell -- type a natural-language command, or 'exit' to quit.
-Built-ins: help, version, mode, history, clear, exit
+Built-ins: help, version, mode, history, cd, pwd, undo, clear, exit
 Run: a program's name, or run /abs/path   (pipelines, > and & are AGNOS-only)
 
 [ASSIST] > show me all files in /tmp/demo

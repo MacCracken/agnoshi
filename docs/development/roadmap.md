@@ -14,7 +14,7 @@
 > - The skipped 2.0.x slots opened 2.1.x at 2.1.3, and the interactive shell and hoosh arcs moved
 >   down one minor each. 2.1.x closed at 2.1.4 (`undo`).
 >
-> **Cite a slot by arc and title** — `roadmap 2.2.x — cd / pwd` — never by patch number
+> **Cite a slot by arc and title** — `roadmap 2.2.x — .agnshrc` — never by patch number
 > alone: titles survive a renumber. References name functions and files, not line numbers.
 >
 > Verified against `src/` and the sibling repos on **2026-11-02**. The tree was at 2.1.2 (cyrius
@@ -36,7 +36,7 @@
 
 | Arc | Theme | Next up | Gate |
 |---|---|---|---|
-| **2.2.x** | Interactive shell — `cd`, an rc file, a line editor | **2.2.0** — `cd` / `pwd` | host: none; agnos pieces gated |
+| **2.2.x** | Interactive shell — `cd`, an rc file, a line editor | **2.2.1** — `.agnshrc` (`cd` / `pwd` shipped in 2.2.0) | host: none; agnos pieces gated |
 | **2.3.x** | hoosh / LLM — answer questions, suggest commands | **2.3.0** — hoosh client (host) | none — agnos's socket adapter shipped in cyrius 6.6.7, not yet run by agnsh |
 
 **agnoshi's premise — natural language becomes execution — is shipped.** The NL execution arc closed
@@ -59,6 +59,9 @@ timeout.
   (`WAIT_BLOCK`; `SPAWN_F_CLEANFD` is 1.57.6), and 1.57.8 for a PTY-hosted shell to wait in the kernel.
 - **Linux host:** programs run through `src/run_host.cyr`, a `$PATH` lookup and an argv launcher
   behind `run`, barewords and NL exec. The host refuses `|`, `>` and `&` (2.0.0).
+- **The working directory:** since 2.2.0 the host's is the kernel's, and agnos's is agnsh's own
+  (agnos has no cwd syscall; [ADR-012](../adr/012-working-directory.md)). agnsh resolves its own paths
+  against it there, but a typed program's relative operands are the program's to resolve (§ Gated).
 - **Host console sessions:** since 2.1.2, an interactive agnsh started with `/dev/null` on stdin and
   stdout (a kybernet service) runs on `/dev/console`, with no controlling terminal
   ([ADR-010](../adr/010-console-without-ownership.md)).
@@ -72,25 +75,6 @@ on the other.
 
 The shell as a daily driver. The host halves are unblocked; the agnos halves are agnsh-owned work or
 sit on userland components, not on the kernel.
-
-### 2.2.0 — `cd` / `pwd`
-
-There is no `cd` and no `pwd` builtin. `cd /tmp` parses to `IntentTag.CHANGE_DIR`, prints its
-proposal, and never changes directory.
-
-- **Host**: native builtins in `agnsh.cyr`'s loop. That is lighter than adopting
-  `Session_run_interactive` from `session.cyr`, whose `cd` block also treats args as `Str` where
-  `split_command_line` emits cstrings.
-- **agnos — agnsh-owned, permanently.** agnos's roadmap lists a userland-owned cwd among its standing
-  boundaries: no chdir/getcwd syscall, by design. The 6.7.18 peer still stubs `sys_chdir` to -38.
-  - agnsh tracks its own cwd and resolves its own relative paths against it; a `>` target must be
-    absolute today.
-  - It exports `PWD` through the env blob `sh_build_env_blob` hands to `#37` / `#43`. Children
-    currently inherit kybernet's `PWD=/`.
-  - ⚠ Check whether kriya and owl resolve relative operands against `$PWD` before promising `cd`
-    semantics to them.
-- If `session.cyr` code is reused, its `ui_show_*` calls need real bodies first. agnsh has no stubs
-  for them (the two dead `return 0` ones were deleted in 1.9.15), so the build fails until they exist.
 
 ### 2.2.1 — `.agnshrc`
 
@@ -137,8 +121,8 @@ The pre-flight for 2.2.4; no live-binary change.
 - `prompt.cyr` finds `.git/HEAD` only in the immediate cwd.
 - The v1.0 parent walk used `fs_parent`, which no longer exists; `path_dirname` (`lib/fs.cyr`) does
   the job.
-- `prompt.cyr` is outside the include graph, so this is its wire-up. It needs 2.2.0 for a cwd worth
-  walking.
+- `prompt.cyr` is outside the include graph, so this is its wire-up. The cwd to walk up from is
+  `cwd_get` (2.2.0).
 
 Rides this arc when there is demand:
 - **`docs <cmd>`**, a raw man-page viewer: the human half of the man-page pair, whose other half is
@@ -213,6 +197,7 @@ Open, with the trigger outside agnoshi.
 | Gate | Filed as | What it unblocks in agnsh |
 |---|---|---|
 | Raw keyboard input | puka (line discipline) | 2.2.3's editor on agnos. `kbscan #42` works from ring 3 but loses keys (0–4 of 9 at a 100 ms hold). |
+| kriya and owl resolve relative operands against `$PWD` on agnos | not filed yet (kriya, owl) | `cd` for typed program lines on agnos. agnsh exports its working directory as `PWD` since 2.2.0, but at 2.2.0 kriya reads `$PWD` only for its own `pwd -L`, and owl needs an absolute path there. Until then, `cd /tmp` then a typed `ls notes` lists `/notes`. agnsh's own paths — a `>` target, a natural-language path — already follow `cd` (ADR-012). |
 
 ### Opened upstream — agnsh's half, not yet scheduled
 

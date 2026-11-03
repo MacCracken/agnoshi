@@ -1,0 +1,187 @@
+# cwd.cyr — the shell's working directory: the `cd` and `pwd` builtins (2.2.0, ADR-012).
+#
+# Linux host: the kernel's. `cd` is chdir(2) and `pwd` is getcwd(2). agnsh remembers the directory it
+# left, for `cd -`, and once it has changed directory its children get PWD and OLDPWD as they are now
+# (host_environ_envp), not as agnsh was started with.
+#
+# agnos: there is no cwd syscall, and none is to be added — "CWD is userland-owned: agnsh tracks its
+# own CWD and passes absolute paths to every syscall" (agnos userland ABI § 3.2; a relative name is
+# rooted at /). So agnsh keeps it here, seeded from $PWD (kybernet's seed is /). It resolves its own
+# relative paths against it — a `cd` target, a `>` target, the paths a natural-language translation
+# names — and exports PWD and OLDPWD to its children (sh_build_env_blob).
+# ⚠ A program's own relative operands are the program's to resolve. kriya and owl do not read $PWD
+# for them (checked at 2.2.0; roadmap § Gated), so on agnos a typed `ls notes` still means /notes.
+
+var g_cwd = 0;       # agnos: the tracked working directory, absolute and normalized; 0 until first use
+var g_oldpwd = 0;    # both targets: the directory before the last successful cd; 0 until one
+
+# `path` (absolute: it starts with /) normalized: `.` dropped, `..` removes the component before it
+# (never above /), repeated slashes collapsed, no trailing slash except on "/" itself. A fresh cstring,
+# or 0 when `path` is not absolute.
+fn cwd_normalize(path) {
+    if (path == 0) { return 0; }
+    if (load8(path) != 47) { return 0; }
+    var n = strlen(path);
+    var out = alloc(n + 2);
+    if (out == 0) { return 0; }
+    store8(out, 47);
+    var o = 1;                         # bytes written; out[0] is the root's /
+    var i = 0;
+    while (i < n) {
+        while (i < n && load8(path + i) == 47) { i = i + 1; }
+        var s = i;
+        while (i < n && load8(path + i) != 47) { i = i + 1; }
+        var len = i - s;
+        if (len == 0) { continue; }
+        if (len == 1 && load8(path + s) == 46) { continue; }                          # "."
+        if (len == 2 && load8(path + s) == 46 && load8(path + s + 1) == 46) {          # ".."
+            if (o > 1) {
+                o = o - 1;                                  # the slash before the last component
+                while (o > 1 && load8(out + o - 1) != 47) { o = o - 1; }
+                if (o > 1) { o = o - 1; }                   # and that component's own slash
+            }
+            continue;
+        }
+        if (o > 1) {
+            store8(out + o, 47);
+            o = o + 1;
+        }
+        memcpy(out + o, path + s, len);
+        o = o + len;
+    }
+    store8(out + o, 0);
+    return out;
+}
+
+# `path` made absolute against `base` (an absolute directory), then normalized. 0 when either is
+# missing or `base` is not absolute.
+fn cwd_join(base, path) {
+    if (path == 0) { return 0; }
+    if (load8(path) == 47) { return cwd_normalize(path); }
+    if (base == 0) { return 0; }
+    return cwd_normalize(str_cat3_cstr(base, "/", path));
+}
+
+# The working directory, absolute: the kernel's on the host (0 when getcwd fails), the tracked one on
+# agnos (from $PWD at first use when it is absolute, otherwise /).
+fn cwd_get() {
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (g_cwd == 0) {
+        var pwd = getenv("PWD");
+        if (pwd != 0) { g_cwd = cwd_normalize(pwd); }
+        if (g_cwd == 0) { g_cwd = "/"; }
+    }
+    return g_cwd;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var buf = alloc(4096);
+    if (buf == 0) { return 0; }
+    if (syscall(SYS_GETCWD, buf, 4096) <= 0) { return 0; }
+    return buf;
+    #endif
+}
+
+# `path` resolved against the working directory: absolute and normalized. `path` itself when the
+# working directory cannot be read.
+fn cwd_resolve(path) {
+    var r = cwd_join(cwd_get(), path);
+    if (r == 0) { return path; }
+    return r;
+}
+
+# The `cd` builtin. `arg` is what follows `cd` on the line (a cstring, or 0):
+#   none, or `~`   $HOME
+#   `~/x`          $HOME/x
+#   `-`            the directory before the last cd, which is printed, as other shells do
+#   anything else  that directory, relative to the working directory unless it starts with /
+# Returns 0, or 1 with the reason on stderr.
+fn sh_cd(arg) {
+    var target = arg;
+    if (target != 0) {
+        while (load8(target) == 32) { target = target + 1; }
+        var e = strlen(target);
+        while (e > 0 && load8(target + e - 1) == 32) { e = e - 1; }
+        if (e == 0) {
+            target = 0;
+        } else {
+            var t = alloc(e + 1);
+            memcpy(t, target, e);
+            store8(t + e, 0);
+            target = t;
+        }
+    }
+    if (target != 0) {
+        for (var k = 0; load8(target + k) != 0; k = k + 1) {
+            if (load8(target + k) == 32) {
+                eprintln_cstr("cd: too many arguments");
+                return 1;
+            }
+        }
+    }
+    var show = 0;
+    if (target == 0 || streq(target, "~") == 1) {
+        target = getenv("HOME");
+        if (target == 0) {
+            eprintln_cstr("cd: HOME is not set");
+            return 1;
+        }
+    } elif (load8(target) == 126 && load8(target + 1) == 47) {        # "~/..."
+        var home = getenv("HOME");
+        if (home == 0) {
+            eprintln_cstr("cd: HOME is not set");
+            return 1;
+        }
+        target = str_cat3_cstr(home, target + 1, "");
+    } elif (streq(target, "-") == 1) {
+        if (g_oldpwd == 0) {
+            eprintln_cstr("cd: no previous directory");
+            return 1;
+        }
+        target = g_oldpwd;
+        show = 1;
+    }
+    var old = cwd_get();
+    #ifdef CYRIUS_TARGET_AGNOS
+    var abs = cwd_join(old, target);
+    if (abs == 0 || is_dir(str_from(abs)) == 0) {
+        eprint_str(str_from("cd: "));
+        eprint_str(str_from(target));
+        eprintln_cstr(": not a directory");
+        return 1;
+    }
+    g_cwd = abs;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var r = sys_chdir(target);
+    if (r < 0) {
+        eprint_str(str_from("cd: "));
+        eprint_str(str_from(target));
+        if (r == 0 - 2) {
+            eprintln_cstr(": no such directory");
+        } elif (r == 0 - 20) {
+            eprintln_cstr(": not a directory");
+        } elif (r == 0 - 13) {
+            eprintln_cstr(": permission denied");
+        } else {
+            eprint_str(str_from(": cannot change to it (errno "));
+            eprint_str(str_from_int(0 - r));
+            eprintln_cstr(")");
+        }
+        return 1;
+    }
+    #endif
+    g_oldpwd = old;
+    if (show == 1) { println(cwd_get()); }
+    return 0;
+}
+
+# The `pwd` builtin: the working directory on stdout. Returns 0, or 1 when it cannot be read.
+fn sh_pwd() {
+    var c = cwd_get();
+    if (c == 0) {
+        eprintln_cstr("pwd: cannot read the working directory");
+        return 1;
+    }
+    println(c);
+    return 0;
+}

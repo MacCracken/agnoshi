@@ -10,6 +10,17 @@ fn arg_cstr(s) {
     if (s == 0) { return 0; }
     return str_cstr(s);
 }
+# A path argument (2.2.0, ADR-012). On agnos it is resolved against agnsh's own working directory:
+# there is no kernel cwd, and a relative name would be rooted at / (agnos userland ABI § 3.2), so
+# without this the program and a checkpoint of the same line would see different files. On the host
+# it is passed as given: the program inherits the real working directory.
+fn path_arg_cstr(s) {
+    if (s == 0) { return 0; }
+    #ifdef CYRIUS_TARGET_AGNOS
+    return cwd_resolve(str_cstr(s));
+    #endif
+    return str_cstr(s);
+}
 fn translate_list_files(intent) {
     var args = vec_new();
     var opts = load64(intent + 40);
@@ -20,10 +31,15 @@ fn translate_list_files(intent) {
     if (list_options_recursive(opts) == 1) { vec_push(args, "-R"); }
     # Empty means "no argument", not "unsafe" — see the note on the arg-guarded
     # translators. safe_path_in_str also rejects a zero-length path.
+    var lpath = 0;
     if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
-        vec_push(args, arg_cstr(load64(intent + 8)));
+        lpath = path_arg_cstr(load64(intent + 8));
     }
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (lpath == 0) { lpath = cwd_get(); }      # agnos: no path is the working directory (ADR-012)
+    #endif
+    if (lpath != 0) { vec_push(args, lpath); }
     return Translation_new(
       "ls",
       args,
@@ -42,11 +58,11 @@ fn translate_show_file(intent) {
     # program that exists on the target.
     #ifdef CYRIUS_TARGET_AGNOS
     vec_push(args, "-p");
-    vec_push(args, arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
     return Translation_new("owl", args, "Display file contents", PermissionLevel.READ_ONLY,
       "owl -p prints a file's contents");
     #endif
-    vec_push(args, arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
     return Translation_new(
       "cat",
       args,
@@ -59,9 +75,13 @@ fn translate_find_files(intent) {
     var args = vec_new();
     if (load64(intent + 16) != 0) {
         if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
-        vec_push(args, arg_cstr(load64(intent + 16)));
+        vec_push(args, path_arg_cstr(load64(intent + 16)));
     } else {
-        vec_push(args, ".");
+        var fdir = ".";
+        #ifdef CYRIUS_TARGET_AGNOS
+        fdir = cwd_get();                      # agnos: "." would be rooted at / (ADR-012)
+        #endif
+        vec_push(args, fdir);
     }
     vec_push(args, "-name");
     # ⛔ AN EMPTY FIELD MEANS "NO ARGUMENT", NOT "UNSAFE ARGUMENT". The parser
@@ -99,10 +119,15 @@ fn translate_search_content(intent) {
         if (safe_arg_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
         vec_push(args, arg_cstr(load64(intent + 8)));
     }
+    var gpath = 0;
     if (load64(intent + 16) != 0) {
         if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
-        vec_push(args, arg_cstr(load64(intent + 16)));
+        gpath = path_arg_cstr(load64(intent + 16));
     }
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (gpath == 0) { gpath = cwd_get(); }      # agnos: -r with no path searches the working directory
+    #endif
+    if (gpath != 0) { vec_push(args, gpath); }
     return Translation_new(
       "grep",
       args,
@@ -116,7 +141,7 @@ fn translate_change_dir(intent) {
     if (str_len(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
-    vec_push(args, arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
     return Translation_new(
       "cd",
       args,
@@ -131,7 +156,7 @@ fn translate_create_dir(intent) {
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
     vec_push(args, "-p");
-    vec_push(args, arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
     return Translation_new(
       "mkdir",
       args,
@@ -145,8 +170,8 @@ fn translate_copy(intent) {
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
-    vec_push(args, arg_cstr(load64(intent + 8)));
-    vec_push(args, arg_cstr(load64(intent + 16)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 16)));
     return Translation_new(
       "cp",
       args,
@@ -160,8 +185,8 @@ fn translate_move(intent) {
     if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
     if (safe_path_in_str(load64(intent + 16)) == 0) { return translate_unknown(intent); }
     var args = vec_new();
-    vec_push(args, arg_cstr(load64(intent + 8)));
-    vec_push(args, arg_cstr(load64(intent + 16)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 16)));
     return Translation_new(
       "mv",
       args,
@@ -183,7 +208,7 @@ fn translate_remove(intent) {
         vec_push(args, "-r");
         perm = PermissionLevel.BLOCKED;
     }
-    vec_push(args, arg_cstr(load64(intent + 8)));
+    vec_push(args, path_arg_cstr(load64(intent + 8)));
     return Translation_new(
       "rm",
       args,
@@ -256,7 +281,7 @@ fn translate_disk_usage(intent) {
     # translators. safe_path_in_str also rejects a zero-length path.
     if (load64(intent + 8) != 0 && str_len(load64(intent + 8)) > 0) {
         if (safe_path_in_str(load64(intent + 8)) == 0) { return translate_unknown(intent); }
-        vec_push(args, arg_cstr(load64(intent + 8)));
+        vec_push(args, path_arg_cstr(load64(intent + 8)));
     }
     return Translation_new(
       "df",

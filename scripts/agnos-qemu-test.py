@@ -52,6 +52,7 @@ PART_BLOCKS = (67 * 1048576) // 4096
 EXT2_FEATURES = "^resize_inode,^dir_index,^metadata_csum,^64bit,^uninit_bg"
 AUDIT = "/.agnsh_audit.log"
 CKPT = "/.agnsh_checkpoints"             # the checkpoint store on agnos (ADR-009)
+CWD_DIR = "/cwdtest"                     # 2.2.0: the cwd fixture (ADR-012)
 # The sleepers run until the harness creates /stop (checked every ~0.25 s), with a ~20 min safety
 # stop so a lost `touch` cannot hang the run. Neither an iteration count nor a fixed wall time
 # works: typing on agnos in QEMU runs at roughly a keystroke a second, so eight `sleeper &` lines
@@ -176,6 +177,14 @@ for stale in (".agnsh_audit.log", ".agnsh_history"):          # every run starts
     except FileNotFoundError:
         pass
 build_sleeper(os.path.join(SEED, "bin/sleeper"))
+# 2.2.0: a child that prints the PWD / OLDPWD it was started with (tests/agnos_envprint.cyr). kriya's
+# `env` reads /proc/self/environ, which agnos has not got, so it cannot show what agnsh passed.
+r = subprocess.run(["cyrius", "build", "--agnos", "tests/agnos_envprint.cyr", os.path.join(SEED, "bin/envprint")],
+                   cwd=REPO, env=dict(os.environ, CYRIUS_NO_WARN_SHADOW_LIB="1"),
+                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if r.returncode != 0:
+    die("cyrius build --agnos tests/agnos_envprint.cyr:\n" + r.stdout.decode("latin1")[-600:])
+os.chmod(os.path.join(SEED, "bin/envprint"), 0o755)
 write_elf(os.path.join(SEED, "bin/selfkill"), SELFKILL_CODE)
 # Passes agnsh's existence probe and fails spawn_path#43 with NOEXEC: a pipeline stage 2 that
 # cannot start (agnos pipeline-smoke's /bin/notelf).
@@ -189,6 +198,9 @@ if not os.path.exists(os.path.join(SEED, CERT.lstrip("/"))):
 with open(os.path.join(SEED, CERT.lstrip("/")), "rb") as f:
     CERT_NONEMPTY = sum(len(l) + 1 for l in f.read().split(b"\n") if l)
 shutil.rmtree(os.path.join(SEED, CKPT.lstrip("/")), ignore_errors=True)
+os.makedirs(os.path.join(SEED, CWD_DIR.lstrip("/")), exist_ok=True)               # 2.2.0
+with open(os.path.join(SEED, CWD_DIR.lstrip("/"), "inside.txt"), "w") as f:
+    f.write("CWD-INSIDE\n")
 for name, body in (("gated-a.txt", "GATED-A\n"), ("gated-b.txt", "GATED-B\n"),
                    ("gated-c.txt", "GATED-C\n")):                                   # 2.1.3 / 2.1.4
     with open(os.path.join(SEED, name), "w") as f:
@@ -300,6 +312,9 @@ GATED_NO = "remove /gated-b.txt"
 # 2.1.4: a second approved remove, then `undo` -- which puts back the newest group (this one), and
 # leaves /gated-a.txt's entry in the store, where the disk check reads it.
 GATED_UNDO = "remove /gated-c.txt"
+# 2.2.0: agnsh's own working directory (ADR-012). agnos has no cwd syscall, so agnsh tracks it, resolves
+# its own paths against it -- a `>` target, an NL translation's path -- and exports PWD to children.
+CWD_SHOW = "show contents of inside.txt"
 REDIR_OK = "echo hello-redirect > /out.txt"
 REDIR_AUDIT = "echo pwned > " + AUDIT
 REDIR_LINK = "echo pwned > /redir-link"
@@ -412,6 +427,23 @@ try:
     seg = run_wait("y", "] >", timeout=40)
     seg = run_wait("undo", "] >", timeout=40)
     check("`undo` restores the newest approved remove (2.1.4)", "restored /gated-c.txt" in seg)
+
+    # ---- 1c. the working directory (2.2.0) ----
+    run_wait("cd " + CWD_DIR, "] >")
+    seg = run_wait("pwd", "] >")
+    check("cd, then pwd: agnsh's own working directory", "\n" + CWD_DIR in seg.replace("\r", ""))
+    seg = run_wait("echo cwd-redirect > out.txt", "] >")
+    check("a relative `>` target lands in the working directory", "run:" not in seg)
+    seg = run_wait(CWD_SHOW, "] >", timeout=40)
+    check("an NL path resolves against it: owl reads " + CWD_DIR + "/inside.txt", "CWD-INSIDE" in seg)
+    seg = run_wait("run /bin/envprint", "] >", timeout=40)
+    check("a child gets PWD=" + CWD_DIR + ", and OLDPWD",
+          "ENVPRINT-PWD=" + CWD_DIR in seg and "ENVPRINT-OLDPWD=/" in seg)
+    seg = run_wait("cd /no-such-dir", "] >")
+    check("cd to a missing directory says so", "cd: /no-such-dir: not a directory" in seg)
+    run_wait("cd ..", "] >")
+    seg = run_wait("pwd", "] >")
+    check("cd .. goes up, to /", "\n/\n" in seg.replace("\r", "") or "\n/\r" in seg)
 
     # ---- 2. redirection ----
     # Control first: a plain open FOLLOWS the planted symlink, so a later refusal to redirect onto
@@ -583,6 +615,9 @@ def debugfs(cmd):
 
 check("the approved file is gone from the disk", "File not found" in debugfs("stat /gated-a.txt"))
 check("the undone file is back on the disk, with its bytes", "GATED-C" in debugfs("cat /gated-c.txt"))
+check("the relative redirect wrote " + CWD_DIR + "/out.txt", "cwd-redirect" in debugfs("cat " + CWD_DIR + "/out.txt"))
+check("the NL read in " + CWD_DIR + ": proposed, launched, executed",
+      results_for(CWD_SHOW) == ["proposed", "launched", "executed"])
 check("the undo is recorded as executed", results_for("undo") == ["executed"])
 check("the undone remove: needs_approval, approved, launched, executed",
       results_for(GATED_UNDO) == ["needs_approval", "approved", "launched", "executed"])

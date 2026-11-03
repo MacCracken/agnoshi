@@ -73,15 +73,39 @@ fn host_environ_envp() {
     for (var i = 0; i < n; i = i + 1) {
         if (load8(blob + i) == 0) { count = count + 1; }
     }
-    var envp = alloc((count + 1) * 8);
+    # 2.2.0: once agnsh has changed directory, PWD and OLDPWD are what they are now, not what the
+    # block (agnsh's environment at its start) says. Before any cd the block passes through as it
+    # is, so a logical PWD through a symlink survives.
+    var moved = 0;
+    if (g_oldpwd != 0) { moved = 1; }
+    var envp = alloc((count + 3) * 8);
     if (envp == 0) { return 0; }
     var ei = 0;
     var start = 0;
     for (var j = 0; j < n; j = j + 1) {
         if (load8(blob + j) == 0) {
-            if (j > start) { store64(envp + ei * 8, blob + start); ei = ei + 1; }
+            if (j > start) {
+                var keep = 1;
+                if (moved == 1) {
+                    if (cstr_starts_with(blob + start, "PWD=") == 1) { keep = 0; }
+                    if (cstr_starts_with(blob + start, "OLDPWD=") == 1) { keep = 0; }
+                }
+                if (keep == 1) {
+                    store64(envp + ei * 8, blob + start);
+                    ei = ei + 1;
+                }
+            }
             start = j + 1;
         }
+    }
+    if (moved == 1) {
+        var cwd = cwd_get();
+        if (cwd != 0) {
+            store64(envp + ei * 8, str_cat3_cstr("PWD=", cwd, ""));
+            ei = ei + 1;
+        }
+        store64(envp + ei * 8, str_cat3_cstr("OLDPWD=", g_oldpwd, ""));
+        ei = ei + 1;
     }
     store64(envp + ei * 8, 0);
     return envp;

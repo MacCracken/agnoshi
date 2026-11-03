@@ -2,6 +2,7 @@
 
 **Status:** Accepted (2026-09-23, for 2.0.0). Amended 2026-09-26 for 2.0.2: restricted sessions (§ 1).
 Amended 2026-11-02 for 2.1.3: the approval tiers run after an approval (§ 1, [ADR-011](011-approval-gated-exec.md)).
+Amended 2026-11-02 for 2.2.0: CHANGE_DIR runs the `cd` builtin (§ 1, [ADR-012](012-working-directory.md)).
 **Builds on:** [ADR-007](007-input-classification.md) — which lines are shell and which are natural
 language. This ADR settles what happens once a natural-language line is understood.
 
@@ -36,6 +37,10 @@ first (roadmap § Open decisions, "NL exec contract"), and each ruling has conse
   and `assist` run directly. `-c` defaults to `auto`, as it always has.
 - Confirmation prompts go to **stderr**, for `run` as well — they are the shell talking, not the
   program.
+
+> **Amendment, 2.2.0 — CHANGE_DIR runs the `cd` builtin** ([ADR-012](012-working-directory.md)). A
+> natural-language directory change (`switch to /tmp`) runs agnsh's own `cd`, the builtin a typed
+> `cd /tmp` reaches, and is recorded `executed` or `failed`. It was in the reported-not-run list above.
 
 > **Amendment, 2.1.3 — the approval tiers run after an approval** (ruled 2026-11-02;
 > [ADR-011](011-approval-gated-exec.md)). USER_WRITE, SYSTEM_WRITE and ADMIN translations ask

@@ -1,4 +1,4 @@
-.TH AGNSH 1 "November 2026" "agnoshi 2.1.4" "User Commands"
+.TH AGNSH 1 "November 2026" "agnoshi 2.2.0" "User Commands"
 .SH NAME
 agnsh \- AI-native natural language shell for AGNOS
 .SH SYNOPSIS
@@ -161,6 +161,19 @@ Exit shell.
 .TP
 .B history
 Show command history.
+.TP
+.B cd [\fIDIR\fR|-|~]
+Change the working directory: to \fIDIR\fR, to
+.B $HOME
+with no argument or ~, or back to the previous one with -, which is
+printed. On AGNOS, where there is no kernel working directory, agnsh keeps
+its own: it resolves its own relative paths against it (a > target, a
+natural-language path) and passes it to programs as
+.BR PWD .
+Exits 1 when the directory cannot be entered.
+.TP
+.B pwd
+Print the working directory.
 .TP
 .B undo
 Put back what the newest approved remove or move changed, from its

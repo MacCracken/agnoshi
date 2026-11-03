@@ -15,6 +15,7 @@ ADRs document the why behind significant architectural decisions.
 - [ADR-009: The Checkpoint Store (2.0.3)](009-checkpoint-store.md) — 2026-09-26
 - [ADR-010: A Session Started on /dev/null Runs on the Console, Owned by No One (2.1.2)](010-console-without-ownership.md) — 2026-11-02
 - [ADR-011: Approval-Gated Execution (2.1.3)](011-approval-gated-exec.md) — 2026-11-02
+- [ADR-012: The Working Directory — `cd` and `pwd` (2.2.0)](012-working-directory.md) — 2026-11-02
 
 ## Format
 
@@ -28,7 +29,7 @@ Each ADR follows the [MADR-inspired](https://adr.github.io/madr/) template:
 
 ## Writing a new ADR
 
-1. Pick the next sequential number (current: 011, next: 012)
+1. Pick the next sequential number (current: 012, next: 013)
 2. Copy an existing ADR as template
 3. Update the index in this README
 4. Keep it short — an ADR is a decision record, not an essay

@@ -96,7 +96,8 @@ Two things were settled first:
   calls it. *(2.1.3: it runs there now, behind an approved NL remove or move, and
   `scripts/agnos-qemu-test.py` reads its entry back off the disk image — [ADR-011](011-approval-gated-exec.md).)*
 - **Relative paths:** agnos has no working directory yet (roadmap 2.2.x), so a relative path is
-  taken from `/`.
+  taken from `/`. *(2.2.0: agnsh keeps one, and a relative path resolves against it —
+  [ADR-012](012-working-directory.md). An NL translation's paths are already absolute by then.)*
 
 ## Consequences
 

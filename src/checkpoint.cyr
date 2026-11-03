@@ -98,7 +98,7 @@ fn ckpt_abs(path) {
     if (load8(path) == 0) { return 0; }
     if (load8(path) == 47) { return path; }
     #ifdef CYRIUS_TARGET_AGNOS
-    return str_cat3_cstr("/", path, "");
+    return cwd_resolve(path);                   # 2.2.0: agnsh's own working directory (ADR-012)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var cwd[4096];

@@ -200,6 +200,29 @@ check "undo moves it back" "^moved $G_DIR/b.txt back to $G_DIR/a.txt$" "$out"
 check "...and it is where it was" "^keep$" "$(cat "$G_DIR/a.txt" 2>/dev/null)"
 out=$("$BIN" --dry-run -c "undo" 2>/dev/null </dev/null) || true
 check "--dry-run never undoes: undo reaches the classifier" "Intent:" "$out"
+
+# 2.2.0: cd and pwd (ADR-012). The host's are chdir and getcwd; a child launched after a cd sees PWD.
+CWD_DIR=$(cd "$(mktemp -d -t agnsh-cwd.XXXXXX)" && pwd -P)
+ec=0
+"$BIN" -c "cd $CWD_DIR" >/dev/null 2>&1 </dev/null || ec=$?
+check "-c cd DIR exits 0" "^0$" "$ec"
+ec=0
+err=$("$BIN" -c "cd /nonexistent/agnsh-smoke" 2>&1 >/dev/null </dev/null) || ec=$?
+check "-c cd to a missing directory exits 1, saying so" "^1:cd: /nonexistent/agnsh-smoke: no such directory$" "$ec:$err"
+out=$(cd "$CWD_DIR" && "$BIN" -c "pwd" 2>/dev/null </dev/null) || true
+check "-c pwd prints the working directory" "^$CWD_DIR$" "$out"
+out=$(printf 'cd %s\npwd\nexit\n' "$CWD_DIR" | "$BIN" 2>/dev/null) || true
+check "interactive cd, then pwd" "$CWD_DIR" "$out"
+out=$(printf 'cd %s\nenv\nexit\n' "$CWD_DIR" | "$BIN" 2>/dev/null) || true
+check "a program launched after cd gets PWD" "^PWD=$CWD_DIR$" "$out"
+check "...and OLDPWD" "^OLDPWD=" "$out"
+# `switch to`, not `go to`: a first word found on $PATH runs as that program (ADR-007), and `go` often is.
+out=$(printf 'switch to %s\npwd\nexit\n' "$CWD_DIR" | "$BIN" 2>/dev/null) || true
+check "a natural-language cd runs the builtin" "Command: cd" "$out"
+check "...and moves the shell" "> $CWD_DIR$" "$out"
+out=$(cd / && printf 'cd %s\ncd -\npwd\nexit\n' "$CWD_DIR" | "$BIN" 2>/dev/null) || true
+check "cd - goes back, and says where" "> /$" "$out"
+rmdir "$CWD_DIR"
 mkdir "$G_DIR/d"
 ec=0
 err=$(printf 'y\n' | XDG_STATE_HOME="$G_STATE" "$BIN" -c "remove $G_DIR/d" 2>&1 >/dev/null) || ec=$?

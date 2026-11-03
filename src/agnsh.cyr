@@ -34,6 +34,8 @@ fn chrono_now_rfc3339() { return str_from(iso8601_now()); }
 
 include "src/sanitize.cyr"
 include "src/statepaths.cyr"
+# 2.2.0: the working directory — `cd` and `pwd`, and on agnos the cwd agnsh keeps itself (ADR-012).
+include "src/cwd.cyr"
 include "src/report.cyr"
 include "src/mode.cyr"
 include "src/permissions.cyr"
@@ -55,7 +57,7 @@ include "src/security.cyr"
 include "src/checkpoint.cyr"
 include "src/nlexec.cyr"
 
-var VERSION_STR = "agnoshi 2.1.4";
+var VERSION_STR = "agnoshi 2.2.0";
 
 fn print_version() {
     println(VERSION_STR);
@@ -269,10 +271,10 @@ fn interactive_loop() {
     # 1.9.11 — the power verbs are AGNOS-only (see the guard in the loop), so do not advertise
     # them on a host build. Same fix the kriya barewords already got one screen below.
     #ifdef CYRIUS_TARGET_AGNOS
-    println("Built-ins: help, version, mode, history, undo, clear, exit, reboot, poweroff, halt");
+    println("Built-ins: help, version, mode, history, cd, pwd, undo, clear, exit, reboot, poweroff, halt");
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    println("Built-ins: help, version, mode, history, undo, clear, exit");
+    println("Built-ins: help, version, mode, history, cd, pwd, undo, clear, exit");
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     println("Files: cp mv rm ls mkdir rmdir touch echo wc find grep (kriya) - owl FILE (cat)   Run: run");
@@ -358,6 +360,19 @@ fn interactive_loop() {
             continue;
         }
         #endif
+        # 2.2.0: the working directory (cwd.cyr, ADR-012).
+        if (streq(&buf, "cd") == 1) {
+            sh_cd(0);
+            continue;
+        }
+        if (cstr_starts_with(&buf, "cd ") == 1) {
+            sh_cd(&buf + 3);
+            continue;
+        }
+        if (streq(&buf, "pwd") == 1) {
+            sh_pwd();
+            continue;
+        }
         # 2.1.4: put back the newest approved NL remove or move (nl_undo, ADR-009).
         if (streq(&buf, "undo") == 1) {
             nl_undo(ckpt_dir());
@@ -387,6 +402,8 @@ fn interactive_loop() {
             println("  mode auto|assist|human|strict        switch mode");
             println("  history                              show last 20 commands");
             println("  undo                                 put back the last approved remove or move");
+            println("  cd [dir|-|~]                         change the working directory");
+            println("  pwd                                  print the working directory");
             println("  clear                                clear screen");
             println("  exit, quit                           leave shell (saves history)");
             #ifdef CYRIUS_TARGET_AGNOS
@@ -674,6 +691,10 @@ fn main() {
         #endif
         # 2.1.4: `agnsh -c undo` — after --dry-run above, which runs nothing, undo included.
         if (streq(c_cmd, "undo") == 1) { return nl_undo(ckpt_dir()); }
+        # 2.2.0: `cd` and `pwd` in one shot — `-c "cd DIR"` says whether DIR can be entered, as sh -c.
+        if (streq(c_cmd, "cd") == 1) { return sh_cd(0); }
+        if (cstr_starts_with(c_cmd, "cd ") == 1) { return sh_cd(c_cmd + 3); }
+        if (streq(c_cmd, "pwd") == 1) { return sh_pwd(); }
         # `run PATH` in one-shot mode (`agnsh -c "run /bin/klug"`). Same
         # validation + kernel gate as the interactive path.
         if (streq(c_cmd, "run") == 1) {
